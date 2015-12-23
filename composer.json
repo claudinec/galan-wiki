@@ -36,7 +36,8 @@
 		"wikimedia/utfnormal": "1.0.3",
 		"wikimedia/wrappedstring": "2.0.0",
 		"zordius/lightncandy": "0.21",
-		"mediawiki/bootstrap": "^1.1"
+		"mediawiki/bootstrap": "^1.1",
+		"mediawiki/chameleon-skin": "^1.1"
 	},
 	"require-dev": {
 		"jakub-onderka/php-parallel-lint": "0.9",
