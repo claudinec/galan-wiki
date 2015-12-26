@@ -33,7 +33,6 @@
 		"wikimedia/wrappedstring": "2.0.0",
 		"zordius/lightncandy": "0.21",
 		"mediawiki/bootstrap": "^1.1",
-		"mediawiki/image-map": "dev-REL1_26",
 		"mediawiki/vector-skin": "dev-REL1_26",
 		"mediawiki/chameleon-skin": "^1.1"
 	},
