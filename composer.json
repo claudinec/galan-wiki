@@ -21,6 +21,7 @@
 		"ext-iconv": "*",
 		"liuggio/statsd-php-client": "1.0.18",
 		"mediawiki/at-ease": "1.1.0",
+		"mediawiki/chameleon-skin": "^1.1",
 		"oojs/oojs-ui": "0.14.1",
 		"oyejorge/less.php": "1.7.0.9",
 		"php": ">=5.3.3",
@@ -34,8 +35,7 @@
 		"wikimedia/relpath": "1.0.3",
 		"wikimedia/running-stat": "1.1.0",
 		"wikimedia/utfnormal": "1.0.3",
-		"wikimedia/wrappedstring": "2.0.0",
-		"zordius/lightncandy": "0.21"
+		"wikimedia/wrappedstring": "2.0.0"
 	},
 	"require-dev": {
 		"jakub-onderka/php-parallel-lint": "0.9",

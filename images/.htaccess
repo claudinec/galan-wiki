@@ -6,3 +6,15 @@
 	# Fix for bug T64289
 	Options +FollowSymLinks
 </IfModule>
+
+# Upload security - see https://www.mediawiki.org/wiki/Manual:Security#Upload_security
+# Serve HTML as plaintext, don't execute SHTML
+AddType text/plain .html .htm .shtml .php .phtml .php5
+
+# Old way of registering php with AddHandler
+RemoveHandler .php
+
+# Recent way of registering php with SetHandler
+<FilesMatch "\.ph(p[345]?s?|tml)$">
+   SetHandler None
+</FilesMatch>
