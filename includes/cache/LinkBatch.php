@@ -20,6 +20,8 @@
  * @file
  * @ingroup Cache
  */
+use MediaWiki\Linker\LinkTarget;
+use MediaWiki\MediaWikiServices;
 
 /**
  * Class representing a list of titles
@@ -31,14 +33,14 @@ class LinkBatch {
 	/**
 	 * 2-d array, first index namespace, second index dbkey, value arbitrary
 	 */
-	public $data = array();
+	public $data = [];
 
 	/**
 	 * For debugging which method is using this class.
 	 */
 	protected $caller;
 
-	function __construct( $arr = array() ) {
+	function __construct( $arr = [] ) {
 		foreach ( $arr as $item ) {
 			$this->addObj( $item );
 		}
@@ -56,13 +58,13 @@ class LinkBatch {
 	}
 
 	/**
-	 * @param Title $title
+	 * @param LinkTarget $linkTarget
 	 */
-	public function addObj( $title ) {
-		if ( is_object( $title ) ) {
-			$this->add( $title->getNamespace(), $title->getDBkey() );
+	public function addObj( $linkTarget ) {
+		if ( is_object( $linkTarget ) ) {
+			$this->add( $linkTarget->getNamespace(), $linkTarget->getDBkey() );
 		} else {
-			wfDebug( "Warning: LinkBatch::addObj got invalid title object\n" );
+			wfDebug( "Warning: LinkBatch::addObj got invalid LinkTarget object\n" );
 		}
 	}
 
@@ -75,7 +77,7 @@ class LinkBatch {
 			return;
 		}
 		if ( !array_key_exists( $ns, $this->data ) ) {
-			$this->data[$ns] = array();
+			$this->data[$ns] = [];
 		}
 
 		$this->data[$ns][strtr( $dbkey, ' ', '_' )] = 1;
@@ -115,7 +117,7 @@ class LinkBatch {
 	 * @return array Mapping PDBK to ID
 	 */
 	public function execute() {
-		$linkCache = LinkCache::singleton();
+		$linkCache = MediaWikiServices::getInstance()->getLinkCache();
 
 		return $this->executeInto( $linkCache );
 	}
@@ -147,26 +149,29 @@ class LinkBatch {
 	 */
 	public function addResultToCache( $cache, $res ) {
 		if ( !$res ) {
-			return array();
+			return [];
 		}
 
+		$titleFormatter = MediaWikiServices::getInstance()->getTitleFormatter();
 		// For each returned entry, add it to the list of good links, and remove it from $remaining
 
-		$ids = array();
+		$ids = [];
 		$remaining = $this->data;
 		foreach ( $res as $row ) {
-			$title = Title::makeTitle( $row->page_namespace, $row->page_title );
+			$title = new TitleValue( (int)$row->page_namespace, $row->page_title );
 			$cache->addGoodLinkObjFromRow( $title, $row );
-			$ids[$title->getPrefixedDBkey()] = $row->page_id;
+			$pdbk = $titleFormatter->getPrefixedDBkey( $title );
+			$ids[$pdbk] = $row->page_id;
 			unset( $remaining[$row->page_namespace][$row->page_title] );
 		}
 
 		// The remaining links in $data are bad links, register them as such
 		foreach ( $remaining as $ns => $dbkeys ) {
 			foreach ( $dbkeys as $dbkey => $unused ) {
-				$title = Title::makeTitle( $ns, $dbkey );
+				$title = new TitleValue( (int)$ns, $dbkey );
 				$cache->addBadLinkObj( $title );
-				$ids[$title->getPrefixedDBkey()] = 0;
+				$pdbk = $titleFormatter->getPrefixedDBkey( $title );
+				$ids[$pdbk] = 0;
 			}
 		}
 
@@ -178,8 +183,6 @@ class LinkBatch {
 	 * @return bool|ResultWrapper
 	 */
 	public function doQuery() {
-		global $wgContentHandlerUseDB;
-
 		if ( $this->isEmpty() ) {
 			return false;
 		}
@@ -187,12 +190,10 @@ class LinkBatch {
 		// This is similar to LinkHolderArray::replaceInternal
 		$dbr = wfGetDB( DB_SLAVE );
 		$table = 'page';
-		$fields = array( 'page_id', 'page_namespace', 'page_title', 'page_len',
-			'page_is_redirect', 'page_latest' );
-
-		if ( $wgContentHandlerUseDB ) {
-			$fields[] = 'page_content_model';
-		}
+		$fields = array_merge(
+			LinkCache::getSelectFields(),
+			[ 'page_namespace', 'page_title' ]
+		);
 
 		$conds = $this->constructSet( 'page', $dbr );
 
@@ -221,7 +222,7 @@ class LinkBatch {
 			return false;
 		}
 
-		$genderCache = GenderCache::singleton();
+		$genderCache = MediaWikiServices::getInstance()->getGenderCache();
 		$genderCache->doLinkBatch( $this->data, $this->caller );
 
 		return true;

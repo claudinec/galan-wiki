@@ -20,12 +20,12 @@ use MediaWiki\Widget\TitleInputWidget;
  */
 class HTMLTitleTextField extends HTMLTextField {
 	public function __construct( $params ) {
-		$params += array(
+		$params += [
 			'namespace' => false,
 			'relative' => false,
 			'creatable' => false,
 			'exists' => false,
-		);
+		];
 
 		parent::__construct( $params );
 	}
@@ -79,5 +79,21 @@ class HTMLTitleTextField extends HTMLTextField {
 		}
 		$params['relative'] = $this->mParams['relative'];
 		return new TitleInputWidget( $params );
+	}
+
+	public function getInputHtml( $value ) {
+		// add mw-searchInput class to enable search suggestions for non-OOUI, too
+		$this->mClass .= 'mw-searchInput';
+
+		// return the HTMLTextField html
+		return parent::getInputHTML( $value );
+	}
+
+	protected function getDataAttribs() {
+		return [
+			'data-mw-searchsuggest' => FormatJson::encode( [
+				'wrapAsLink' => false,
+			] ),
+		];
 	}
 }

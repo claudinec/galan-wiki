@@ -20,6 +20,8 @@
  * @file
  * @ingroup Parser
  */
+use MediaWiki\Linker\LinkRenderer;
+use MediaWiki\MediaWikiServices;
 
 /**
  * @defgroup Parser Parser
@@ -99,16 +101,6 @@ class Parser {
 	# Regular expression for a non-newline space
 	const SPACE_NOT_NL = '(?:\t|&nbsp;|&\#0*160;|&\#[Xx]0*[Aa]0;|\p{Zs})';
 
-	# State constants for the definition list colon extraction
-	const COLON_STATE_TEXT = 0;
-	const COLON_STATE_TAG = 1;
-	const COLON_STATE_TAGSTART = 2;
-	const COLON_STATE_CLOSETAG = 3;
-	const COLON_STATE_TAGSLASH = 4;
-	const COLON_STATE_COMMENT = 5;
-	const COLON_STATE_COMMENTDASH = 6;
-	const COLON_STATE_COMMENTDASHDASH = 7;
-
 	# Flags for preprocessToDom
 	const PTD_FOR_INCLUSION = 1;
 
@@ -131,25 +123,30 @@ class Parser {
 	 *
 	 * Must not consist of all title characters, or else it will change
 	 * the behavior of <nowiki> in a link.
+	 *
+	 * Must have a character that needs escaping in attributes, otherwise
+	 * someone could put a strip marker in an attribute, to get around
+	 * escaping quote marks, and break out of the attribute. Thus we add
+	 * `'".
 	 */
-	const MARKER_SUFFIX = "-QINU\x7f";
-	const MARKER_PREFIX = "\x7fUNIQ-";
+	const MARKER_SUFFIX = "-QINU`\"'\x7f";
+	const MARKER_PREFIX = "\x7f'\"`UNIQ-";
 
 	# Markers used for wrapping the table of contents
 	const TOC_START = '<mw:toc>';
 	const TOC_END = '</mw:toc>';
 
 	# Persistent:
-	public $mTagHooks = array();
-	public $mTransparentTagHooks = array();
-	public $mFunctionHooks = array();
-	public $mFunctionSynonyms = array( 0 => array(), 1 => array() );
-	public $mFunctionTagHooks = array();
-	public $mStripList = array();
-	public $mDefaultStripList = array();
-	public $mVarCache = array();
-	public $mImageParams = array();
-	public $mImageParamsMagicArray = array();
+	public $mTagHooks = [];
+	public $mTransparentTagHooks = [];
+	public $mFunctionHooks = [];
+	public $mFunctionSynonyms = [ 0 => [], 1 => [] ];
+	public $mFunctionTagHooks = [];
+	public $mStripList = [];
+	public $mDefaultStripList = [];
+	public $mVarCache = [];
+	public $mImageParams = [];
+	public $mImageParamsMagicArray = [];
 	public $mMarkerIndex = 0;
 	public $mFirstCall = true;
 
@@ -176,14 +173,14 @@ class Parser {
 	 * @var ParserOutput
 	 */
 	public $mOutput;
-	public $mAutonumber, $mDTopen;
+	public $mAutonumber;
 
 	/**
 	 * @var StripState
 	 */
 	public $mStripState;
 
-	public $mIncludeCount, $mArgStack, $mLastSection, $mInPre;
+	public $mIncludeCount;
 	/**
 	 * @var LinkHolderArray
 	 */
@@ -254,9 +251,14 @@ class Parser {
 	protected $mProfiler;
 
 	/**
+	 * @var LinkRenderer
+	 */
+	protected $mLinkRenderer;
+
+	/**
 	 * @param array $conf
 	 */
-	public function __construct( $conf = array() ) {
+	public function __construct( $conf = [] ) {
 		$this->mConf = $conf;
 		$this->mUrlProtocols = wfUrlProtocols();
 		$this->mExtLinkBracketedRegex = '/\[(((?i)' . $this->mUrlProtocols . ')' .
@@ -303,7 +305,7 @@ class Parser {
 		// reference is copied as a reference in the new object. Both of these
 		// are defined PHP5 behaviors, as inconvenient as it is for us when old
 		// hooks from PHP4 days are passing fields by reference.
-		foreach ( array( 'mStripState', 'mVarCache' ) as $k ) {
+		foreach ( [ 'mStripState', 'mVarCache' ] as $k ) {
 			// Make a non-reference copy of the field, then rebind the field to
 			// reference the new copy.
 			$tmp = $this->$k;
@@ -311,7 +313,7 @@ class Parser {
 			unset( $tmp );
 		}
 
-		Hooks::run( 'ParserCloned', array( $this ) );
+		Hooks::run( 'ParserCloned', [ $this ] );
 	}
 
 	/**
@@ -327,7 +329,7 @@ class Parser {
 		CoreTagHooks::register( $this );
 		$this->initialiseVariables();
 
-		Hooks::run( 'ParserFirstCallInit', array( &$this ) );
+		Hooks::run( 'ParserFirstCallInit', [ &$this ] );
 	}
 
 	/**
@@ -340,39 +342,35 @@ class Parser {
 			$this->firstCallInit();
 		}
 		$this->mOutput = new ParserOutput;
-		$this->mOptions->registerWatcher( array( $this->mOutput, 'recordOption' ) );
+		$this->mOptions->registerWatcher( [ $this->mOutput, 'recordOption' ] );
 		$this->mAutonumber = 0;
-		$this->mLastSection = '';
-		$this->mDTopen = false;
-		$this->mIncludeCount = array();
-		$this->mArgStack = false;
-		$this->mInPre = false;
+		$this->mIncludeCount = [];
 		$this->mLinkHolders = new LinkHolderArray( $this );
 		$this->mLinkID = 0;
 		$this->mRevisionObject = $this->mRevisionTimestamp =
 			$this->mRevisionId = $this->mRevisionUser = $this->mRevisionSize = null;
-		$this->mVarCache = array();
+		$this->mVarCache = [];
 		$this->mUser = null;
-		$this->mLangLinkLanguages = array();
+		$this->mLangLinkLanguages = [];
 		$this->currentRevisionCache = null;
 
 		$this->mStripState = new StripState;
 
 		# Clear these on every parse, bug 4549
-		$this->mTplRedirCache = $this->mTplDomCache = array();
+		$this->mTplRedirCache = $this->mTplDomCache = [];
 
 		$this->mShowToc = true;
 		$this->mForceTocPosition = false;
-		$this->mIncludeSizes = array(
+		$this->mIncludeSizes = [
 			'post-expand' => 0,
 			'arg' => 0,
-		);
+		];
 		$this->mPPNodeCount = 0;
 		$this->mGeneratedPPNodeCount = 0;
 		$this->mHighestExpansionDepth = 0;
 		$this->mDefaultSort = false;
-		$this->mHeadings = array();
-		$this->mDoubleUnderscores = array();
+		$this->mHeadings = [];
+		$this->mDoubleUnderscores = [];
 		$this->mExpensiveFunctionCount = 0;
 
 		# Fix cloning
@@ -382,7 +380,7 @@ class Parser {
 
 		$this->mProfiler = new SectionProfiler();
 
-		Hooks::run( 'ParserClearState', array( &$this ) );
+		Hooks::run( 'ParserClearState', [ &$this ] );
 	}
 
 	/**
@@ -435,11 +433,11 @@ class Parser {
 			$this->mRevisionSize = null;
 		}
 
-		Hooks::run( 'ParserBeforeStrip', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'ParserBeforeStrip', [ &$this, &$text, &$this->mStripState ] );
 		# No more strip!
-		Hooks::run( 'ParserAfterStrip', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'ParserAfterStrip', [ &$this, &$text, &$this->mStripState ] );
 		$text = $this->internalParse( $text );
-		Hooks::run( 'ParserAfterParse', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'ParserAfterParse', [ &$this, &$text, &$this->mStripState ] );
 
 		$text = $this->internalParseHalfParsed( $text, true, $linestart );
 
@@ -488,24 +486,24 @@ class Parser {
 			);
 
 			$this->mOutput->setLimitReportData( 'limitreport-ppvisitednodes',
-				array( $this->mPPNodeCount, $this->mOptions->getMaxPPNodeCount() )
+				[ $this->mPPNodeCount, $this->mOptions->getMaxPPNodeCount() ]
 			);
 			$this->mOutput->setLimitReportData( 'limitreport-ppgeneratednodes',
-				array( $this->mGeneratedPPNodeCount, $this->mOptions->getMaxGeneratedPPNodeCount() )
+				[ $this->mGeneratedPPNodeCount, $this->mOptions->getMaxGeneratedPPNodeCount() ]
 			);
 			$this->mOutput->setLimitReportData( 'limitreport-postexpandincludesize',
-				array( $this->mIncludeSizes['post-expand'], $max )
+				[ $this->mIncludeSizes['post-expand'], $max ]
 			);
 			$this->mOutput->setLimitReportData( 'limitreport-templateargumentsize',
-				array( $this->mIncludeSizes['arg'], $max )
+				[ $this->mIncludeSizes['arg'], $max ]
 			);
 			$this->mOutput->setLimitReportData( 'limitreport-expansiondepth',
-				array( $this->mHighestExpansionDepth, $this->mOptions->getMaxPPExpandDepth() )
+				[ $this->mHighestExpansionDepth, $this->mOptions->getMaxPPExpandDepth() ]
 			);
 			$this->mOutput->setLimitReportData( 'limitreport-expensivefunctioncount',
-				array( $this->mExpensiveFunctionCount, $this->mOptions->getExpensiveParserFunctionLimit() )
+				[ $this->mExpensiveFunctionCount, $this->mOptions->getExpensiveParserFunctionLimit() ]
 			);
-			Hooks::run( 'ParserLimitReportPrepare', array( $this, $this->mOutput ) );
+			Hooks::run( 'ParserLimitReportPrepare', [ $this, $this->mOutput ] );
 
 			$limitReport = "NewPP limit report\n";
 			if ( $wgShowHostnames ) {
@@ -519,10 +517,10 @@ class Parser {
 
 			foreach ( $this->mOutput->getLimitReportData() as $key => $value ) {
 				if ( Hooks::run( 'ParserLimitReportFormat',
-					array( $key, &$value, &$limitReport, false, false )
+					[ $key, &$value, &$limitReport, false, false ]
 				) ) {
 					$keyMsg = wfMessage( $key )->inLanguage( 'en' )->useDatabase( false );
-					$valueMsg = wfMessage( array( "$key-value-text", "$key-value" ) )
+					$valueMsg = wfMessage( [ "$key-value-text", "$key-value" ] )
 						->inLanguage( 'en' )->useDatabase( false );
 					if ( !$valueMsg->exists() ) {
 						$valueMsg = new RawMessage( '$1' );
@@ -536,11 +534,11 @@ class Parser {
 			// Since we're not really outputting HTML, decode the entities and
 			// then re-encode the things that need hiding inside HTML comments.
 			$limitReport = htmlspecialchars_decode( $limitReport );
-			Hooks::run( 'ParserLimitReport', array( $this, &$limitReport ) );
+			Hooks::run( 'ParserLimitReport', [ $this, &$limitReport ] );
 
 			// Sanitize for comment. Note '‐' in the replacement is U+2010,
 			// which looks much like the problematic '-'.
-			$limitReport = str_replace( array( '-', '&' ), array( '‐', '&amp;' ), $limitReport );
+			$limitReport = str_replace( [ '-', '&' ], [ '‐', '&amp;' ], $limitReport );
 			$text .= "\n<!-- \n$limitReport-->\n";
 
 			// Add on template profiling data
@@ -597,8 +595,8 @@ class Parser {
 	 * @return string UNSAFE half-parsed HTML
 	 */
 	public function recursiveTagParse( $text, $frame = false ) {
-		Hooks::run( 'ParserBeforeStrip', array( &$this, &$text, &$this->mStripState ) );
-		Hooks::run( 'ParserAfterStrip', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'ParserBeforeStrip', [ &$this, &$text, &$this->mStripState ] );
+		Hooks::run( 'ParserAfterStrip', [ &$this, &$text, &$this->mStripState ] );
 		$text = $this->internalParse( $text, false, $frame );
 		return $text;
 	}
@@ -645,8 +643,8 @@ class Parser {
 		if ( $revid !== null ) {
 			$this->mRevisionId = $revid;
 		}
-		Hooks::run( 'ParserBeforeStrip', array( &$this, &$text, &$this->mStripState ) );
-		Hooks::run( 'ParserAfterStrip', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'ParserBeforeStrip', [ &$this, &$text, &$this->mStripState ] );
+		Hooks::run( 'ParserAfterStrip', [ &$this, &$text, &$this->mStripState ] );
 		$text = $this->replaceVariables( $text, $frame );
 		$text = $this->mStripState->unstripBoth( $text );
 		return $text;
@@ -680,7 +678,7 @@ class Parser {
 	 * @param array $params
 	 * @return string
 	 */
-	public function getPreloadText( $text, Title $title, ParserOptions $options, $params = array() ) {
+	public function getPreloadText( $text, Title $title, ParserOptions $options, $params = [] ) {
 		$msg = new RawMessage( $text );
 		$text = $msg->params( $params )->plain();
 
@@ -739,8 +737,7 @@ class Parser {
 
 		if ( $t->hasFragment() ) {
 			# Strip the fragment to avoid various odd effects
-			$this->mTitle = clone $t;
-			$this->mTitle->setFragment( '' );
+			$this->mTitle = $t->createFragmentTarget( '' );
 		} else {
 			$this->mTitle = $t;
 		}
@@ -773,12 +770,12 @@ class Parser {
 	public function setOutputType( $ot ) {
 		$this->mOutputType = $ot;
 		# Shortcut alias
-		$this->ot = array(
+		$this->ot = [
 			'html' => $ot == self::OT_HTML,
 			'wiki' => $ot == self::OT_WIKI,
 			'pre' => $ot == self::OT_PREPROCESS,
 			'plain' => $ot == self::OT_PLAIN,
-		);
+		];
 	}
 
 	/**
@@ -899,6 +896,24 @@ class Parser {
 	}
 
 	/**
+	 * Get a LinkRenderer instance to make links with
+	 *
+	 * @since 1.28
+	 * @return LinkRenderer
+	 */
+	public function getLinkRenderer() {
+		if ( !$this->mLinkRenderer ) {
+			$this->mLinkRenderer = MediaWikiServices::getInstance()
+				->getLinkRendererFactory()->create();
+			$this->mLinkRenderer->setStubThreshold(
+				$this->getOptions()->getStubThreshold()
+			);
+		}
+
+		return $this->mLinkRenderer;
+	}
+
+	/**
 	 * Replaces all occurrences of HTML-style comments and the given tags
 	 * in the text with a random marker and returns the next text. The output
 	 * parameter $matches will be an associative array filled with data in
@@ -925,7 +940,7 @@ class Parser {
 		}
 		static $n = 1;
 		$stripped = '';
-		$matches = array();
+		$matches = [];
 
 		$taglist = implode( '|', $elements );
 		$start = "/<($taglist)(\\s+[^>]*?|\\s*?)(\/?" . ">)|<(!--)/i";
@@ -976,10 +991,10 @@ class Parser {
 				}
 			}
 
-			$matches[$marker] = array( $element,
+			$matches[$marker] = [ $element,
 				$content,
 				Sanitizer::decodeTagAttributes( $attributes ),
-				"<$element$attributes$close$content$tail" );
+				"<$element$attributes$close$content$tail" ];
 		}
 		return $stripped;
 	}
@@ -1020,11 +1035,11 @@ class Parser {
 
 		$lines = StringUtils::explode( "\n", $text );
 		$out = '';
-		$td_history = array(); # Is currently a td tag open?
-		$last_tag_history = array(); # Save history of last lag activated (td, th or caption)
-		$tr_history = array(); # Is currently a tr tag open?
-		$tr_attributes = array(); # history of tr attributes
-		$has_opened_tr = array(); # Did this table open a <tr> element?
+		$td_history = []; # Is currently a td tag open?
+		$last_tag_history = []; # Save history of last lag activated (td, th or caption)
+		$tr_history = []; # Is currently a tr tag open?
+		$tr_attributes = []; # history of tr attributes
+		$has_opened_tr = []; # Did this table open a <tr> element?
 		$indent_level = 0; # indent level of the table
 
 		foreach ( $lines as $outLine ) {
@@ -1037,7 +1052,7 @@ class Parser {
 
 			$first_character = $line[0];
 			$first_two = substr( $line, 0, 2 );
-			$matches = array();
+			$matches = [];
 
 			if ( preg_match( '/^(:*)\s*\{\|(.*)$/', $line, $matches ) ) {
 				# First check if we are starting a new table
@@ -1113,15 +1128,15 @@ class Parser {
 					$line = substr( $line, 1 );
 				}
 
+				// Implies both are valid for table headings.
 				if ( $first_character === '!' ) {
-					$line = str_replace( '!!', '||', $line );
+					$line = StringUtils::replaceMarkup( '!!', '||', $line );
 				}
 
 				# Split up multiple cells on the same line.
 				# FIXME : This can result in improper nesting of tags processed
-				# by earlier parser steps, but should avoid splitting up eg
-				# attribute values containing literal "||".
-				$cells = StringUtils::explodeMarkup( '||', $line );
+				# by earlier parser steps.
+				$cells = explode( '||', $line );
 
 				$outLine = '';
 
@@ -1213,9 +1228,9 @@ class Parser {
 	 *
 	 * @private
 	 *
-	 * @param string $text
-	 * @param bool $isMain
-	 * @param PPFrame|bool $frame
+	 * @param string $text The text to parse
+	 * @param bool $isMain Whether this is being called from the main parse() function
+	 * @param PPFrame|bool $frame A pre-processor frame
 	 *
 	 * @return string
 	 */
@@ -1224,7 +1239,7 @@ class Parser {
 		$origText = $text;
 
 		# Hook to suspend the parser in this state
-		if ( !Hooks::run( 'ParserBeforeInternalParse', array( &$this, &$text, &$this->mStripState ) ) ) {
+		if ( !Hooks::run( 'ParserBeforeInternalParse', [ &$this, &$text, &$this->mStripState ] ) ) {
 			return $text;
 		}
 
@@ -1244,14 +1259,14 @@ class Parser {
 			$text = $this->replaceVariables( $text );
 		}
 
-		Hooks::run( 'InternalParseBeforeSanitize', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'InternalParseBeforeSanitize', [ &$this, &$text, &$this->mStripState ] );
 		$text = Sanitizer::removeHTMLtags(
 			$text,
-			array( &$this, 'attributeStripCallback' ),
+			[ &$this, 'attributeStripCallback' ],
 			false,
 			array_keys( $this->mTransparentTagHooks )
 		);
-		Hooks::run( 'InternalParseBeforeLinks', array( &$this, &$text, &$this->mStripState ) );
+		Hooks::run( 'InternalParseBeforeLinks', [ &$this, &$text, &$this->mStripState ] );
 
 		# Tables need to come after variable replacement for things to work
 		# properly; putting them before other transformations should keep
@@ -1291,18 +1306,18 @@ class Parser {
 		$text = $this->mStripState->unstripGeneral( $text );
 
 		if ( $isMain ) {
-			Hooks::run( 'ParserAfterUnstrip', array( &$this, &$text ) );
+			Hooks::run( 'ParserAfterUnstrip', [ &$this, &$text ] );
 		}
 
 		# Clean up special characters, only run once, next-to-last before doBlockLevels
-		$fixtags = array(
+		$fixtags = [
 			# french spaces, last one Guillemet-left
 			# only if there is something before the space
 			'/(.) (?=\\?|:|;|!|%|\\302\\273)/' => '\\1&#160;',
 			# french spaces, Guillemet-right
 			'/(\\302\\253) /' => '\\1&#160;',
 			'/&#160;(!\s*important)/' => ' \\1', # Beware of CSS magic word !important, bug #11874.
-		);
+		];
 		$text = preg_replace( array_keys( $fixtags ), array_values( $fixtags ), $text );
 
 		$text = $this->doBlockLevels( $text, $linestart );
@@ -1330,7 +1345,7 @@ class Parser {
 		$text = $this->mStripState->unstripNoWiki( $text );
 
 		if ( $isMain ) {
-			Hooks::run( 'ParserBeforeTidy', array( &$this, &$text ) );
+			Hooks::run( 'ParserBeforeTidy', [ &$this, &$text ] );
 		}
 
 		$text = $this->replaceTransparentTags( $text );
@@ -1344,7 +1359,7 @@ class Parser {
 		} else {
 			# attempt to sanitize at least some nesting problems
 			# (bug #2702 and quite a few others)
-			$tidyregs = array(
+			$tidyregs = [
 				# ''Something [http://www.cool.com cool''] -->
 				# <i>Something</i><a href="http://www.cool.com"..><i>cool></i></a>
 				'/(<([bi])>)(<([bi])>)?([^<]*)(<\/?a[^<]*>)([^<]*)(<\/\\4>)?(<\/\\2>)/' =>
@@ -1361,7 +1376,7 @@ class Parser {
 				# remove empty italic or bold tag pairs, some
 				# introduced by rules above
 				'/<([bi])><\/\\1>/' => '',
-			);
+			];
 
 			$text = preg_replace(
 				array_keys( $tidyregs ),
@@ -1370,7 +1385,7 @@ class Parser {
 		}
 
 		if ( $isMain ) {
-			Hooks::run( 'ParserAfterTidy', array( &$this, &$text ) );
+			Hooks::run( 'ParserAfterTidy', [ &$this, &$text ] );
 		}
 
 		return $text;
@@ -1408,7 +1423,7 @@ class Parser {
 					(?: [0-9]  $spdash? ){9} #  9 digits with opt. delimiters
 					[0-9Xx]                  #  check digit
 				)\b
-			)!xu", array( &$this, 'magicLinkCallback' ), $text );
+			)!xu", [ &$this, 'magicLinkCallback' ], $text );
 		return $text;
 	}
 
@@ -1450,11 +1465,11 @@ class Parser {
 			$isbn = $m[6];
 			$space = self::SPACE_NOT_NL; #  non-newline space
 			$isbn = preg_replace( "/$space/", ' ', $isbn );
-			$num = strtr( $isbn, array(
+			$num = strtr( $isbn, [
 				'-' => '',
 				' ' => '',
 				'x' => 'X',
-			) );
+			] );
 			$titleObj = SpecialPage::getTitleFor( 'Booksources', $num );
 			return '<a href="' .
 				htmlspecialchars( $titleObj->getLocalURL() ) .
@@ -1480,7 +1495,7 @@ class Parser {
 		# removeHTMLtags()) should not be included in
 		# URLs, per RFC 2396.
 		# Make &nbsp; terminate a URL as well (bug T84937)
-		$m2 = array();
+		$m2 = [];
 		if ( preg_match(
 			'/&(lt|gt|nbsp|#x0*(3[CcEe]|[Aa]0)|#0*(60|62|160));/',
 			$url,
@@ -1790,7 +1805,7 @@ class Parser {
 			# The characters '<' and '>' (which were escaped by
 			# removeHTMLtags()) should not be included in
 			# URLs, per RFC 2396.
-			$m2 = array();
+			$m2 = [];
 			if ( preg_match( '/&(lt|gt);/', $url, $m2, PREG_OFFSET_CAPTURE ) ) {
 				$text = substr( $url, $m2[0][1] ) . ' ' . $text;
 				$url = substr( $url, 0, $m2[0][1] );
@@ -1872,12 +1887,23 @@ class Parser {
 	 * @return array Associative array of HTML attributes
 	 */
 	public function getExternalLinkAttribs( $url = false ) {
-		$attribs = array();
-		$attribs['rel'] = self::getExternalLinkRel( $url, $this->mTitle );
+		$attribs = [];
+		$rel = self::getExternalLinkRel( $url, $this->mTitle );
 
-		if ( $this->mOptions->getExternalLinkTarget() ) {
-			$attribs['target'] = $this->mOptions->getExternalLinkTarget();
+		$target = $this->mOptions->getExternalLinkTarget();
+		if ( $target ) {
+			$attribs['target'] = $target;
+			if ( !in_array( $target, [ '_self', '_parent', '_top' ] ) ) {
+				// T133507. New windows can navigate parent cross-origin.
+				// Including noreferrer due to lacking browser
+				// support of noopener. Eventually noreferrer should be removed.
+				if ( $rel !== '' ) {
+					$rel .= ' ';
+				}
+				$rel .= 'noreferrer noopener';
+			}
 		}
+		$attribs['rel'] = $rel;
 		return $attribs;
 	}
 
@@ -2072,7 +2098,7 @@ class Parser {
 		$nottalk = !$this->mTitle->isTalkPage();
 
 		if ( $useLinkPrefixExtension ) {
-			$m = array();
+			$m = [];
 			if ( preg_match( $e2, $s, $m ) ) {
 				$first_prefix = $m[2];
 			} else {
@@ -2087,7 +2113,7 @@ class Parser {
 		// @codingStandardsIgnoreStart Squiz.WhiteSpace.SemicolonSpacing.Incorrect
 		# Loop for each link
 		for ( ; $line !== false && $line !== null; $a->next(), $line = $a->current() ) {
-			// @codingStandardsIgnoreStart
+			// @codingStandardsIgnoreEnd
 
 			# Check for excessive memory usage
 			if ( $holders->isBig() ) {
@@ -2119,10 +2145,8 @@ class Parser {
 				# [[Image:Foo.jpg|[http://example.com desc]]] <- having three ] in a row fucks up,
 				# the real problem is with the $e1 regex
 				# See bug 1300.
-				#
 				# Still some problems for cases where the ] is meant to be outside punctuation,
 				# and no image is in sight. See bug 2095.
-				#
 				if ( $text !== ''
 					&& substr( $m[3], 0, 1 ) === ']'
 					&& strpos( $text, '[' ) !== false
@@ -2133,7 +2157,7 @@ class Parser {
 				# fix up urlencoded title texts
 				if ( strpos( $m[1], '%' ) !== false ) {
 					# Should anchors '#' also be rejected?
-					$m[1] = str_replace( array( '<', '>' ), array( '&lt;', '&gt;' ), rawurldecode( $m[1] ) );
+					$m[1] = str_replace( [ '<', '>' ], [ '&lt;', '&gt;' ], rawurldecode( $m[1] ) );
 				}
 				$trail = $m[3];
 			} elseif ( preg_match( $e1_img, $line, $m ) ) {
@@ -2312,10 +2336,10 @@ class Parser {
 			# @todo FIXME: Should do batch file existence checks, see comment below
 			if ( $ns == NS_MEDIA ) {
 				# Give extensions a chance to select the file revision for us
-				$options = array();
+				$options = [];
 				$descQuery = false;
 				Hooks::run( 'BeforeParserFetchFileAndTitle',
-					array( $this, $nt, &$options, &$descQuery ) );
+					[ $this, $nt, &$options, &$descQuery ] );
 				# Fetch and register the file (file title may be different via hooks)
 				list( $file, $nt ) = $this->fetchFileAndTitle( $nt, $options );
 				# Cloak with NOPARSE to avoid replacement in replaceExternalLinks
@@ -2326,15 +2350,14 @@ class Parser {
 
 			# Some titles, such as valid special pages or files in foreign repos, should
 			# be shown as bluelinks even though they're not included in the page table
-			#
 			# @todo FIXME: isAlwaysKnown() can be expensive for file links; we should really do
 			# batch file existence checks for NS_FILE and NS_MEDIA
 			if ( $iw == '' && $nt->isAlwaysKnown() ) {
 				$this->mOutput->addLink( $nt );
-				$s .= $this->makeKnownLinkHolder( $nt, $text, array(), $trail, $prefix );
+				$s .= $this->makeKnownLinkHolder( $nt, $text, $trail, $prefix );
 			} else {
 				# Links will be added to the output link list after checking
-				$s .= $holders->makeHolder( $nt, $text, array(), $trail, $prefix );
+				$s .= $holders->makeHolder( $nt, $text, [], $trail, $prefix );
 			}
 		}
 		return $holders;
@@ -2349,22 +2372,20 @@ class Parser {
 	 *
 	 * @param Title $nt
 	 * @param string $text
-	 * @param array|string $query
 	 * @param string $trail
 	 * @param string $prefix
 	 * @return string HTML-wikitext mix oh yuck
 	 */
-	public function makeKnownLinkHolder( $nt, $text = '', $query = array(), $trail = '', $prefix = '' ) {
+	protected function makeKnownLinkHolder( $nt, $text = '', $trail = '', $prefix = '' ) {
 		list( $inside, $trail ) = Linker::splitTrail( $trail );
 
-		if ( is_string( $query ) ) {
-			$query = wfCgiToArray( $query );
-		}
 		if ( $text == '' ) {
 			$text = htmlspecialchars( $nt->getPrefixedText() );
 		}
 
-		$link = Linker::linkKnown( $nt, "$prefix$text$inside", array(), $query );
+		$link = $this->getLinkRenderer()->makeKnownLink(
+			$nt, new HtmlArmor( "$prefix$text$inside" )
+		);
 
 		return $this->armorLinks( $link ) . $trail;
 	}
@@ -2405,127 +2426,6 @@ class Parser {
 		return Linker::normalizeSubpageLink( $this->mTitle, $target, $text );
 	}
 
-	/**#@+
-	 * Used by doBlockLevels()
-	 * @private
-	 *
-	 * @return string
-	 */
-	public function closeParagraph() {
-		$result = '';
-		if ( $this->mLastSection != '' ) {
-			$result = '</' . $this->mLastSection . ">\n";
-		}
-		$this->mInPre = false;
-		$this->mLastSection = '';
-		return $result;
-	}
-
-	/**
-	 * getCommon() returns the length of the longest common substring
-	 * of both arguments, starting at the beginning of both.
-	 * @private
-	 *
-	 * @param string $st1
-	 * @param string $st2
-	 *
-	 * @return int
-	 */
-	public function getCommon( $st1, $st2 ) {
-		$fl = strlen( $st1 );
-		$shorter = strlen( $st2 );
-		if ( $fl < $shorter ) {
-			$shorter = $fl;
-		}
-
-		for ( $i = 0; $i < $shorter; ++$i ) {
-			if ( $st1[$i] != $st2[$i] ) {
-				break;
-			}
-		}
-		return $i;
-	}
-
-	/**
-	 * These next three functions open, continue, and close the list
-	 * element appropriate to the prefix character passed into them.
-	 * @private
-	 *
-	 * @param string $char
-	 *
-	 * @return string
-	 */
-	public function openList( $char ) {
-		$result = $this->closeParagraph();
-
-		if ( '*' === $char ) {
-			$result .= "<ul><li>";
-		} elseif ( '#' === $char ) {
-			$result .= "<ol><li>";
-		} elseif ( ':' === $char ) {
-			$result .= "<dl><dd>";
-		} elseif ( ';' === $char ) {
-			$result .= "<dl><dt>";
-			$this->mDTopen = true;
-		} else {
-			$result = '<!-- ERR 1 -->';
-		}
-
-		return $result;
-	}
-
-	/**
-	 * TODO: document
-	 * @param string $char
-	 * @private
-	 *
-	 * @return string
-	 */
-	public function nextItem( $char ) {
-		if ( '*' === $char || '#' === $char ) {
-			return "</li>\n<li>";
-		} elseif ( ':' === $char || ';' === $char ) {
-			$close = "</dd>\n";
-			if ( $this->mDTopen ) {
-				$close = "</dt>\n";
-			}
-			if ( ';' === $char ) {
-				$this->mDTopen = true;
-				return $close . '<dt>';
-			} else {
-				$this->mDTopen = false;
-				return $close . '<dd>';
-			}
-		}
-		return '<!-- ERR 2 -->';
-	}
-
-	/**
-	 * @todo Document
-	 * @param string $char
-	 * @private
-	 *
-	 * @return string
-	 */
-	public function closeList( $char ) {
-		if ( '*' === $char ) {
-			$text = "</li></ul>";
-		} elseif ( '#' === $char ) {
-			$text = "</li></ol>";
-		} elseif ( ':' === $char ) {
-			if ( $this->mDTopen ) {
-				$this->mDTopen = false;
-				$text = "</dt></dl>";
-			} else {
-				$text = "</dd></dl>";
-			}
-		} else {
-			return '<!-- ERR 3 -->';
-		}
-		return $text;
-	}
-	/**#@-*/
-
 	/**
 	 * Make lists from lines starting with ':', '*', '#', etc. (DBL)
 	 *
@@ -2535,364 +2435,7 @@ class Parser {
 	 * @return string The lists rendered as HTML
 	 */
 	public function doBlockLevels( $text, $linestart ) {
-
-		# Parsing through the text line by line.  The main thing
-		# happening here is handling of block-level elements p, pre,
-		# and making lists from lines starting with * # : etc.
-		#
-		$textLines = StringUtils::explode( "\n", $text );
-
-		$lastPrefix = $output = '';
-		$this->mDTopen = $inBlockElem = false;
-		$prefixLength = 0;
-		$paragraphStack = false;
-		$inBlockquote = false;
-
-		foreach ( $textLines as $oLine ) {
-			# Fix up $linestart
-			if ( !$linestart ) {
-				$output .= $oLine;
-				$linestart = true;
-				continue;
-			}
-			# * = ul
-			# # = ol
-			# ; = dt
-			# : = dd
-
-			$lastPrefixLength = strlen( $lastPrefix );
-			$preCloseMatch = preg_match( '/<\\/pre/i', $oLine );
-			$preOpenMatch = preg_match( '/<pre/i', $oLine );
-			# If not in a <pre> element, scan for and figure out what prefixes are there.
-			if ( !$this->mInPre ) {
-				# Multiple prefixes may abut each other for nested lists.
-				$prefixLength = strspn( $oLine, '*#:;' );
-				$prefix = substr( $oLine, 0, $prefixLength );
-
-				# eh?
-				# ; and : are both from definition-lists, so they're equivalent
-				#  for the purposes of determining whether or not we need to open/close
-				#  elements.
-				$prefix2 = str_replace( ';', ':', $prefix );
-				$t = substr( $oLine, $prefixLength );
-				$this->mInPre = (bool)$preOpenMatch;
-			} else {
-				# Don't interpret any other prefixes in preformatted text
-				$prefixLength = 0;
-				$prefix = $prefix2 = '';
-				$t = $oLine;
-			}
-
-			# List generation
-			if ( $prefixLength && $lastPrefix === $prefix2 ) {
-				# Same as the last item, so no need to deal with nesting or opening stuff
-				$output .= $this->nextItem( substr( $prefix, -1 ) );
-				$paragraphStack = false;
-
-				if ( substr( $prefix, -1 ) === ';' ) {
-					# The one nasty exception: definition lists work like this:
-					# ; title : definition text
-					# So we check for : in the remainder text to split up the
-					# title and definition, without b0rking links.
-					$term = $t2 = '';
-					if ( $this->findColonNoLinks( $t, $term, $t2 ) !== false ) {
-						$t = $t2;
-						$output .= $term . $this->nextItem( ':' );
-					}
-				}
-			} elseif ( $prefixLength || $lastPrefixLength ) {
-				# We need to open or close prefixes, or both.
-
-				# Either open or close a level...
-				$commonPrefixLength = $this->getCommon( $prefix, $lastPrefix );
-				$paragraphStack = false;
-
-				# Close all the prefixes which aren't shared.
-				while ( $commonPrefixLength < $lastPrefixLength ) {
-					$output .= $this->closeList( $lastPrefix[$lastPrefixLength - 1] );
-					--$lastPrefixLength;
-				}
-
-				# Continue the current prefix if appropriate.
-				if ( $prefixLength <= $commonPrefixLength && $commonPrefixLength > 0 ) {
-					$output .= $this->nextItem( $prefix[$commonPrefixLength - 1] );
-				}
-
-				# Open prefixes where appropriate.
-				if (  $lastPrefix && $prefixLength > $commonPrefixLength ) {
-					$output .= "\n";
-				}
-				while ( $prefixLength > $commonPrefixLength ) {
-					$char = substr( $prefix, $commonPrefixLength, 1 );
-					$output .= $this->openList( $char );
-
-					if ( ';' === $char ) {
-						# @todo FIXME: This is dupe of code above
-						if ( $this->findColonNoLinks( $t, $term, $t2 ) !== false ) {
-							$t = $t2;
-							$output .= $term . $this->nextItem( ':' );
-						}
-					}
-					++$commonPrefixLength;
-				}
-				if ( !$prefixLength && $lastPrefix ) {
-					$output .= "\n";
-				}
-				$lastPrefix = $prefix2;
-			}
-
-			# If we have no prefixes, go to paragraph mode.
-			if ( 0 == $prefixLength ) {
-				# No prefix (not in list)--go to paragraph mode
-				# XXX: use a stack for nestable elements like span, table and div
-				$openmatch = preg_match(
-					'/(?:<table|<h1|<h2|<h3|<h4|<h5|<h6|<pre|<tr|'
-						. '<p|<ul|<ol|<dl|<li|<\\/tr|<\\/td|<\\/th)/iS',
-					$t
-				);
-				$closematch = preg_match(
-					'/(?:<\\/table|<\\/h1|<\\/h2|<\\/h3|<\\/h4|<\\/h5|<\\/h6|'
-						. '<td|<th|<\\/?blockquote|<\\/?div|<hr|<\\/pre|<\\/p|<\\/mw:|'
-						. self::MARKER_PREFIX
-						. '-pre|<\\/li|<\\/ul|<\\/ol|<\\/dl|<\\/?center)/iS',
-					$t
-				);
-
-				if ( $openmatch || $closematch ) {
-					$paragraphStack = false;
-					# @todo bug 5718: paragraph closed
-					$output .= $this->closeParagraph();
-					if ( $preOpenMatch && !$preCloseMatch ) {
-						$this->mInPre = true;
-					}
-					$bqOffset = 0;
-					while ( preg_match( '/<(\\/?)blockquote[\s>]/i', $t, $bqMatch, PREG_OFFSET_CAPTURE, $bqOffset ) ) {
-						$inBlockquote = !$bqMatch[1][0]; // is this a close tag?
-						$bqOffset = $bqMatch[0][1] + strlen( $bqMatch[0][0] );
-					}
-					$inBlockElem = !$closematch;
-				} elseif ( !$inBlockElem && !$this->mInPre ) {
-					if ( ' ' == substr( $t, 0, 1 )
-						&& ( $this->mLastSection === 'pre' || trim( $t ) != '' )
-						&& !$inBlockquote
-					) {
-						# pre
-						if ( $this->mLastSection !== 'pre' ) {
-							$paragraphStack = false;
-							$output .= $this->closeParagraph() . '<pre>';
-							$this->mLastSection = 'pre';
-						}
-						$t = substr( $t, 1 );
-					} else {
-						# paragraph
-						if ( trim( $t ) === '' ) {
-							if ( $paragraphStack ) {
-								$output .= $paragraphStack . '<br />';
-								$paragraphStack = false;
-								$this->mLastSection = 'p';
-							} else {
-								if ( $this->mLastSection !== 'p' ) {
-									$output .= $this->closeParagraph();
-									$this->mLastSection = '';
-									$paragraphStack = '<p>';
-								} else {
-									$paragraphStack = '</p><p>';
-								}
-							}
-						} else {
-							if ( $paragraphStack ) {
-								$output .= $paragraphStack;
-								$paragraphStack = false;
-								$this->mLastSection = 'p';
-							} elseif ( $this->mLastSection !== 'p' ) {
-								$output .= $this->closeParagraph() . '<p>';
-								$this->mLastSection = 'p';
-							}
-						}
-					}
-				}
-			}
-			# somewhere above we forget to get out of pre block (bug 785)
-			if ( $preCloseMatch && $this->mInPre ) {
-				$this->mInPre = false;
-			}
-			if ( $paragraphStack === false ) {
-				$output .= $t;
-				if ( $prefixLength === 0 ) {
-					$output .= "\n";
-				}
-			}
-		}
-		while ( $prefixLength ) {
-			$output .= $this->closeList( $prefix2[$prefixLength - 1] );
-			--$prefixLength;
-			if ( !$prefixLength ) {
-				$output .= "\n";
-			}
-		}
-		if ( $this->mLastSection != '' ) {
-			$output .= '</' . $this->mLastSection . '>';
-			$this->mLastSection = '';
-		}
-
-		return $output;
-	}
-
-	/**
-	 * Split up a string on ':', ignoring any occurrences inside tags
-	 * to prevent illegal overlapping.
-	 *
-	 * @param string $str The string to split
-	 * @param string &$before Set to everything before the ':'
-	 * @param string &$after Set to everything after the ':'
-	 * @throws MWException
-	 * @return string The position of the ':', or false if none found
-	 */
-	public function findColonNoLinks( $str, &$before, &$after ) {
-
-		$pos = strpos( $str, ':' );
-		if ( $pos === false ) {
-			# Nothing to find!
-			return false;
-		}
-
-		$lt = strpos( $str, '<' );
-		if ( $lt === false || $lt > $pos ) {
-			# Easy; no tag nesting to worry about
-			$before = substr( $str, 0, $pos );
-			$after = substr( $str, $pos + 1 );
-			return $pos;
-		}
-
-		# Ugly state machine to walk through avoiding tags.
-		$state = self::COLON_STATE_TEXT;
-		$stack = 0;
-		$len = strlen( $str );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$c = $str[$i];
-
-			switch ( $state ) {
-			# (Using the number is a performance hack for common cases)
-			case 0: # self::COLON_STATE_TEXT:
-				switch ( $c ) {
-				case "<":
-					# Could be either a <start> tag or an </end> tag
-					$state = self::COLON_STATE_TAGSTART;
-					break;
-				case ":":
-					if ( $stack == 0 ) {
-						# We found it!
-						$before = substr( $str, 0, $i );
-						$after = substr( $str, $i + 1 );
-						return $i;
-					}
-					# Embedded in a tag; don't break it.
-					break;
-				default:
-					# Skip ahead looking for something interesting
-					$colon = strpos( $str, ':', $i );
-					if ( $colon === false ) {
-						# Nothing else interesting
-						return false;
-					}
-					$lt = strpos( $str, '<', $i );
-					if ( $stack === 0 ) {
-						if ( $lt === false || $colon < $lt ) {
-							# We found it!
-							$before = substr( $str, 0, $colon );
-							$after = substr( $str, $colon + 1 );
-							return $i;
-						}
-					}
-					if ( $lt === false ) {
-						# Nothing else interesting to find; abort!
-						# We're nested, but there's no close tags left. Abort!
-						break 2;
-					}
-					# Skip ahead to next tag start
-					$i = $lt;
-					$state = self::COLON_STATE_TAGSTART;
-				}
-				break;
-			case 1: # self::COLON_STATE_TAG:
-				# In a <tag>
-				switch ( $c ) {
-				case ">":
-					$stack++;
-					$state = self::COLON_STATE_TEXT;
-					break;
-				case "/":
-					# Slash may be followed by >?
-					$state = self::COLON_STATE_TAGSLASH;
-					break;
-				default:
-					# ignore
-				}
-				break;
-			case 2: # self::COLON_STATE_TAGSTART:
-				switch ( $c ) {
-				case "/":
-					$state = self::COLON_STATE_CLOSETAG;
-					break;
-				case "!":
-					$state = self::COLON_STATE_COMMENT;
-					break;
-				case ">":
-					# Illegal early close? This shouldn't happen D:
-					$state = self::COLON_STATE_TEXT;
-					break;
-				default:
-					$state = self::COLON_STATE_TAG;
-				}
-				break;
-			case 3: # self::COLON_STATE_CLOSETAG:
-				# In a </tag>
-				if ( $c === ">" ) {
-					$stack--;
-					if ( $stack < 0 ) {
-						wfDebug( __METHOD__ . ": Invalid input; too many close tags\n" );
-						return false;
-					}
-					$state = self::COLON_STATE_TEXT;
-				}
-				break;
-			case self::COLON_STATE_TAGSLASH:
-				if ( $c === ">" ) {
-					# Yes, a self-closed tag <blah/>
-					$state = self::COLON_STATE_TEXT;
-				} else {
-					# Probably we're jumping the gun, and this is an attribute
-					$state = self::COLON_STATE_TAG;
-				}
-				break;
-			case 5: # self::COLON_STATE_COMMENT:
-				if ( $c === "-" ) {
-					$state = self::COLON_STATE_COMMENTDASH;
-				}
-				break;
-			case self::COLON_STATE_COMMENTDASH:
-				if ( $c === "-" ) {
-					$state = self::COLON_STATE_COMMENTDASHDASH;
-				} else {
-					$state = self::COLON_STATE_COMMENT;
-				}
-				break;
-			case self::COLON_STATE_COMMENTDASHDASH:
-				if ( $c === ">" ) {
-					$state = self::COLON_STATE_TEXT;
-				} else {
-					$state = self::COLON_STATE_COMMENT;
-				}
-				break;
-			default:
-				throw new MWException( "State machine error in " . __METHOD__ );
-			}
-		}
-		if ( $stack > 0 ) {
-			wfDebug( __METHOD__ . ": Invalid input; not enough close tags (stack $stack, state $state)\n" );
-			return false;
-		}
-		return false;
+		return BlockLevelPass::doBlockLevels( $text, $linestart );
 	}
 
 	/**
@@ -2923,14 +2466,14 @@ class Parser {
 		 * Some of these require message or data lookups and can be
 		 * expensive to check many times.
 		 */
-		if ( Hooks::run( 'ParserGetVariableValueVarCache', array( &$this, &$this->mVarCache ) ) ) {
+		if ( Hooks::run( 'ParserGetVariableValueVarCache', [ &$this, &$this->mVarCache ] ) ) {
 			if ( isset( $this->mVarCache[$index] ) ) {
 				return $this->mVarCache[$index];
 			}
 		}
 
 		$ts = wfTimestamp( TS_UNIX, $this->mOptions->getTimestamp() );
-		Hooks::run( 'ParserGetVariableValueTs', array( &$this, &$ts ) );
+		Hooks::run( 'ParserGetVariableValueTs', [ &$this, &$ts ] );
 
 		$pageLang = $this->getFunctionLang();
 
@@ -3002,7 +2545,7 @@ class Parser {
 				$value = wfEscapeWikiText( $this->mTitle->getRootText() );
 				break;
 			case 'rootpagenamee':
-				$value = wfEscapeWikiText( wfUrlEncode( str_replace(
+				$value = wfEscapeWikiText( wfUrlencode( str_replace(
 					' ',
 					'_',
 					$this->mTitle->getRootText()
@@ -3012,7 +2555,7 @@ class Parser {
 				$value = wfEscapeWikiText( $this->mTitle->getBaseText() );
 				break;
 			case 'basepagenamee':
-				$value = wfEscapeWikiText( wfUrlEncode( str_replace(
+				$value = wfEscapeWikiText( wfUrlencode( str_replace(
 					' ',
 					'_',
 					$this->mTitle->getBaseText()
@@ -3240,7 +2783,7 @@ class Parser {
 				$ret = null;
 				Hooks::run(
 					'ParserGetVariableValueSwitch',
-					array( &$this, &$this->mVarCache, &$index, &$ret, &$frame )
+					[ &$this, &$this->mVarCache, &$index, &$ret, &$frame ]
 				);
 
 				return $ret;
@@ -3310,7 +2853,7 @@ class Parser {
 		} else {
 			$w2 = '';
 		}
-		return array( $w1, $trimmed, $w2 );
+		return [ $w1, $trimmed, $w2 ];
 	}
 
 	/**
@@ -3363,7 +2906,7 @@ class Parser {
 	 * @return array
 	 */
 	public static function createAssocArgs( $args ) {
-		$assocArgs = array();
+		$assocArgs = [];
 		$index = 1;
 		foreach ( $args as $arg ) {
 			$eqpos = strpos( $arg, '=' );
@@ -3464,7 +3007,7 @@ class Parser {
 		# $args is a list of argument nodes, starting from index 0, not including $part1
 		# @todo FIXME: If piece['parts'] is null then the call to getLength()
 		# below won't work b/c this $args isn't an object
-		$args = ( null == $piece['parts'] ) ? array() : $piece['parts'];
+		$args = ( null == $piece['parts'] ) ? [] : $piece['parts'];
 
 		$profileSection = null; // profile templates
 
@@ -3530,8 +3073,9 @@ class Parser {
 			$colonPos = strpos( $part1, ':' );
 			if ( $colonPos !== false ) {
 				$func = substr( $part1, 0, $colonPos );
-				$funcArgs = array( trim( substr( $part1, $colonPos + 1 ) ) );
-				for ( $i = 0; $i < $args->getLength(); $i++ ) {
+				$funcArgs = [ trim( substr( $part1, $colonPos + 1 ) ) ];
+				$argsLength = $args->getLength();
+				for ( $i = 0; $i < $argsLength; $i++ ) {
 					$funcArgs[] = $args->item( $i );
 				}
 				try {
@@ -3588,7 +3132,7 @@ class Parser {
 					// Pass the template arguments as URL parameters.
 					// "uselang" will have no effect since the Language object
 					// is forced to the one defined in ParserOptions.
-					$pageArgs = array();
+					$pageArgs = [];
 					$argsLength = $args->getLength();
 					for ( $i = 0; $i < $argsLength; $i++ ) {
 						$bits = $args->item( $i )->splitArg();
@@ -3662,7 +3206,7 @@ class Parser {
 			if ( $profileSection ) {
 				$this->mProfiler->scopedProfileOut( $profileSection );
 			}
-			return array( 'object' => $text );
+			return [ 'object' => $text ];
 		}
 
 		# Expand DOM-style return values in a child frame
@@ -3722,9 +3266,9 @@ class Parser {
 		}
 
 		if ( $isLocalObj ) {
-			$ret = array( 'object' => $text );
+			$ret = [ 'object' => $text ];
 		} else {
-			$ret = array( 'text' => $text );
+			$ret = [ 'text' => $text ];
 		}
 
 		return $ret;
@@ -3749,9 +3293,8 @@ class Parser {
 	 * @throws MWException
 	 * @return array
 	 */
-	public function callParserFunction( $frame, $function, array $args = array() ) {
+	public function callParserFunction( $frame, $function, array $args = [] ) {
 		global $wgContLang;
-
 
 		# Case sensitive functions
 		if ( isset( $this->mFunctionSynonyms[1][$function] ) ) {
@@ -3762,7 +3305,7 @@ class Parser {
 			if ( isset( $this->mFunctionSynonyms[0][$function] ) ) {
 				$function = $this->mFunctionSynonyms[0][$function];
 			} else {
-				return array( 'found' => false );
+				return [ 'found' => false ];
 			}
 		}
 
@@ -3773,15 +3316,15 @@ class Parser {
 			throw new MWException( "Tag hook for $function is not callable\n" );
 		}
 
-		$allArgs = array( &$this );
+		$allArgs = [ &$this ];
 		if ( $flags & self::SFH_OBJECT_ARGS ) {
 			# Convert arguments to PPNodes and collect for appending to $allArgs
-			$funcArgs = array();
+			$funcArgs = [];
 			foreach ( $args as $k => $v ) {
 				if ( $v instanceof PPNode || $k === 0 ) {
 					$funcArgs[] = $v;
 				} else {
-					$funcArgs[] = $this->mPreprocessor->newPartNodeArray( array( $k => $v ) )->item( 0 );
+					$funcArgs[] = $this->mPreprocessor->newPartNodeArray( [ $k => $v ] )->item( 0 );
 				}
 			}
 
@@ -3807,18 +3350,18 @@ class Parser {
 		# string or an array containing the string and any flags. This mungs
 		# things around to match what this method should return.
 		if ( !is_array( $result ) ) {
-			$result = array(
+			$result =[
 				'found' => true,
 				'text' => $result,
-			);
+			];
 		} else {
 			if ( isset( $result[0] ) && !isset( $result['text'] ) ) {
 				$result['text'] = $result[0];
 			}
 			unset( $result[0] );
-			$result += array(
+			$result += [
 				'found' => true,
-			);
+			];
 		}
 
 		$noparse = true;
@@ -3856,7 +3399,7 @@ class Parser {
 			$titleText = $title->getPrefixedDBkey();
 		}
 		if ( isset( $this->mTplDomCache[$titleText] ) ) {
-			return array( $this->mTplDomCache[$titleText], $title );
+			return [ $this->mTplDomCache[$titleText], $title ];
 		}
 
 		# Cache miss, go to the database
@@ -3864,7 +3407,7 @@ class Parser {
 
 		if ( $text === false ) {
 			$this->mTplDomCache[$titleText] = false;
-			return array( false, $title );
+			return [ false, $title ];
 		}
 
 		$dom = $this->preprocessToDom( $text, self::PTD_FOR_INCLUSION );
@@ -3872,10 +3415,10 @@ class Parser {
 
 		if ( !$title->equals( $cacheTitle ) ) {
 			$this->mTplRedirCache[$cacheTitle->getPrefixedDBkey()] =
-				array( $title->getNamespace(), $cdb = $title->getDBkey() );
+				[ $title->getNamespace(), $cdb = $title->getDBkey() ];
 		}
 
-		return array( $dom, $title );
+		return [ $dom, $title ];
 	}
 
 	/**
@@ -3941,7 +3484,7 @@ class Parser {
 				}
 			}
 		}
-		return array( $text, $finalTitle );
+		return [ $text, $finalTitle ];
 	}
 
 	/**
@@ -3950,8 +3493,7 @@ class Parser {
 	 * @return string|bool
 	 */
 	public function fetchTemplate( $title ) {
-		$rv = $this->fetchTemplateAndTitle( $title );
-		return $rv[0];
+		return $this->fetchTemplateAndTitle( $title )[0];
 	}
 
 	/**
@@ -3966,22 +3508,24 @@ class Parser {
 	public static function statelessFetchTemplate( $title, $parser = false ) {
 		$text = $skip = false;
 		$finalTitle = $title;
-		$deps = array();
+		$deps = [];
 
 		# Loop to fetch the article, with up to 1 redirect
+		// @codingStandardsIgnoreStart Generic.CodeAnalysis.ForLoopWithTestFunctionCall.NotAllowed
 		for ( $i = 0; $i < 2 && is_object( $title ); $i++ ) {
+			// @codingStandardsIgnoreEnd
 			# Give extensions a chance to select the revision instead
 			$id = false; # Assume current
 			Hooks::run( 'BeforeParserFetchTemplateAndtitle',
-				array( $parser, $title, &$skip, &$id ) );
+				[ $parser, $title, &$skip, &$id ] );
 
 			if ( $skip ) {
 				$text = false;
-				$deps[] = array(
+				$deps[] = [
 					'title' => $title,
 					'page_id' => $title->getArticleID(),
 					'rev_id' => null
-				);
+				];
 				break;
 			}
 			# Get the revision
@@ -3999,16 +3543,16 @@ class Parser {
 				$linkCache->addBadLinkObj( $title );
 			}
 
-			$deps[] = array(
+			$deps[] = [
 				'title' => $title,
 				'page_id' => $title->getArticleID(),
-				'rev_id' => $rev_id );
+				'rev_id' => $rev_id ];
 			if ( $rev && !$title->equals( $rev->getTitle() ) ) {
 				# We fetched a rev from a different title; register it too...
-				$deps[] = array(
+				$deps[] = [
 					'title' => $rev->getTitle(),
 					'page_id' => $rev->getPage(),
-					'rev_id' => $rev_id );
+					'rev_id' => $rev_id ];
 			}
 
 			if ( $rev ) {
@@ -4038,10 +3582,10 @@ class Parser {
 			$finalTitle = $title;
 			$title = $content->getRedirectTarget();
 		}
-		return array(
+		return [
 			'text' => $text,
 			'finalTitle' => $finalTitle,
-			'deps' => $deps );
+			'deps' => $deps ];
 	}
 
 	/**
@@ -4051,9 +3595,8 @@ class Parser {
 	 * @param array $options Array of options to RepoGroup::findFile
 	 * @return File|bool
 	 */
-	public function fetchFile( $title, $options = array() ) {
-		$res = $this->fetchFileAndTitle( $title, $options );
-		return $res[0];
+	public function fetchFile( $title, $options = [] ) {
+		return $this->fetchFileAndTitle( $title, $options )[0];
 	}
 
 	/**
@@ -4063,7 +3606,7 @@ class Parser {
 	 * @param array $options Array of options to RepoGroup::findFile
 	 * @return array ( File or false, Title of file )
 	 */
-	public function fetchFileAndTitle( $title, $options = array() ) {
+	public function fetchFileAndTitle( $title, $options = [] ) {
 		$file = $this->fetchFileNoRegister( $title, $options );
 
 		$time = $file ? $file->getTimestamp() : false;
@@ -4075,7 +3618,7 @@ class Parser {
 			$title = $file->getTitle();
 			$this->mOutput->addImage( $title->getDBkey(), $time, $sha1 );
 		}
-		return array( $file, $title );
+		return [ $file, $title ];
 	}
 
 	/**
@@ -4088,7 +3631,7 @@ class Parser {
 	 * @param array $options Array of options to RepoGroup::findFile
 	 * @return File|bool
 	 */
-	protected function fetchFileNoRegister( $title, $options = array() ) {
+	protected function fetchFileNoRegister( $title, $options = [] ) {
 		if ( isset( $options['broken'] ) ) {
 			$file = false; // broken thumbnail forced by hook
 		} elseif ( isset( $options['sha1'] ) ) { // get by (sha1,timestamp)
@@ -4114,7 +3657,7 @@ class Parser {
 			return wfMessage( 'scarytranscludedisabled' )->inContentLanguage()->text();
 		}
 
-		$url = $title->getFullURL( array( 'action' => $action ) );
+		$url = $title->getFullURL( [ 'action' => $action ] );
 
 		if ( strlen( $url ) > 255 ) {
 			return wfMessage( 'scarytranscludetoolong' )->inContentLanguage()->text();
@@ -4130,13 +3673,13 @@ class Parser {
 		global $wgTranscludeCacheExpiry;
 		$dbr = wfGetDB( DB_SLAVE );
 		$tsCond = $dbr->timestamp( time() - $wgTranscludeCacheExpiry );
-		$obj = $dbr->selectRow( 'transcache', array( 'tc_time', 'tc_contents' ),
-				array( 'tc_url' => $url, "tc_time >= " . $dbr->addQuotes( $tsCond ) ) );
+		$obj = $dbr->selectRow( 'transcache', [ 'tc_time', 'tc_contents' ],
+				[ 'tc_url' => $url, "tc_time >= " . $dbr->addQuotes( $tsCond ) ] );
 		if ( $obj ) {
 			return $obj->tc_contents;
 		}
 
-		$req = MWHttpRequest::factory( $url, array(), __METHOD__ );
+		$req = MWHttpRequest::factory( $url, [], __METHOD__ );
 		$status = $req->execute(); // Status object
 		if ( $status->isOK() ) {
 			$text = $req->getContent();
@@ -4149,11 +3692,11 @@ class Parser {
 		}
 
 		$dbw = wfGetDB( DB_MASTER );
-		$dbw->replace( 'transcache', array( 'tc_url' ), array(
+		$dbw->replace( 'transcache', [ 'tc_url' ], [
 			'tc_url' => $url,
 			'tc_time' => $dbw->timestamp( time() ),
 			'tc_contents' => $text
-		) );
+		] );
 		return $text;
 	}
 
@@ -4196,9 +3739,9 @@ class Parser {
 			$text .= $error;
 		}
 		if ( $object !== false ) {
-			$ret = array( 'object' => $object );
+			$ret = [ 'object' => $object ];
 		} else {
-			$ret = array( 'text' => $text );
+			$ret = [ 'text' => $text ];
 		}
 
 		return $ret;
@@ -4246,14 +3789,14 @@ class Parser {
 					throw new MWException( "Tag hook for $name is not callable\n" );
 				}
 				$output = call_user_func_array( $this->mTagHooks[$name],
-					array( $content, $attributes, $this, $frame ) );
+					[ $content, $attributes, $this, $frame ] );
 			} elseif ( isset( $this->mFunctionTagHooks[$name] ) ) {
 				list( $callback, ) = $this->mFunctionTagHooks[$name];
 				if ( !is_callable( $callback ) ) {
 					throw new MWException( "Tag hook for $name is not callable\n" );
 				}
 
-				$output = call_user_func_array( $callback, array( &$this, $frame, $content, $attributes ) );
+				$output = call_user_func_array( $callback, [ &$this, $frame, $content, $attributes ] );
 			} else {
 				$output = '<span class="error">Invalid tag extension name: ' .
 					htmlspecialchars( $name ) . '</span>';
@@ -4361,7 +3904,6 @@ class Parser {
 			$this->addTrackingCategory( 'hidden-category-category' );
 		}
 		# (bug 8068) Allow control over whether robots index a page.
-		#
 		# @todo FIXME: Bug 14899: __INDEX__ always overrides __NOINDEX__ here!  This
 		# is not desirable, the last one on the page should win.
 		if ( isset( $this->mDoubleUnderscores['noindex'] ) && $this->mTitle->canUseNoindex() ) {
@@ -4422,7 +3964,7 @@ class Parser {
 
 		# Get all headlines for numbering them and adding funky stuff like [edit]
 		# links - this is for later, but we need the number of headlines right now
-		$matches = array();
+		$matches = [];
 		$numMatches = preg_match_all(
 			'/<H(?P<level>[1-6])(?P<attrib>.*?>)\s*(?P<header>[\s\S]*?)\s*<\/H[1-6] *>/i',
 			$text,
@@ -4461,9 +4003,9 @@ class Parser {
 		# passed to the skin functions. These are determined here
 		$toc = '';
 		$full = '';
-		$head = array();
-		$sublevelCount = array();
-		$levelCount = array();
+		$head = [];
+		$sublevelCount = [];
+		$levelCount = [];
 		$level = 0;
 		$prevlevel = 0;
 		$toclevel = 0;
@@ -4476,17 +4018,17 @@ class Parser {
 		$root = $this->preprocessToDom( $origText );
 		$node = $root->getFirstChild();
 		$byteOffset = 0;
-		$tocraw = array();
-		$refers = array();
+		$tocraw = [];
+		$refers = [];
 
-		$headlines = $numMatches !== false ? $matches[3] : array();
+		$headlines = $numMatches !== false ? $matches[3] : [];
 
 		foreach ( $headlines as $headline ) {
 			$isTemplate = false;
 			$titleText = false;
 			$sectionIndex = false;
 			$numbering = '';
-			$markerMatches = array();
+			$markerMatches = [];
 			if ( preg_match( "/^$markerRegex/", $headline, $markerMatches ) ) {
 				$serial = $markerMatches[1];
 				list( $titleText, $sectionIndex ) = $this->mHeadings[$serial];
@@ -4575,15 +4117,14 @@ class Parser {
 			# * <b> (r105284)
 			# * <bdi> (bug 72884)
 			# * <span dir="rtl"> and <span dir="ltr"> (bug 35167)
-			#
 			# We strip any parameter from accepted tags (second regex), except dir="rtl|ltr" from <span>,
 			# to allow setting directionality in toc items.
 			$tocline = preg_replace(
-				array(
+				[
 					'#<(?!/?(span|sup|sub|bdi|i|b)(?: [^>]*)?>).*?>#',
 					'#<(/?(?:span(?: dir="(?:rtl|ltr)")?|sup|sub|bdi|i|b))(?: .*?)?>#'
-				),
-				array( '', '<$1>' ),
+				],
+				[ '', '<$1>' ],
 				$safeHeadline
 			);
 
@@ -4604,7 +4145,6 @@ class Parser {
 			if ( $wgExperimentalHtmlIds ) {
 				# For reverse compatibility, provide an id that's
 				# HTML4-compatible, like we used to.
-				#
 				# It may be worth noting, academically, that it's possible for
 				# the legacy anchor to conflict with a non-legacy headline
 				# anchor on the page.  In this case likely the "correct" thing
@@ -4613,7 +4153,7 @@ class Parser {
 				# to type in section names like "abc_.D7.93.D7.90.D7.A4"
 				# manually, so let's not bother worrying about it.
 				$legacyHeadline = Sanitizer::escapeId( $safeHeadline,
-					array( 'noninitial', 'legacy' ) );
+					[ 'noninitial', 'legacy' ] );
 				$safeHeadline = Sanitizer::escapeId( $safeHeadline );
 
 				if ( $legacyHeadline == $safeHeadline ) {
@@ -4641,14 +4181,18 @@ class Parser {
 			$anchor = $safeHeadline;
 			$legacyAnchor = $legacyHeadline;
 			if ( isset( $refers[$arrayKey] ) ) {
+				// @codingStandardsIgnoreStart
 				for ( $i = 2; isset( $refers["${arrayKey}_$i"] ); ++$i );
+				// @codingStandardsIgnoreEnd
 				$anchor .= "_$i";
 				$refers["${arrayKey}_$i"] = true;
 			} else {
 				$refers[$arrayKey] = true;
 			}
 			if ( $legacyHeadline !== false && isset( $refers[$legacyArrayKey] ) ) {
+				// @codingStandardsIgnoreStart
 				for ( $i = 2; isset( $refers["${legacyArrayKey}_$i"] ); ++$i );
+				// @codingStandardsIgnoreEnd
 				$legacyAnchor .= "_$i";
 				$refers["${legacyArrayKey}_$i"] = true;
 			} else {
@@ -4660,7 +4204,7 @@ class Parser {
 				# the two are different if the line contains a link
 				$headline = Html::element(
 					'span',
-					array( 'class' => 'mw-headline-number' ),
+					[ 'class' => 'mw-headline-number' ],
 					$numbering
 				) . ' ' . $headline;
 			}
@@ -4684,7 +4228,7 @@ class Parser {
 					$frame->expand( $node, PPFrame::RECOVER_ORIG ) ) );
 				$node = $node->getNextSibling();
 			}
-			$tocraw[] = array(
+			$tocraw[] = [
 				'toclevel' => $toclevel,
 				'level' => $level,
 				'line' => $tocline,
@@ -4693,7 +4237,7 @@ class Parser {
 				'fromtitle' => $titleText,
 				'byteoffset' => ( $noOffset ? null : $byteOffset ),
 				'anchor' => $anchor,
-			);
+			];
 
 			# give headline the correct <h#> tag
 			if ( $maybeShowEditLink && $sectionIndex !== false ) {
@@ -4764,7 +4308,7 @@ class Parser {
 		$i = 0;
 
 		// build an array of document sections
-		$sections = array();
+		$sections = [];
 		foreach ( $blocks as $block ) {
 			// $head is zero-based, sections aren't.
 			if ( empty( $head[$i - 1] ) ) {
@@ -4783,7 +4327,7 @@ class Parser {
 			 * &$sectionContent : ref to the content of the section
 			 * $showEditLinks : boolean describing whether this section has an edit link
 			 */
-			Hooks::run( 'ParserSectionCreate', array( $this, $i, &$sections[$i], $showEditLink ) );
+			Hooks::run( 'ParserSectionCreate', [ $this, $i, &$sections[$i], $showEditLink ] );
 
 			$i++;
 		}
@@ -4794,7 +4338,7 @@ class Parser {
 			$sections[0] = $sections[0] . $toc . "\n";
 		}
 
-		$full .= join( '', $sections );
+		$full .= implode( '', $sections );
 
 		if ( $this->mForceTocPosition ) {
 			return str_replace( '<!--MWTOC-->', $toc, $full );
@@ -4823,17 +4367,17 @@ class Parser {
 		$this->startParse( $title, $options, self::OT_WIKI, $clearState );
 		$this->setUser( $user );
 
-		$pairs = array(
+		$pairs = [
 			"\r\n" => "\n",
 			"\r" => "\n",
-		);
+		];
 		$text = str_replace( array_keys( $pairs ), array_values( $pairs ), $text );
 		if ( $options->getPreSaveTransform() ) {
 			$text = $this->pstPass2( $text, $user );
 		}
 		$text = $this->mStripState->unstripBoth( $text );
 
-		$this->setUser( null ); #Reset
+		$this->setUser( null ); # Reset
 
 		return $text;
 	}
@@ -4870,11 +4414,11 @@ class Parser {
 
 		# Signatures
 		$sigText = $this->getUserSig( $user );
-		$text = strtr( $text, array(
+		$text = strtr( $text, [
 			'~~~~~' => $d,
 			'~~~~' => "$sigText $d",
 			'~~~' => $sigText
-		) );
+		] );
 
 		# Context links ("pipe tricks"): [[|name]] and [[name (context)|]]
 		$tc = '[' . Title::legalChars() . ']';
@@ -4895,7 +4439,7 @@ class Parser {
 		$text = preg_replace( $p3, '[[\\1\\2\\3\\4|\\2]]', $text );
 
 		$t = $this->mTitle->getText();
-		$m = array();
+		$m = [];
 		if ( preg_match( "/^($nc+:|)$tc+?( \\($tc+\\))$/", $t, $m ) ) {
 			$text = preg_replace( $p2, "[[$m[1]\\1$m[2]|\\1]]", $text );
 		} elseif ( preg_match( "/^($nc+:|)$tc+?(, $tc+|)$/", $t, $m ) && "$m[1]$m[2]" != '' ) {
@@ -5160,8 +4704,8 @@ class Parser {
 	 * Remove all tag hooks
 	 */
 	public function clearTagHooks() {
-		$this->mTagHooks = array();
-		$this->mFunctionTagHooks = array();
+		$this->mTagHooks = [];
+		$this->mFunctionTagHooks = [];
 		$this->mStripList = $this->mDefaultStripList;
 	}
 
@@ -5212,7 +4756,7 @@ class Parser {
 		global $wgContLang;
 
 		$oldVal = isset( $this->mFunctionHooks[$id] ) ? $this->mFunctionHooks[$id][0] : null;
-		$this->mFunctionHooks[$id] = array( $callback, $flags );
+		$this->mFunctionHooks[$id] = [ $callback, $flags ];
 
 		# Add to function cache
 		$mw = MagicWord::get( $id );
@@ -5267,7 +4811,7 @@ class Parser {
 		}
 		$old = isset( $this->mFunctionTagHooks[$tag] ) ?
 			$this->mFunctionTagHooks[$tag] : null;
-		$this->mFunctionTagHooks[$tag] = array( $callback, $flags );
+		$this->mFunctionTagHooks[$tag] = [ $callback, $flags ];
 
 		if ( !in_array( $tag, $this->mStripList ) ) {
 			$this->mStripList[] = $tag;
@@ -5277,9 +4821,8 @@ class Parser {
 	}
 
 	/**
-	 * @todo FIXME: Update documentation. makeLinkObj() is deprecated.
 	 * Replace "<!--LINK-->" link placeholders with actual links, in the buffer
-	 * Placeholders created in Skin::makeLinkObj()
+	 * Placeholders created in Linker::link()
 	 *
 	 * @param string $text
 	 * @param int $options
@@ -5355,13 +4898,13 @@ class Parser {
 		}
 		$ig->setAdditionalOptions( $params );
 
-		Hooks::run( 'BeforeParserrenderImageGallery', array( &$this, &$ig ) );
+		Hooks::run( 'BeforeParserrenderImageGallery', [ &$this, &$ig ] );
 
 		$lines = StringUtils::explode( "\n", $text );
 		foreach ( $lines as $line ) {
 			# match lines like these:
 			# Image:someimage.jpg|This is some image
-			$matches = array();
+			$matches = [];
 			preg_match( "/^([^|]+)(\\|(.*))?$/", $line, $matches );
 			# Skip empty lines
 			if ( count( $matches ) == 0 ) {
@@ -5380,18 +4923,18 @@ class Parser {
 			# We need to get what handler the file uses, to figure out parameters.
 			# Note, a hook can overide the file name, and chose an entirely different
 			# file (which potentially could be of a different type and have different handler).
-			$options = array();
+			$options = [];
 			$descQuery = false;
 			Hooks::run( 'BeforeParserFetchFileAndTitle',
-				array( $this, $title, &$options, &$descQuery ) );
+				[ $this, $title, &$options, &$descQuery ] );
 			# Don't register it now, as ImageGallery does that later.
 			$file = $this->fetchFileNoRegister( $title, $options );
 			$handler = $file ? $file->getHandler() : false;
 
-			$paramMap = array(
+			$paramMap = [
 				'img_alt' => 'gallery-internal-alt',
 				'img_link' => 'gallery-internal-link',
-			);
+			];
 			if ( $handler ) {
 				$paramMap = $paramMap + $handler->getParamMap();
 				// We don't want people to specify per-image widths.
@@ -5404,7 +4947,7 @@ class Parser {
 			$label = '';
 			$alt = '';
 			$link = '';
-			$handlerOptions = array();
+			$handlerOptions = [];
 			if ( isset( $matches[3] ) ) {
 				// look for an |alt= definition while trying not to break existing
 				// captions with multiple pipes (|) in it, until a more sensible grammar
@@ -5429,7 +4972,7 @@ class Parser {
 							$chars = self::EXT_LINK_URL_CLASS;
 							$addr = self::EXT_LINK_ADDR;
 							$prots = $this->mUrlProtocols;
-							//check to see if link matches an absolute url, if not then it must be a wiki link.
+							// check to see if link matches an absolute url, if not then it must be a wiki link.
 							if ( preg_match( "/^($prots)$addr$chars*$/u", $linkValue ) ) {
 								$link = $linkValue;
 							} else {
@@ -5444,25 +4987,25 @@ class Parser {
 							if ( $handler->validateParam( $paramName, $match ) ) {
 								$handlerOptions[$paramName] = $match;
 							} else {
-								// Guess not. Append it to the caption.
+								// Guess not, consider it as caption.
 								wfDebug( "$parameterMatch failed parameter validation\n" );
-								$label .= '|' . $parameterMatch;
+								$label = '|' . $parameterMatch;
 							}
 						}
 
 					} else {
-						// concatenate all other pipes
-						$label .= '|' . $parameterMatch;
+						// Last pipe wins.
+						$label = '|' . $parameterMatch;
 					}
 				}
-				// remove the first pipe
+				// Remove the pipe.
 				$label = substr( $label, 1 );
 			}
 
 			$ig->add( $title, $label, $alt, $link, $handlerOptions );
 		}
 		$html = $ig->toHTML();
-		Hooks::run( 'AfterParserFetchFileAndTitle', array( $this, $ig, &$html ) );
+		Hooks::run( 'AfterParserFetchFileAndTitle', [ $this, $ig, &$html ] );
 		return $html;
 	}
 
@@ -5478,20 +5021,20 @@ class Parser {
 		}
 		if ( !isset( $this->mImageParams[$handlerClass] ) ) {
 			# Initialise static lists
-			static $internalParamNames = array(
-				'horizAlign' => array( 'left', 'right', 'center', 'none' ),
-				'vertAlign' => array( 'baseline', 'sub', 'super', 'top', 'text-top', 'middle',
-					'bottom', 'text-bottom' ),
-				'frame' => array( 'thumbnail', 'manualthumb', 'framed', 'frameless',
-					'upright', 'border', 'link', 'alt', 'class' ),
-			);
+			static $internalParamNames = [
+				'horizAlign' => [ 'left', 'right', 'center', 'none' ],
+				'vertAlign' => [ 'baseline', 'sub', 'super', 'top', 'text-top', 'middle',
+					'bottom', 'text-bottom' ],
+				'frame' => [ 'thumbnail', 'manualthumb', 'framed', 'frameless',
+					'upright', 'border', 'link', 'alt', 'class' ],
+			];
 			static $internalParamMap;
 			if ( !$internalParamMap ) {
-				$internalParamMap = array();
+				$internalParamMap = [];
 				foreach ( $internalParamNames as $type => $names ) {
 					foreach ( $names as $name ) {
 						$magicName = str_replace( '-', '_', "img_$name" );
-						$internalParamMap[$magicName] = array( $type, $name );
+						$internalParamMap[$magicName] = [ $type, $name ];
 					}
 				}
 			}
@@ -5501,13 +5044,13 @@ class Parser {
 			if ( $handler ) {
 				$handlerParamMap = $handler->getParamMap();
 				foreach ( $handlerParamMap as $magic => $paramName ) {
-					$paramMap[$magic] = array( 'handler', $paramName );
+					$paramMap[$magic] = [ 'handler', $paramName ];
 				}
 			}
 			$this->mImageParams[$handlerClass] = $paramMap;
 			$this->mImageParamsMagicArray[$handlerClass] = new MagicWordArray( array_keys( $paramMap ) );
 		}
-		return array( $this->mImageParams[$handlerClass], $this->mImageParamsMagicArray[$handlerClass] );
+		return [ $this->mImageParams[$handlerClass], $this->mImageParamsMagicArray[$handlerClass] ];
 	}
 
 	/**
@@ -5548,10 +5091,10 @@ class Parser {
 		$parts = StringUtils::explode( "|", $options );
 
 		# Give extensions a chance to select the file revision for us
-		$options = array();
+		$options = [];
 		$descQuery = false;
 		Hooks::run( 'BeforeParserFetchFileAndTitle',
-			array( $this, $title, &$options, &$descQuery ) );
+			[ $this, $title, &$options, &$descQuery ] );
 		# Fetch and register the file (file title may be different via hooks)
 		list( $file, $title ) = $this->fetchFileAndTitle( $title, $options );
 
@@ -5566,8 +5109,8 @@ class Parser {
 
 		# Process the input parameters
 		$caption = '';
-		$params = array( 'frame' => array(), 'handler' => array(),
-			'horizAlign' => array(), 'vertAlign' => array() );
+		$params = [ 'frame' => [], 'handler' => [],
+			'horizAlign' => [], 'vertAlign' => [] ];
 		$seenformat = false;
 		foreach ( $parts as $part ) {
 			$part = trim( $part );
@@ -5680,13 +5223,11 @@ class Parser {
 		# came to also set the caption, ordinary text after the image -- which
 		# makes no sense, because that just repeats the text multiple times in
 		# screen readers.  It *also* came to set the title attribute.
-		#
 		# Now that we have an alt attribute, we should not set the alt text to
 		# equal the caption: that's worse than useless, it just repeats the
 		# text.  This is the framed/thumbnail case.  If there's no caption, we
 		# use the unnamed parameter for alt text as well, just for the time be-
 		# ing, if the unnamed param is set and the alt param is not.
-		#
 		# For the future, we need to figure out if we want to tweak this more,
 		# e.g., introducing a title= parameter for the title; ignoring the un-
 		# named parameter entirely for images without a caption; adding an ex-
@@ -5715,7 +5256,7 @@ class Parser {
 			$params['frame']['title'] = $this->stripAltText( $caption, $holders );
 		}
 
-		Hooks::run( 'ParserMakeImageParams', array( $title, $file, &$params, $this ) );
+		Hooks::run( 'ParserMakeImageParams', [ $title, $file, &$params, $this ] );
 
 		# Linker does the rest
 		$time = isset( $options['time'] ) ? $options['time'] : false;
@@ -5805,10 +5346,10 @@ class Parser {
 	 * @return string
 	 */
 	public function replaceTransparentTags( $text ) {
-		$matches = array();
+		$matches = [];
 		$elements = array_keys( $this->mTransparentTagHooks );
 		$text = self::extractTagsAndParams( $elements, $text, $matches );
-		$replacements = array();
+		$replacements = [];
 
 		foreach ( $matches as $marker => $data ) {
 			list( $element, $content, $params, $tag ) = $data;
@@ -5816,7 +5357,7 @@ class Parser {
 			if ( isset( $this->mTransparentTagHooks[$tagName] ) ) {
 				$output = call_user_func_array(
 					$this->mTransparentTagHooks[$tagName],
-					array( $content, $params, $this )
+					[ $content, $params, $this ]
 				);
 			} else {
 				$output = $tag;
@@ -6053,7 +5594,6 @@ class Parser {
 
 			# The cryptic '' timezone parameter tells to use the site-default
 			# timezone offset instead of the user settings.
-			#
 			# Since this value will be saved into the parser cache, served
 			# to other users, and potentially even used inside links and such,
 			# it needs to be consistent for all visitors.
@@ -6170,7 +5710,7 @@ class Parser {
 		# Strip out wikitext links(they break the anchor)
 		$text = $this->stripSectionName( $text );
 		$text = Sanitizer::normalizeSectionNameWhitespace( $text );
-		return '#' . Sanitizer::escapeId( $text, array( 'noninitial', 'legacy' ) );
+		return '#' . Sanitizer::escapeId( $text, [ 'noninitial', 'legacy' ] );
 	}
 
 	/**
@@ -6216,7 +5756,9 @@ class Parser {
 	 *
 	 * @return string
 	 */
-	public function testSrvus( $text, Title $title, ParserOptions $options, $outputType = self::OT_HTML ) {
+	public function testSrvus( $text, Title $title, ParserOptions $options,
+		$outputType = self::OT_HTML
+	) {
 		$magicScopeVariable = $this->lock();
 		$this->startParse( $title, $options, $outputType, true );
 
@@ -6313,12 +5855,12 @@ class Parser {
 	 * @return array
 	 */
 	public function serializeHalfParsedText( $text ) {
-		$data = array(
+		$data = [
 			'text' => $text,
 			'version' => self::HALF_PARSED_VERSION,
 			'stripState' => $this->mStripState->getSubState( $text ),
 			'linkHolders' => $this->mLinkHolders->getSubArray( $text )
-		);
+		];
 		return $data;
 	}
 
@@ -6343,7 +5885,7 @@ class Parser {
 		}
 
 		# First, extract the strip state.
-		$texts = array( $data['text'] );
+		$texts = [ $data['text'] ];
 		$texts = $this->mStripState->merge( $data['stripState'], $texts );
 
 		# Now renumber links
@@ -6375,11 +5917,11 @@ class Parser {
 	 * @since 1.20
 	 */
 	public function parseWidthParam( $value ) {
-		$parsedWidthParam = array();
+		$parsedWidthParam = [];
 		if ( $value === '' ) {
 			return $parsedWidthParam;
 		}
-		$m = array();
+		$m = [];
 		# (bug 13500) In both cases (width/height and width only),
 		# permit trailing "px" for backward compatibility.
 		if ( preg_match( '/^([0-9]*)x([0-9]*)\s*(?:px)?\s*$/', $value, $m ) ) {
@@ -6410,9 +5952,8 @@ class Parser {
 		}
 		$this->mInParse = true;
 
-		$that = $this;
-		$recursiveCheck = new ScopedCallback( function() use ( $that ) {
-			$that->mInParse = false;
+		$recursiveCheck = new ScopedCallback( function() {
+			$this->mInParse = false;
 		} );
 
 		return $recursiveCheck;
@@ -6429,7 +5970,7 @@ class Parser {
 	 * @since 1.24
 	 */
 	public static function stripOuterParagraph( $html ) {
-		$m = array();
+		$m = [];
 		if ( preg_match( '/^<p>(.*)\n?<\/p>\n?$/sU', $html, $m ) ) {
 			if ( strpos( $m[1], '</p>' ) === false ) {
 				$html = $m[1];

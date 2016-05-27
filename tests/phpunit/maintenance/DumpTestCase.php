@@ -49,11 +49,12 @@ abstract class DumpTestCase extends MediaWikiLangTestCase {
 			$text_id = $revision->getTextId();
 
 			if ( ( $revision_id > 0 ) && ( $text_id > 0 ) ) {
-				return array( $revision_id, $text_id );
+				return [ $revision_id, $text_id ];
 			}
 		}
 
-		throw new MWException( "Could not determine revision id (" . $status->getWikiText() . ")" );
+		throw new MWException( "Could not determine revision id ("
+			. $status->getWikiText( false, false, 'en' ) . ")" );
 	}
 
 	/**

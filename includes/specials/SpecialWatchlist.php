@@ -21,6 +21,8 @@
  * @ingroup SpecialPage
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * A special page that lists last changes made to the wiki,
  * limited to user-defined list of titles.
@@ -30,6 +32,10 @@
 class SpecialWatchlist extends ChangesListSpecialPage {
 	public function __construct( $page = 'Watchlist', $restriction = 'viewmywatchlist' ) {
 		parent::__construct( $page, $restriction );
+	}
+
+	public function doesWrites() {
+		return true;
 	}
 
 	/**
@@ -44,9 +50,9 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$output = $this->getOutput();
 		$request = $this->getRequest();
 		$this->addHelpLink( 'Help:Watching pages' );
-		$output->addModules( array(
+		$output->addModules( [
 			'mediawiki.special.changeslist.visitedstatus',
-		) );
+		] );
 
 		$mode = SpecialEditWatchlist::getMode( $request, $subpage );
 		if ( $mode !== false ) {
@@ -89,11 +95,11 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 	 * @return string[] subpages
 	 */
 	public function getSubpagesForPrefixSearch() {
-		return array(
+		return [
 			'clear',
 			'edit',
 			'raw',
-		);
+		];
 	}
 
 	/**
@@ -118,10 +124,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$opts->add( 'hideliu', $user->getBoolOption( 'watchlisthideliu' ) );
 		$opts->add( 'hidepatrolled', $user->getBoolOption( 'watchlisthidepatrolled' ) );
 		$opts->add( 'hidemyself', $user->getBoolOption( 'watchlisthideown' ) );
-
-		if ( $this->getConfig()->get( 'RCWatchCategoryMembership' ) ) {
-			$opts->add( 'hidecategorization', $user->getBoolOption( 'watchlisthidecategorization' ) );
-		}
+		$opts->add( 'hidecategorization', $user->getBoolOption( 'watchlisthidecategorization' ) );
 
 		return $opts;
 	}
@@ -134,7 +137,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 	protected function getCustomFilters() {
 		if ( $this->customFilters === null ) {
 			$this->customFilters = parent::getCustomFilters();
-			Hooks::run( 'SpecialWatchlistFilters', array( $this, &$this->customFilters ), '1.23' );
+			Hooks::run( 'SpecialWatchlistFilters', [ $this, &$this->customFilters ], '1.23' );
 		}
 
 		return $this->customFilters;
@@ -150,14 +153,14 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 	 * @return FormOptions
 	 */
 	protected function fetchOptionsFromRequest( $opts ) {
-		static $compatibilityMap = array(
+		static $compatibilityMap = [
 			'hideMinor' => 'hideminor',
 			'hideBots' => 'hidebots',
 			'hideAnons' => 'hideanons',
 			'hideLiu' => 'hideliu',
 			'hidePatrolled' => 'hidepatrolled',
 			'hideOwn' => 'hidemyself',
-		);
+		];
 
 		$params = $this->getRequest()->getValues();
 		foreach ( $compatibilityMap as $from => $to ) {
@@ -211,14 +214,14 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$usePage = false;
 		} else {
 			# Top log Ids for a page are not stored
-			$nonRevisionTypes = array( RC_LOG );
-			Hooks::run( 'SpecialWatchlistGetNonRevisionTypes', array( &$nonRevisionTypes ) );
+			$nonRevisionTypes = [ RC_LOG ];
+			Hooks::run( 'SpecialWatchlistGetNonRevisionTypes', [ &$nonRevisionTypes ] );
 			if ( $nonRevisionTypes ) {
 				$conds[] = $dbr->makeList(
-					array(
+					[
 						'rc_this_oldid=page_latest',
 						'rc_type' => $nonRevisionTypes,
-					),
+					],
 					LIST_OR
 				);
 			}
@@ -226,19 +229,19 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$usePage = true;
 		}
 
-		$tables = array( 'recentchanges', 'watchlist' );
+		$tables = [ 'recentchanges', 'watchlist' ];
 		$fields = RecentChange::selectFields();
-		$query_options = array( 'ORDER BY' => 'rc_timestamp DESC' );
-		$join_conds = array(
-			'watchlist' => array(
+		$query_options = [ 'ORDER BY' => 'rc_timestamp DESC' ];
+		$join_conds = [
+			'watchlist' => [
 				'INNER JOIN',
-				array(
+				[
 					'wl_user' => $user->getId(),
 					'wl_namespace=rc_namespace',
 					'wl_title=rc_title'
-				),
-			),
-		);
+				],
+			],
+		];
 
 		if ( $this->getConfig()->get( 'ShowUpdatedMarker' ) ) {
 			$fields[] = 'wl_notificationtimestamp';
@@ -250,7 +253,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$rollbacker = $user->isAllowed( 'rollback' );
 		if ( $usePage || $rollbacker ) {
 			$tables[] = 'page';
-			$join_conds['page'] = array( 'LEFT JOIN', 'rc_cur_id=page_id' );
+			$join_conds['page'] = [ 'LEFT JOIN', 'rc_cur_id=page_id' ];
 			if ( $rollbacker ) {
 				$fields[] = 'page_latest';
 			}
@@ -266,10 +269,10 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$bitmask = 0;
 		}
 		if ( $bitmask ) {
-			$conds[] = $dbr->makeList( array(
+			$conds[] = $dbr->makeList( [
 				'rc_type != ' . RC_LOG,
 				$dbr->bitAnd( 'rc_deleted', $bitmask ) . " != $bitmask",
-			), LIST_OR );
+			], LIST_OR );
 		}
 
 		ChangeTags::modifyDisplayQuery(
@@ -299,7 +302,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		return parent::runMainQueryHook( $tables, $fields, $conds, $query_options, $join_conds, $opts )
 			&& Hooks::run(
 				'SpecialWatchlistQuery',
-				array( &$conds, &$tables, &$join_conds, &$fields, $opts ),
+				[ &$conds, &$tables, &$join_conds, &$fields, $opts ],
 				'1.23'
 			);
 	}
@@ -320,12 +323,12 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$user = $this->getUser();
 		$wlToken = $user->getTokenFromOption( 'watchlisttoken' );
 		if ( $wlToken ) {
-			$this->addFeedLinks( array(
+			$this->addFeedLinks( [
 				'action' => 'feedwatchlist',
 				'allrev' => 1,
 				'wlowner' => $user->getName(),
 				'wltoken' => $wlToken,
-			) );
+			] );
 		}
 	}
 
@@ -361,11 +364,28 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$list->initChangesListRows( $rows );
 		$dbr->dataSeek( $rows, 0 );
 
+		if ( $this->getConfig()->get( 'RCShowWatchingUsers' )
+			&& $user->getOption( 'shownumberswatching' )
+		) {
+			$watchedItemStore = MediaWikiServices::getInstance()->getWatchedItemStore();
+		}
+
 		$s = $list->beginRecentChangesList();
+		$userShowHiddenCats = $this->getUser()->getBoolOption( 'showhiddencats' );
 		$counter = 1;
 		foreach ( $rows as $obj ) {
 			# Make RC entry
 			$rc = RecentChange::newFromRow( $obj );
+
+			# Skip CatWatch entries for hidden cats based on user preference
+			if (
+				$rc->getAttribute( 'rc_type' ) == RC_CATEGORIZE &&
+				!$userShowHiddenCats &&
+				$rc->getParam( 'hidden-cat' )
+			) {
+				continue;
+			}
+
 			$rc->counter = $counter++;
 
 			if ( $this->getConfig()->get( 'ShowUpdatedMarker' ) ) {
@@ -374,16 +394,9 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 				$updated = false;
 			}
 
-			if ( $this->getConfig()->get( 'RCShowWatchingUsers' )
-				&& $user->getOption( 'shownumberswatching' )
-			) {
-				$rc->numberofWatchingusers = $dbr->selectField( 'watchlist',
-					'COUNT(*)',
-					array(
-						'wl_namespace' => $obj->rc_namespace,
-						'wl_title' => $obj->rc_title,
-					),
-					__METHOD__ );
+			if ( isset( $watchedItemStore ) ) {
+				$rcTitleValue = new TitleValue( (int)$obj->rc_namespace, $obj->rc_title );
+				$rc->numberofWatchingusers = $watchedItemStore->countWatchers( $rcTitleValue );
 			} else {
 				$rc->numberofWatchingusers = 0;
 			}
@@ -411,7 +424,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		// if the user wishes, that the watchlist is reloaded, whenever a filter changes,
 		// add the module for that
 		if ( $user->getBoolOption( 'watchlistreloadautomatically' ) ) {
-			$out->addModules( array( 'mediawiki.special.watchlist' ) );
+			$out->addModules( [ 'mediawiki.special.watchlist' ] );
 		}
 
 		$out->addSubtitle(
@@ -422,26 +435,28 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$this->setTopText( $opts );
 
 		$lang = $this->getLanguage();
-		$wlInfo = '';
 		if ( $opts['days'] > 0 ) {
-			$timestamp = wfTimestampNow();
-			$wlInfo = $this->msg( 'wlnote' )->numParams( $numRows, round( $opts['days'] * 24 ) )->params(
-				$lang->userDate( $timestamp, $user ), $lang->userTime( $timestamp, $user )
-			)->parse() . "<br />\n";
+			$days = $opts['days'];
+		} else {
+			$days = $this->getConfig()->get( 'RCMaxAge' ) / ( 3600 * 24 );
 		}
+		$timestamp = wfTimestampNow();
+		$wlInfo = $this->msg( 'wlnote' )->numParams( $numRows, round( $days * 24 ) )->params(
+			$lang->userDate( $timestamp, $user ), $lang->userTime( $timestamp, $user )
+		)->parse() . "<br />\n";
 
 		$nondefaults = $opts->getChangedValues();
 		$cutofflinks = $this->msg( 'wlshowtime' ) . ' ' . $this->cutoffselector( $opts );
 
 		# Spit out some control panel links
-		$filters = array(
+		$filters = [
 			'hideminor' => 'wlshowhideminor',
 			'hidebots' => 'wlshowhidebots',
 			'hideanons' => 'wlshowhideanons',
 			'hideliu' => 'wlshowhideliu',
 			'hidemyself' => 'wlshowhidemine',
 			'hidepatrolled' => 'wlshowhidepatr'
-		);
+		];
 
 		if ( $this->getConfig()->get( 'RCWatchCategoryMembership' ) ) {
 			$filters['hidecategorization'] = 'wlshowhidecategorization';
@@ -455,7 +470,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			unset( $filters['hidepatrolled'] );
 		}
 
-		$links = array();
+		$links = [];
 		foreach ( $filters as $name => $msg ) {
 			$links[] = $this->showHideCheck( $nondefaults, $msg, $name, $opts[$name] );
 		}
@@ -481,29 +496,29 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			implode( ' ', $links );
 		$form .= "\n<br />\n";
 		$form .= Html::namespaceSelector(
-			array(
+			[
 				'selected' => $opts['namespace'],
 				'all' => '',
 				'label' => $this->msg( 'namespace' )->text()
-			), array(
+			], [
 				'name' => 'namespace',
 				'id' => 'namespace',
 				'class' => 'namespaceselector',
-			)
+			]
 		) . "\n";
 		$form .= '<span class="mw-input-with-label">' . Xml::checkLabel(
 			$this->msg( 'invert' )->text(),
 			'invert',
 			'nsinvert',
 			$opts['invert'],
-			array( 'title' => $this->msg( 'tooltip-invert' )->text() )
+			[ 'title' => $this->msg( 'tooltip-invert' )->text() ]
 		) . "</span>\n";
 		$form .= '<span class="mw-input-with-label">' . Xml::checkLabel(
 			$this->msg( 'namespace_association' )->text(),
 			'associated',
 			'nsassociated',
 			$opts['associated'],
-			array( 'title' => $this->msg( 'tooltip-namespace_association' )->text() )
+			[ 'title' => $this->msg( 'tooltip-namespace_association' )->text() ]
 		) . "</span>\n";
 		$form .= Xml::submitButton( $this->msg( 'watchlist-submit' )->text() ) . "\n";
 		foreach ( $hiddenFields as $key => $value ) {
@@ -522,7 +537,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		// default string representation, for example, and would confuse comparisons.
 
 		// Misleadingly, the 'days' option supports hours too.
-		$days = array_map( 'strval', array( 1/24, 2/24, 6/24, 12/24, 1, 3, 7 ) );
+		$days = array_map( 'strval', [ 1/24, 2/24, 6/24, 12/24, 1, 3, 7 ] );
 
 		$userWatchlistOption = (string)$this->getUser()->getOption( 'watchlistdays' );
 		// add the user preference, if it isn't available already
@@ -530,9 +545,19 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$days[] = $userWatchlistOption;
 		}
 
+		$maxDays = (string)( $this->getConfig()->get( 'RCMaxAge' ) / ( 3600 * 24 ) );
+		// add the maximum possible value, if it isn't available already
+		if ( !in_array( $maxDays, $days ) ) {
+			$days[] = $maxDays;
+		}
+
 		$selected = (string)$options['days'];
+		if ( $selected <= 0 ) {
+			$selected = $maxDays;
+		}
+
 		// add the currently selected value, if it isn't available already
-		if ( !in_array( $selected, $days ) && $selected !== '0' ) {
+		if ( !in_array( $selected, $days ) ) {
 			$days[] = $selected;
 		}
 
@@ -548,11 +573,6 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$select->addOption( $name, $value );
 		}
 
-		// 'all' option
-		$name = $this->msg( 'watchlistall2' )->text();
-		$value = '0';
-		$select->addOption( $name, $value );
-
 		return $select->getHTML() . "\n<br />\n";
 	}
 
@@ -561,8 +581,7 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$form = "";
 		$user = $this->getUser();
 
-		$dbr = $this->getDB();
-		$numItems = $this->countItems( $dbr );
+		$numItems = $this->countItems();
 		$showUpdatedMarker = $this->getConfig()->get( 'ShowUpdatedMarker' );
 
 		// Show watchlist header
@@ -583,10 +602,10 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 		$form .= "</p>";
 
 		if ( $numItems > 0 && $showUpdatedMarker ) {
-			$form .= Xml::openElement( 'form', array( 'method' => 'post',
+			$form .= Xml::openElement( 'form', [ 'method' => 'post',
 				'action' => $this->getPageTitle()->getLocalURL(),
-				'id' => 'mw-watchlist-resetbutton' ) ) . "\n" .
-			Xml::submitButton( $this->msg( 'enotif_reset' )->text(), array( 'name' => 'dummy' ) ) . "\n" .
+				'id' => 'mw-watchlist-resetbutton' ] ) . "\n" .
+			Xml::submitButton( $this->msg( 'enotif_reset' )->text(), [ 'name' => 'dummy' ] ) . "\n" .
 			Html::hidden( 'reset', 'all' ) . "\n";
 			foreach ( $nondefaults as $key => $value ) {
 				$form .= Html::hidden( $key, $value ) . "\n";
@@ -594,18 +613,18 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 			$form .= Xml::closeElement( 'form' ) . "\n";
 		}
 
-		$form .= Xml::openElement( 'form', array(
+		$form .= Xml::openElement( 'form', [
 			'method' => 'get',
 			'action' => $this->getPageTitle()->getLocalURL(),
 			'id' => 'mw-watchlist-form'
-		) );
+		] );
 		$form .= Xml::fieldset(
 			$this->msg( 'watchlist-options' )->text(),
 			false,
-			array( 'id' => 'mw-watchlist-options' )
+			[ 'id' => 'mw-watchlist-options' ]
 		);
 
-		$form .= SpecialRecentChanges::makeLegend( $this->getContext() );
+		$form .= $this->makeLegend();
 
 		$this->getOutput()->addHTML( $form );
 	}
@@ -622,18 +641,15 @@ class SpecialWatchlist extends ChangesListSpecialPage {
 	}
 
 	/**
-	 * Count the number of items on a user's watchlist
+	 * Count the number of paired items on a user's watchlist.
+	 * The assumption made here is that when a subject page is watched a talk page is also watched.
+	 * Hence the number of individual items is halved.
 	 *
-	 * @param IDatabase $dbr A database connection
 	 * @return int
 	 */
-	protected function countItems( $dbr ) {
-		# Fetch the raw count
-		$rows = $dbr->select( 'watchlist', array( 'count' => 'COUNT(*)' ),
-			array( 'wl_user' => $this->getUser()->getId() ), __METHOD__ );
-		$row = $dbr->fetchObject( $rows );
-		$count = $row->count;
-
+	protected function countItems() {
+		$store = MediaWikiServices::getInstance()->getWatchedItemStore();
+		$count = $store->countWatchedItems( $this->getUser() );
 		return floor( $count / 2 );
 	}
 }

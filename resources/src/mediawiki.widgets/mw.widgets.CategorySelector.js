@@ -9,7 +9,7 @@
 		NS_CATEGORY = mw.config.get( 'wgNamespaceIds' ).category;
 
 	/**
-	 * Category selector widget. Displays an OO.ui.CapsuleMultiSelectWidget
+	 * Category selector widget. Displays an OO.ui.CapsuleMultiselectWidget
 	 * and autocompletes with available categories.
 	 *
 	 *     var selector = new mw.widgets.CategorySelector( {
@@ -21,11 +21,11 @@
 	 *
 	 *     $( '#content' ).append( selector.$element );
 	 *
-	 *     selector.setSearchType( [ mw.widgets.CategorySelector.SearchType.SubCategories ] );
+	 *     selector.setSearchTypes( [ mw.widgets.CategorySelector.SearchType.SubCategories ] );
 	 *
 	 * @class mw.widgets.CategorySelector
 	 * @uses mw.Api
-	 * @extends OO.ui.CapsuleMultiSelectWidget
+	 * @extends OO.ui.CapsuleMultiselectWidget
 	 * @mixins OO.ui.mixin.PendingElement
 	 *
 	 * @constructor
@@ -67,7 +67,7 @@
 
 	/* Setup */
 
-	OO.inheritClass( CategorySelector, OO.ui.CapsuleMultiSelectWidget );
+	OO.inheritClass( CategorySelector, OO.ui.CapsuleMultiselectWidget );
 	OO.mixinClass( CategorySelector, OO.ui.mixin.PendingElement );
 	CSP = CategorySelector.prototype;
 
@@ -150,22 +150,30 @@
 		this.pushPending();
 
 		$.when.apply( $, promises ).done( function () {
-			var categories, categoryNames,
+			var categoryNames,
 				allData = [],
 				dataSets = Array.prototype.slice.apply( arguments );
 
 			// Collect values from all results
 			allData = allData.concat.apply( allData, dataSets );
 
-			// Remove duplicates
-			categories = allData.filter( function ( value, index, self ) {
-				return self.indexOf( value ) === index;
-			} );
-
-			// Get titles
-			categoryNames = categories.map( function ( name ) {
-				return mw.Title.newFromText( name, NS_CATEGORY ).getMainText();
-			} );
+			categoryNames = allData
+				// Remove duplicates
+				.filter( function ( value, index, self ) {
+					return self.indexOf( value ) === index;
+				} )
+				// Get Title objects
+				.map( function ( name ) {
+					return mw.Title.newFromText( name );
+				} )
+				// Keep only titles from 'Category' namespace
+				.filter( function ( title ) {
+					return title && title.getNamespaceId() === NS_CATEGORY;
+				} )
+				// Convert back to strings, strip 'Category:' prefix
+				.map( function ( title ) {
+					return title.getMainText();
+				} );
 
 			deferred.resolve( categoryNames );
 
@@ -180,7 +188,7 @@
 	CSP.createItemWidget = function ( data ) {
 		return new mw.widgets.CategoryCapsuleItemWidget( {
 			apiUrl: this.api.apiUrl || undefined,
-			title: mw.Title.newFromText( data, NS_CATEGORY )
+			title: mw.Title.makeTitle( NS_CATEGORY, data )
 		} );
 	};
 
@@ -190,7 +198,7 @@
 	CSP.getItemFromData = function ( data ) {
 		// This is a bit of a hack... We have to canonicalize the data in the same way that
 		// #createItemWidget and CategoryCapsuleItemWidget will do, otherwise we won't find duplicates.
-		data = mw.Title.newFromText( data, NS_CATEGORY ).getMainText();
+		data = mw.Title.makeTitle( NS_CATEGORY, data ).getMainText();
 		return OO.ui.mixin.GroupElement.prototype.getItemFromData.call( this, data );
 	};
 
@@ -257,6 +265,7 @@
 		switch ( searchType ) {
 			case CategorySelector.SearchType.OpenSearch:
 				this.api.get( {
+					formatversion: 2,
 					action: 'opensearch',
 					namespace: NS_CATEGORY,
 					limit: this.limit,
@@ -269,6 +278,7 @@
 
 			case CategorySelector.SearchType.InternalSearch:
 				this.api.get( {
+					formatversion: 2,
 					action: 'query',
 					list: 'allpages',
 					apnamespace: NS_CATEGORY,
@@ -290,18 +300,18 @@
 				}
 
 				this.api.get( {
+					formatversion: 2,
 					action: 'query',
 					prop: 'info',
 					titles: 'Category:' + input
 				} ).done( function ( res ) {
-					var page,
-						categories = [];
+					var categories = [];
 
-					for ( page in res.query.pages ) {
-						if ( parseInt( page, 10 ) > -1 ) {
-							categories.push( res.query.pages[ page ].title );
+					$.each( res.query.pages, function ( index, page ) {
+						if ( !page.missing ) {
+							categories.push( page.title );
 						}
-					}
+					} );
 
 					deferred.resolve( categories );
 				} ).fail( deferred.reject.bind( deferred ) );
@@ -314,6 +324,7 @@
 				}
 
 				this.api.get( {
+					formatversion: 2,
 					action: 'query',
 					list: 'categorymembers',
 					cmtype: 'subcat',
@@ -334,23 +345,23 @@
 				}
 
 				this.api.get( {
+					formatversion: 2,
 					action: 'query',
 					prop: 'categories',
 					cllimit: this.limit,
 					titles: 'Category:' + input
 				} ).done( function ( res )  {
-					var page,
-						categories = [];
+					var categories = [];
 
-					for ( page in res.query.pages ) {
-						if ( parseInt( page, 10 ) > -1 ) {
-							if ( $.isArray( res.query.pages[ page ].categories ) ) {
-								categories.push.apply( categories, res.query.pages[ page ].categories.map( function ( category ) {
+					$.each( res.query.pages, function ( index, page ) {
+						if ( !page.missing ) {
+							if ( $.isArray( page.categories ) ) {
+								categories.push.apply( categories, page.categories.map( function ( category ) {
 									return category.title;
 								} ) );
 							}
 						}
-					}
+					} );
 
 					deferred.resolve( categories );
 				} ).fail( deferred.reject.bind( deferred ) );

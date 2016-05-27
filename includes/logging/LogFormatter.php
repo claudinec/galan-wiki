@@ -67,7 +67,7 @@ class LogFormatter {
 	/**
 	 * Handy shortcut for constructing a formatter directly from
 	 * database row.
-	 * @param object $row
+	 * @param stdClass|array $row
 	 * @see DatabaseLogEntry::getSelectQueryData
 	 * @return LogFormatter
 	 */
@@ -237,7 +237,7 @@ class LogFormatter {
 					// @codingStandardsIgnoreStart Long line
 					//case 'revision': // Revision deletion
 					//case 'event': // Log deletion
-					// see https://svn.wikimedia.org/viewvc/mediawiki/trunk/phase3/includes/LogPage.php?&pathrev=97044&r1=97043&r2=97044
+					// see https://github.com/wikimedia/mediawiki/commit/a9c243b7b5289dad204278dbe7ed571fd914e395
 					//default:
 					// @codingStandardsIgnoreEnd
 				}
@@ -245,7 +245,7 @@ class LogFormatter {
 
 			case 'patrol':
 				// @codingStandardsIgnoreStart Long line
-				// https://svn.wikimedia.org/viewvc/mediawiki/trunk/phase3/includes/PatrolLog.php?&pathrev=97495&r1=97494&r2=97495
+				// https://github.com/wikimedia/mediawiki/commit/1a05f8faf78675dc85984f27f355b8825b43efff
 				// @codingStandardsIgnoreEnd
 				// Create a diff link to the patrolled revision
 				if ( $entry->getSubtype() === 'patrol' ) {
@@ -462,7 +462,7 @@ class LogFormatter {
 	 */
 	protected function extractParameters() {
 		$entry = $this->entry;
-		$params = array();
+		$params = [];
 
 		if ( $entry->isLegacy() ) {
 			foreach ( $entry->getParameters() as $index => $value ) {
@@ -608,9 +608,9 @@ class LogFormatter {
 	 * @throws MWException
 	 * @return string
 	 */
-	protected function makePageLink( Title $title = null, $parameters = array(), $html = null ) {
+	protected function makePageLink( Title $title = null, $parameters = [], $html = null ) {
 		if ( !$this->plaintext ) {
-			$link = Linker::link( $title, $html, array(), $parameters );
+			$link = Linker::link( $title, $html, [], $parameters );
 		} else {
 			if ( !$title instanceof Title ) {
 				throw new MWException( "Expected title, got null" );
@@ -671,7 +671,7 @@ class LogFormatter {
 		}
 
 		$content = $this->msg( $message )->escaped();
-		$attribs = array( 'class' => 'history-deleted' );
+		$attribs = [ 'class' => 'history-deleted' ];
 
 		return Html::rawElement( 'span', $attribs, $content );
 	}
@@ -685,7 +685,7 @@ class LogFormatter {
 		if ( $this->plaintext ) {
 			return $content;
 		}
-		$attribs = array( 'class' => 'history-deleted' );
+		$attribs = [ 'class' => 'history-deleted' ];
 
 		return Html::rawElement( 'span', $attribs, $content );
 	}
@@ -726,7 +726,7 @@ class LogFormatter {
 	 * @return array Array of titles that should be preloaded with LinkBatch
 	 */
 	public function getPreloadTitles() {
-		return array();
+		return [];
 	}
 
 	/**
@@ -763,7 +763,7 @@ class LogFormatter {
 	 * @return array
 	 */
 	public function formatParametersForApi() {
-		$logParams = array();
+		$logParams = [];
 		foreach ( $this->getParametersForApi() as $key => $value ) {
 			$vals = explode( ':', $key, 3 );
 			if ( count( $vals ) !== 3 ) {
@@ -820,7 +820,7 @@ class LogFormatter {
 				if ( $type === 'msg-content' ) {
 					$msg->inContentLanguage();
 				}
-				$value = array();
+				$value = [];
 				$value["{$name}_key"] = $msg->getKey();
 				if ( $msg->getParams() ) {
 					$value["{$name}_params"] = $msg->getParams();
@@ -832,7 +832,7 @@ class LogFormatter {
 			case 'title-link':
 				$title = Title::newFromText( $value );
 				if ( $title ) {
-					$value = array();
+					$value = [];
 					ApiQueryBase::addTitleInfo( $value, $title, "{$name}_" );
 				}
 				return $value;
@@ -850,7 +850,7 @@ class LogFormatter {
 				break;
 		}
 
-		return array( $name => $value );
+		return [ $name => $value ];
 	}
 }
 
@@ -946,8 +946,8 @@ class LegacyLogFormatter extends LogFormatter {
 
 		$params = $this->entry->getParameters();
 
-		Hooks::run( 'LogLine', array( $type, $subtype, $title, $params,
-			&$this->comment, &$this->revert, $this->entry->getTimestamp() ) );
+		Hooks::run( 'LogLine', [ $type, $subtype, $title, $params,
+			&$this->comment, &$this->revert, $this->entry->getTimestamp() ] );
 
 		return $this->revert;
 	}

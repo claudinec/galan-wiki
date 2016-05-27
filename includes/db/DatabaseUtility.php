@@ -210,7 +210,7 @@ class ResultWrapper implements Iterator {
  */
 class FakeResultWrapper extends ResultWrapper {
 	/** @var array */
-	public $result = array();
+	public $result = [];
 
 	/** @var null And it's going to stay that way :D */
 	protected $db = null;
@@ -331,6 +331,13 @@ interface DBMasterPos {
 	 * @since 1.27
 	 */
 	public function hasReached( DBMasterPos $pos );
+
+	/**
+	 * @param DBMasterPos $pos
+	 * @return bool Whether this position appears to be for the same channel as another
+	 * @since 1.27
+	 */
+	public function channelsMatch( DBMasterPos $pos );
 
 	/**
 	 * @return string

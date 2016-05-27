@@ -39,7 +39,12 @@
 			'import',
 			'options'
 		];
-		return $.inArray( action, csrfActions ) !== -1 ? 'csrf' : action;
+		if ( $.inArray( action, csrfActions ) !== -1 ) {
+			mw.track( 'mw.deprecate', 'apitoken_' + action );
+			mw.log.warn( 'Use of the "' + action + '" token is deprecated. Use "csrf" instead.' );
+			return 'csrf';
+		}
+		return action;
 	}
 
 	// Pre-populate with fake ajax promises to save http requests for tokens
@@ -47,7 +52,7 @@
 	promises[ defaultOptions.ajax.url ] = {};
 	$.each( mw.user.tokens.get(), function ( key, value ) {
 		// This requires #getToken to use the same key as user.tokens.
-		// Format: token-type + "Token" (eg. editToken, patrolToken, watchToken).
+		// Format: token-type + "Token" (eg. csrfToken, patrolToken, watchToken).
 		promises[ defaultOptions.ajax.url ][ key ] = $.Deferred()
 			.resolve( value )
 			.promise( { abort: function () {} } );
@@ -207,15 +212,16 @@
 				// Prevent jQuery from overriding the Content-Type header
 				ajaxOptions.contentType = false;
 			} else {
-				// Some deployed MediaWiki >= 1.17 forbid periods in URLs, due to an IE XSS bug
-				// So let's escape them here. See bug #28235
 				// This works because jQuery accepts data as a query string or as an Object
-				ajaxOptions.data = $.param( parameters ).replace( /\./g, '%2E' );
-
+				ajaxOptions.data = $.param( parameters );
 				// If we extracted a token parameter, add it back in.
 				if ( token ) {
 					ajaxOptions.data += '&token=' + encodeURIComponent( token );
 				}
+
+				// Depending on server configuration, MediaWiki may forbid periods in URLs, due to an IE 6
+				// XSS bug. So let's escape them here. See WebRequest::checkUrlExtension() and T30235.
+				ajaxOptions.data = ajaxOptions.data.replace( /\./g, '%2E' );
 
 				if ( ajaxOptions.contentType === 'multipart/form-data' ) {
 					// We were asked to emulate but can't, so drop the Content-Type header, otherwise
@@ -239,11 +245,13 @@
 				.done( function ( result, textStatus, jqXHR ) {
 					if ( result === undefined || result === null || result === '' ) {
 						apiDeferred.reject( 'ok-but-empty',
-							'OK response but empty result (check HTTP headers?)'
+							'OK response but empty result (check HTTP headers?)',
+							result,
+							jqXHR
 						);
 					} else if ( result.error ) {
 						var code = result.error.code === undefined ? 'unknown' : result.error.code;
-						apiDeferred.reject( code, result );
+						apiDeferred.reject( code, result, result, jqXHR );
 					} else {
 						apiDeferred.resolve( result, jqXHR );
 					}
@@ -267,7 +275,7 @@
 		 * If we have a cached token try using that, and if it fails, blank out the
 		 * cached token and start over. For example to change an user option you could do:
 		 *
-		 *     new mw.Api().postWithToken( 'options', {
+		 *     new mw.Api().postWithToken( 'csrf', {
 		 *         action: 'options',
 		 *         optionname: 'gender',
 		 *         optionvalue: 'female'
@@ -280,11 +288,12 @@
 		 * @since 1.22
 		 */
 		postWithToken: function ( tokenType, params, ajaxOptions ) {
-			var api = this;
+			var api = this,
+				abortable;
 
-			return api.getToken( tokenType, params.assert ).then( function ( token ) {
+			return ( abortable = api.getToken( tokenType, params.assert ) ).then( function ( token ) {
 				params.token = token;
-				return api.post( params, ajaxOptions ).then(
+				return ( abortable = api.post( params, ajaxOptions ) ).then(
 					// If no error, return to caller as-is
 					null,
 					// Error handler
@@ -293,9 +302,9 @@
 							api.badToken( tokenType );
 							// Try again, once
 							params.token = undefined;
-							return api.getToken( tokenType, params.assert ).then( function ( token ) {
+							return ( abortable = api.getToken( tokenType, params.assert ) ).then( function ( token ) {
 								params.token = token;
-								return api.post( params, ajaxOptions );
+								return ( abortable = api.post( params, ajaxOptions ) ).promise();
 							} );
 						}
 
@@ -303,7 +312,9 @@
 						return this;
 					}
 				);
-			} );
+			} ).promise( { abort: function () {
+				abortable.abort();
+			} } );
 		},
 
 		/**
@@ -425,6 +436,8 @@
 		'fileexists-shared-forbidden',
 		'invalidtitle',
 		'notloggedin',
+		'autoblocked',
+		'blocked',
 
 		// Stash-specific errors - expanded
 		'stashfailed',

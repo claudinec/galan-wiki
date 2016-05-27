@@ -45,7 +45,7 @@ require_once __DIR__ . '/Maintenance.php';
 class MoveBatch extends Maintenance {
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Moves a batch of pages";
+		$this->addDescription( 'Moves a batch of pages' );
 		$this->addOption( 'u', "User to perform move", false, true );
 		$this->addOption( 'r', "Reason to move page", false, true );
 		$this->addOption( 'i', "Interval to sleep between moves" );
@@ -76,7 +76,7 @@ class MoveBatch extends Maintenance {
 			$this->error( "Unable to read file, exiting", true );
 		}
 		if ( $user === false ) {
-			$wgUser = User::newSystemUser( 'Move page script', array( 'steal' => true ) );
+			$wgUser = User::newSystemUser( 'Move page script', [ 'steal' => true ] );
 		} else {
 			$wgUser = User::newFromName( $user );
 		}
@@ -85,7 +85,7 @@ class MoveBatch extends Maintenance {
 		}
 
 		# Setup complete, now start
-		$dbw = wfGetDB( DB_MASTER );
+		$dbw = $this->getDB( DB_MASTER );
 		// @codingStandardsIgnoreStart Ignore avoid function calls in a FOR loop test part warning
 		for ( $linenum = 1; !feof( $file ); $linenum++ ) {
 			// @codingStandardsIgnoreEnd
@@ -106,13 +106,13 @@ class MoveBatch extends Maintenance {
 			}
 
 			$this->output( $source->getPrefixedText() . ' --> ' . $dest->getPrefixedText() );
-			$dbw->begin( __METHOD__ );
+			$this->beginTransaction( $dbw, __METHOD__ );
 			$mp = new MovePage( $source, $dest );
 			$status = $mp->move( $wgUser, $reason, !$noredirects );
 			if ( !$status->isOK() ) {
-				$this->output( "\nFAILED: " . $status->getWikiText() );
+				$this->output( "\nFAILED: " . $status->getWikiText( false, false, 'en' ) );
 			}
-			$dbw->commit( __METHOD__ );
+			$this->commitTransaction( $dbw, __METHOD__ );
 			$this->output( "\n" );
 
 			if ( $interval ) {

@@ -26,7 +26,7 @@ require_once __DIR__ . '/Maintenance.php';
 class Undelete extends Maintenance {
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Undelete a page";
+		$this->addDescription( 'Undelete a page' );
 		$this->addOption( 'user', 'The user to perform the undeletion', false, true, 'u' );
 		$this->addOption( 'reason', 'The reason to undelete', false, true, 'r' );
 		$this->addArg( 'pagename', 'Page to undelete' );
@@ -44,7 +44,7 @@ class Undelete extends Maintenance {
 			$this->error( "Invalid title", true );
 		}
 		if ( $user === false ) {
-			$wgUser = User::newSystemUser( 'Command line script', array( 'steal' => true ) );
+			$wgUser = User::newSystemUser( 'Command line script', [ 'steal' => true ] );
 		} else {
 			$wgUser = User::newFromName( $user );
 		}
@@ -53,7 +53,7 @@ class Undelete extends Maintenance {
 		}
 		$archive = new PageArchive( $title, RequestContext::getMain()->getConfig() );
 		$this->output( "Undeleting " . $title->getPrefixedDBkey() . '...' );
-		$archive->undelete( array(), $reason );
+		$archive->undelete( [], $reason );
 		$this->output( "done\n" );
 	}
 }

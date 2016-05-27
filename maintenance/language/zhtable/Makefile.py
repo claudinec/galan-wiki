@@ -248,7 +248,8 @@ def translate(text, conv_table):
 
 def manualWordsTable(path, conv_table, reconv_table):
     fp = open(path, 'r', encoding='U8')
-    reconv_table = {}
+    reconv_table = reconv_table.copy()
+    out_table = {}
     wordlist = [line.split('#')[0].strip() for line in fp]
     wordlist = list(set(wordlist))
     wordlist.sort(key=lambda w: (len(w), w), reverse=True)
@@ -257,9 +258,9 @@ def manualWordsTable(path, conv_table, reconv_table):
         new_word = translate(word, conv_table)
         rcv_word = translate(word, reconv_table)
         if word != rcv_word:
-            reconv_table[word] = word
-        reconv_table[new_word] = word
-    return reconv_table
+            reconv_table[word] = out_table[word] = word
+        reconv_table[new_word] = out_table[new_word] = word
+    return out_table
 
 
 def defaultWordsTable(src_wordlist, src_tomany, char_conv_table,
@@ -414,22 +415,25 @@ def main():
  * @file
  */
 
-$zh2Hant = array(\n'''
+namespace MediaWiki\Languages\Data;
+
+class ZhConversion {
+public static $zh2Hant = [\n'''
     php += PHPArray(toHant) \
-        + '\n);\n\n$zh2Hans = array(\n' \
+        + '\n];\n\npublic static $zh2Hans = [\n' \
         + PHPArray(toHans) \
-        + '\n);\n\n$zh2TW = array(\n' \
+        + '\n];\n\npublic static $zh2TW = [\n' \
         + PHPArray(toTW) \
-        + '\n);\n\n$zh2HK = array(\n' \
+        + '\n];\n\npublic static $zh2HK = [\n' \
         + PHPArray(toHK) \
-        + '\n);\n\n$zh2CN = array(\n' \
+        + '\n];\n\npublic static $zh2CN = [\n' \
         + PHPArray(toCN) \
-        + '\n);\n'
+        + '\n];\n}\n'
 
     if pyversion[:1] in ['2']:
-        f = open(os.path.join('..', '..', '..', 'includes', 'ZhConversion.php'), 'wb', encoding='utf8')
+        f = open(os.path.join('..', '..', '..', 'languages', 'data', 'ZhConversion.php'), 'wb', encoding='utf8')
     else:
-        f = open(os.path.join('..', '..', '..', 'includes', 'ZhConversion.php'), 'w', buffering=4096, encoding='utf8')
+        f = open(os.path.join('..', '..', '..', 'languages', 'data', 'ZhConversion.php'), 'w', buffering=4096, encoding='utf8')
     print ('Writing ZhConversion.php ... ')
     f.write(php)
     f.close()

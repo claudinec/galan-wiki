@@ -31,7 +31,7 @@ use Wikimedia\Assert\Assert;
  */
 class HashBagOStuff extends BagOStuff {
 	/** @var mixed[] */
-	protected $bag = array();
+	protected $bag = [];
 	/** @var integer Max entries allowed */
 	protected $maxCacheKeys;
 
@@ -42,7 +42,7 @@ class HashBagOStuff extends BagOStuff {
 	 * @param array $params Additional parameters include:
 	 *   - maxKeys : only allow this many keys (using oldest-first eviction)
 	 */
-	function __construct( $params = array() ) {
+	function __construct( $params = [] ) {
 		parent::__construct( $params );
 
 		$this->maxCacheKeys = isset( $params['maxKeys'] ) ? $params['maxKeys'] : INF;
@@ -60,8 +60,19 @@ class HashBagOStuff extends BagOStuff {
 		return true;
 	}
 
+	/**
+	 * Does this bag have a non-null value for the given key?
+	 *
+	 * @param string $key
+	 * @return bool
+	 * @since 1.27
+	 */
+	protected function hasKey( $key ) {
+		return isset( $this->bag[$key] );
+	}
+
 	protected function doGet( $key, $flags = 0 ) {
-		if ( !isset( $this->bag[$key] ) ) {
+		if ( !$this->hasKey( $key ) ) {
 			return false;
 		}
 
@@ -80,10 +91,10 @@ class HashBagOStuff extends BagOStuff {
 	public function set( $key, $value, $exptime = 0, $flags = 0 ) {
 		// Refresh key position for maxCacheKeys eviction
 		unset( $this->bag[$key] );
-		$this->bag[$key] = array(
+		$this->bag[$key] = [
 			self::KEY_VAL => $value,
 			self::KEY_EXP => $this->convertExpiry( $exptime )
-		);
+		];
 
 		if ( count( $this->bag ) > $this->maxCacheKeys ) {
 			reset( $this->bag );
@@ -101,6 +112,6 @@ class HashBagOStuff extends BagOStuff {
 	}
 
 	public function clear() {
-		$this->bag = array();
+		$this->bag = [];
 	}
 }

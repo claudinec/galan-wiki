@@ -36,7 +36,7 @@ class DBConnRef implements IDatabase {
 			$this->conn = $this->lb->getConnection( $db, $groups, $wiki );
 		}
 
-		return call_user_func_array( array( $this->conn, $name ), $arguments );
+		return call_user_func_array( [ $this->conn, $name ], $arguments );
 	}
 
 	public function getServerInfo() {
@@ -100,6 +100,10 @@ class DBConnRef implements IDatabase {
 	}
 
 	public function pendingWriteQueryDuration() {
+		return $this->__call( __FUNCTION__, func_get_args() );
+	}
+
+	public function pendingWriteCallers() {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
@@ -208,46 +212,46 @@ class DBConnRef implements IDatabase {
 	}
 
 	public function selectField(
-		$table, $var, $cond = '', $fname = __METHOD__, $options = array()
+		$table, $var, $cond = '', $fname = __METHOD__, $options = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function selectFieldValues(
-		$table, $var, $cond = '', $fname = __METHOD__, $options = array()
+		$table, $var, $cond = '', $fname = __METHOD__, $options = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function select(
 		$table, $vars, $conds = '', $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function selectSQLText(
 		$table, $vars, $conds = '', $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function selectRow(
 		$table, $vars, $conds, $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function estimateRowCount(
-		$table, $vars = '*', $conds = '', $fname = __METHOD__, $options = array()
+		$table, $vars = '*', $conds = '', $fname = __METHOD__, $options = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
 	public function selectRowCount(
-		$tables, $vars = '*', $conds = '', $fname = __METHOD__, $options = array(), $join_conds = array()
+		$tables, $vars = '*', $conds = '', $fname = __METHOD__, $options = [], $join_conds = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
@@ -268,11 +272,11 @@ class DBConnRef implements IDatabase {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
-	public function insert( $table, $a, $fname = __METHOD__, $options = array() ) {
+	public function insert( $table, $a, $fname = __METHOD__, $options = [] ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
-	public function update( $table, $values, $conds, $fname = __METHOD__, $options = array() ) {
+	public function update( $table, $values, $conds, $fname = __METHOD__, $options = [] ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
@@ -301,7 +305,7 @@ class DBConnRef implements IDatabase {
 	}
 
 	public function buildGroupConcatField(
-		$delim, $table, $field, $conds = '', $join_conds = array()
+		$delim, $table, $field, $conds = '', $join_conds = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
@@ -360,7 +364,7 @@ class DBConnRef implements IDatabase {
 
 	public function insertSelect(
 		$destTable, $srcTable, $varMap, $conds,
-		$fname = __METHOD__, $insertOptions = array(), $selectOptions = array()
+		$fname = __METHOD__, $insertOptions = [], $selectOptions = []
 	) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
@@ -429,6 +433,10 @@ class DBConnRef implements IDatabase {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
+	public function doAtomicSection( $fname, $callback ) {
+		return $this->__call( __FUNCTION__, func_get_args() );
+	}
+
 	public function begin( $fname = __METHOD__ ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
@@ -494,6 +502,10 @@ class DBConnRef implements IDatabase {
 	}
 
 	public function unlock( $lockName, $method ) {
+		return $this->__call( __FUNCTION__, func_get_args() );
+	}
+
+	public function getScopedLockAndFlush( $lockKey, $fname, $timeout ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 

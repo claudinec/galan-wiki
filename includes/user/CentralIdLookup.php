@@ -23,6 +23,8 @@
 /**
  * The CentralIdLookup service allows for connecting local users with
  * cluster-wide IDs.
+ *
+ * @since 1.27
  */
 abstract class CentralIdLookup implements IDBAccessObject {
 	// Audience options for accessors
@@ -30,7 +32,7 @@ abstract class CentralIdLookup implements IDBAccessObject {
 	const AUDIENCE_RAW = 2;
 
 	/** @var CentralIdLookup[][] */
-	private static $instances = array();
+	private static $instances = [];
 
 	/** @var string */
 	private $providerId;
@@ -60,6 +62,16 @@ abstract class CentralIdLookup implements IDBAccessObject {
 		}
 
 		return self::$instances[$providerId];
+	}
+
+	/**
+	 * Reset internal cache for unit testing
+	 */
+	public static function resetCache() {
+		if ( !defined( 'MW_PHPUNIT_TEST' ) ) {
+			throw new MWException( __METHOD__ . ' may only be called from unit tests!' );
+		}
+		self::$instances = [];
 	}
 
 	final public function getProviderId() {
@@ -141,7 +153,7 @@ abstract class CentralIdLookup implements IDBAccessObject {
 	public function nameFromCentralId(
 		$id, $audience = self::AUDIENCE_PUBLIC, $flags = self::READ_NORMAL
 	) {
-		$idToName = $this->lookupCentralIds( array( $id => null ), $audience, $flags );
+		$idToName = $this->lookupCentralIds( [ $id => null ], $audience, $flags );
 		return $idToName[$id];
 	}
 
@@ -158,7 +170,7 @@ abstract class CentralIdLookup implements IDBAccessObject {
 	public function centralIdFromName(
 		$name, $audience = self::AUDIENCE_PUBLIC, $flags = self::READ_NORMAL
 	) {
-		$nameToId = $this->lookupUserNames( array( $name => 0 ), $audience, $flags );
+		$nameToId = $this->lookupUserNames( [ $name => 0 ], $audience, $flags );
 		return $nameToId[$name];
 	}
 

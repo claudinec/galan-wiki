@@ -20,6 +20,7 @@
  * @file
  * @ingroup SpecialPage
  */
+use MediaWiki\MediaWikiServices;
 
 /**
  * Implements Special:Prefixindex
@@ -97,21 +98,21 @@ class SpecialPrefixindex extends SpecialAllPages {
 	 * @return string
 	 */
 	protected function namespacePrefixForm( $namespace = NS_MAIN, $from = '' ) {
-		$out = Xml::openElement( 'div', array( 'class' => 'namespaceoptions' ) );
+		$out = Xml::openElement( 'div', [ 'class' => 'namespaceoptions' ] );
 		$out .= Xml::openElement(
 			'form',
-			array( 'method' => 'get', 'action' => $this->getConfig()->get( 'Script' ) )
+			[ 'method' => 'get', 'action' => $this->getConfig()->get( 'Script' ) ]
 		);
 		$out .= Html::hidden( 'title', $this->getPageTitle()->getPrefixedText() );
 		$out .= Xml::openElement( 'fieldset' );
 		$out .= Xml::element( 'legend', null, $this->msg( 'allpages' )->text() );
-		$out .= Xml::openElement( 'table', array( 'id' => 'nsselect', 'class' => 'allpages' ) );
+		$out .= Xml::openElement( 'table', [ 'id' => 'nsselect', 'class' => 'allpages' ] );
 		$out .= "<tr>
 				<td class='mw-label'>" .
 			Xml::label( $this->msg( 'allpagesprefix' )->text(), 'nsfrom' ) .
 			"</td>
 				<td class='mw-input'>" .
-			Xml::input( 'prefix', 30, str_replace( '_', ' ', $from ), array( 'id' => 'nsfrom' ) ) .
+			Xml::input( 'prefix', 30, str_replace( '_', ' ', $from ), [ 'id' => 'nsfrom' ] ) .
 			"</td>
 			</tr>
 			<tr>
@@ -119,13 +120,13 @@ class SpecialPrefixindex extends SpecialAllPages {
 			Xml::label( $this->msg( 'namespace' )->text(), 'namespace' ) .
 			"</td>
 				<td class='mw-input'>" .
-			Html::namespaceSelector( array(
+			Html::namespaceSelector( [
 				'selected' => $namespace,
-			), array(
+			], [
 				'name' => 'namespace',
 				'id' => 'namespace',
 				'class' => 'namespaceselector',
-			) ) .
+			] ) .
 			Xml::checkLabel(
 				$this->msg( 'allpages-hide-redirects' )->text(),
 				'hideredirects',
@@ -180,52 +181,56 @@ class SpecialPrefixindex extends SpecialAllPages {
 
 			$dbr = wfGetDB( DB_SLAVE );
 
-			$conds = array(
+			$conds = [
 				'page_namespace' => $namespace,
 				'page_title' . $dbr->buildLike( $prefixKey, $dbr->anyString() ),
 				'page_title >= ' . $dbr->addQuotes( $fromKey ),
-			);
+			];
 
 			if ( $this->hideRedirects ) {
 				$conds['page_is_redirect'] = 0;
 			}
 
 			$res = $dbr->select( 'page',
-				array( 'page_namespace', 'page_title', 'page_is_redirect' ),
+				array_merge(
+					[ 'page_namespace', 'page_title' ],
+					LinkCache::getSelectFields()
+				),
 				$conds,
 				__METHOD__,
-				array(
+				[
 					'ORDER BY' => 'page_title',
 					'LIMIT' => $this->maxPerPage + 1,
 					'USE INDEX' => 'name_title',
-				)
+				]
 			);
 
 			// @todo FIXME: Side link to previous
 
 			$n = 0;
 			if ( $res->numRows() > 0 ) {
-				$out = Html::openElement( 'ul', array( 'class' => 'mw-prefixindex-list' ) );
+				$out = Html::openElement( 'ul', [ 'class' => 'mw-prefixindex-list' ] );
+				$linkCache = MediaWikiServices::getInstance()->getLinkCache();
 
 				$prefixLength = strlen( $prefix );
-				while ( ( $n < $this->maxPerPage ) && ( $s = $res->fetchObject() ) ) {
-					$t = Title::makeTitle( $s->page_namespace, $s->page_title );
-					if ( $t ) {
-						$displayed = $t->getText();
-						// Try not to generate unclickable links
-						if ( $this->stripPrefix && $prefixLength !== strlen( $displayed ) ) {
-							$displayed = substr( $displayed, $prefixLength );
-						}
-						$link = ( $s->page_is_redirect ? '<div class="allpagesredirect">' : '' ) .
-							Linker::linkKnown(
-								$t,
-								htmlspecialchars( $displayed ),
-								$s->page_is_redirect ? array( 'class' => 'mw-redirect' ) : array()
-							) .
-							( $s->page_is_redirect ? '</div>' : '' );
-					} else {
-						$link = '[[' . htmlspecialchars( $s->page_title ) . ']]';
+				foreach ( $res as $row ) {
+					if ( $n >= $this->maxPerPage ) {
+						break;
 					}
+					$title = Title::newFromRow( $row );
+					// Make sure it gets into LinkCache
+					$linkCache->addGoodLinkObjFromRow( $title, $row );
+					$displayed = $title->getText();
+					// Try not to generate unclickable links
+					if ( $this->stripPrefix && $prefixLength !== strlen( $displayed ) ) {
+						$displayed = substr( $displayed, $prefixLength );
+					}
+					$link = ( $title->isRedirect() ? '<div class="allpagesredirect">' : '' ) .
+						Linker::linkKnown(
+							$title,
+							htmlspecialchars( $displayed )
+						) .
+						( $title->isRedirect() ? '</div>' : '' );
 
 					$out .= "<li>$link</li>\n";
 					$n++;
@@ -236,7 +241,7 @@ class SpecialPrefixindex extends SpecialAllPages {
 				if ( $res->numRows() > 2 ) {
 					// Only apply CSS column styles if there's more than 2 entries.
 					// Otherwise rendering is broken as "mw-prefixindex-body"'s CSS column count is 3.
-					$out = Html::rawElement( 'div', array( 'class' => 'mw-prefixindex-body' ), $out );
+					$out = Html::rawElement( 'div', [ 'class' => 'mw-prefixindex-body' ], $out );
 				}
 			} else {
 				$out = '';
@@ -255,12 +260,12 @@ class SpecialPrefixindex extends SpecialAllPages {
 		$topOut = $this->namespacePrefixForm( $namespace, $prefix );
 
 		if ( $res && ( $n == $this->maxPerPage ) && ( $s = $res->fetchObject() ) ) {
-			$query = array(
+			$query = [
 				'from' => $s->page_title,
 				'prefix' => $prefix,
 				'hideredirects' => $this->hideRedirects,
 				'stripprefix' => $this->stripPrefix,
-			);
+			];
 
 			if ( $namespace || $prefix == '' ) {
 				// Keep the namespace even if it's 0 for empty prefixes.
@@ -271,13 +276,13 @@ class SpecialPrefixindex extends SpecialAllPages {
 			$nextLink = Linker::linkKnown(
 				$this->getPageTitle(),
 				$this->msg( 'nextpage', str_replace( '_', ' ', $s->page_title ) )->escaped(),
-				array(),
+				[],
 				$query
 			);
 
 			// Link shown at the top of the page below the form
 			$topOut .= Html::rawElement( 'div',
-				array( 'class' => 'mw-prefixindex-nav' ),
+				[ 'class' => 'mw-prefixindex-nav' ],
 				$nextLink
 			);
 
@@ -285,7 +290,7 @@ class SpecialPrefixindex extends SpecialAllPages {
 			$out .= "\n" . Html::element( 'hr' ) .
 				Html::rawElement(
 					'div',
-					array( 'class' => 'mw-prefixindex-nav' ),
+					[ 'class' => 'mw-prefixindex-nav' ],
 					$nextLink
 				);
 
@@ -303,15 +308,7 @@ class SpecialPrefixindex extends SpecialAllPages {
 	 * @return string[] Matching subpages
 	 */
 	public function prefixSearchSubpages( $search, $limit, $offset ) {
-		$title = Title::newFromText( $search );
-		if ( !$title || !$title->canExist() ) {
-			// No prefix suggestion in special and media namespace
-			return array();
-		}
-		// Autocomplete subpage the same as a normal search
-		$prefixSearcher = new StringPrefixSearch;
-		$result = $prefixSearcher->search( $search, $limit, array(), $offset );
-		return $result;
+		return $this->prefixSearchString( $search, $limit, $offset );
 	}
 
 	protected function getGroupName() {

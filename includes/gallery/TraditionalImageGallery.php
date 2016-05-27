@@ -43,7 +43,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 		}
 
 		$attribs = Sanitizer::mergeAttributes(
-			array( 'class' => 'gallery mw-gallery-' . $this->mMode ), $this->mAttribs );
+			[ 'class' => 'gallery mw-gallery-' . $this->mMode ], $this->mAttribs );
 
 		$modules = $this->getModules();
 
@@ -57,6 +57,16 @@ class TraditionalImageGallery extends ImageGalleryBase {
 		$output = Xml::openElement( 'ul', $attribs );
 		if ( $this->mCaption ) {
 			$output .= "\n\t<li class='gallerycaption'>{$this->mCaption}</li>";
+		}
+
+		if ( $this->mShowFilename ) {
+			// Preload LinkCache info for when generating links
+			// of the filename below
+			$lb = new LinkBatch();
+			foreach ( $this->mImages as $img ) {
+				$lb->addObj( $img[0] );
+			}
+			$lb->execute();
 		}
 
 		$lang = $this->getRenderLang();
@@ -73,9 +83,9 @@ class TraditionalImageGallery extends ImageGalleryBase {
 				# Get the file...
 				if ( $this->mParser instanceof Parser ) {
 					# Give extensions a chance to select the file revision for us
-					$options = array();
+					$options = [];
 					Hooks::run( 'BeforeParserFetchFileAndTitle',
-						array( $this->mParser, $nt, &$options, &$descQuery ) );
+						[ $this->mParser, $nt, &$options, &$descQuery ] );
 					# Fetch and register the file (file title may be different via hooks)
 					list( $img, $nt ) = $this->mParser->fetchFileAndTitle( $nt, $options );
 				} else {
@@ -122,12 +132,12 @@ class TraditionalImageGallery extends ImageGalleryBase {
 					/** @var MediaTransformOutput $thumb */
 					$vpad = $this->getVPad( $this->mHeights, $thumb->getHeight() );
 
-					$imageParameters = array(
+					$imageParameters = [
 						'desc-link' => true,
 						'desc-query' => $descQuery,
 						'alt' => $alt,
 						'custom-url-link' => $link
-					);
+					];
 
 					// In the absence of both alt text and caption, fall back on
 					// providing screen readers with the filename as alt text
@@ -176,6 +186,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 			}
 
 			$textlink = $this->mShowFilename ?
+				// Preloaded into LinkCache above
 				Linker::linkKnown(
 					$nt,
 					htmlspecialchars( $lang->truncate( $nt->getText(), $this->mCaptionLength ) )
@@ -277,10 +288,10 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	 * @return array
 	 */
 	protected function getThumbParams( $img ) {
-		return array(
+		return [
 			'width' => $this->mWidths,
 			'height' => $this->mHeights
-		);
+		];
 	}
 
 	/**
@@ -316,7 +327,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	 * @return array Modules to include
 	 */
 	protected function getModules() {
-		return array();
+		return [];
 	}
 
 	/**

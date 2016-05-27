@@ -40,9 +40,15 @@ class ApiStashEdit extends ApiBase {
 	const ERROR_CACHE = 'error_cache';
 	const ERROR_UNCACHEABLE = 'uncacheable';
 
+	const PRESUME_FRESH_TTL_SEC = 30;
+
 	public function execute() {
 		$user = $this->getUser();
 		$params = $this->extractRequestParams();
+
+		if ( $user->isBot() ) { // sanity
+			$this->dieUsage( 'This interface is not supported for bots', 'botsnotsupported' );
+		}
 
 		$page = $this->getTitleOrPageId( $params );
 		$title = $page->getTitle();
@@ -50,7 +56,7 @@ class ApiStashEdit extends ApiBase {
 		if ( !ContentHandler::getForModelID( $params['contentmodel'] )
 			->isSupportedFormat( $params['contentformat'] )
 		) {
-			$this->dieUsage( "Unsupported content model/format", 'badmodelformat' );
+			$this->dieUsage( 'Unsupported content model/format', 'badmodelformat' );
 		}
 
 		// Trim and fix newlines so the key SHA1's match (see RequestContext::getText())
@@ -77,7 +83,7 @@ class ApiStashEdit extends ApiBase {
 				$baseRev->getId()
 			);
 			if ( !$editContent ) {
-				$this->dieUsage( "Could not merge updated section.", 'replacefailed' );
+				$this->dieUsage( 'Could not merge updated section.', 'replacefailed' );
 			}
 			if ( $currentRev->getId() == $baseRev->getId() ) {
 				// Base revision was still the latest; nothing to merge
@@ -99,7 +105,7 @@ class ApiStashEdit extends ApiBase {
 
 		if ( !$content ) { // merge3() failed
 			$this->getResult()->addValue( null,
-				$this->getModuleName(), array( 'status' => 'editconflict' ) );
+				$this->getModuleName(), [ 'status' => 'editconflict' ] );
 			return;
 		}
 
@@ -121,7 +127,9 @@ class ApiStashEdit extends ApiBase {
 			$status = 'busy';
 		}
 
-		$this->getResult()->addValue( null, $this->getModuleName(), array( 'status' => $status ) );
+		$this->getStats()->increment( "editstash.cache_stores.$status" );
+
+		$this->getResult()->addValue( null, $this->getModuleName(), [ 'status' => $status ] );
 	}
 
 	/**
@@ -141,8 +149,14 @@ class ApiStashEdit extends ApiBase {
 		if ( $editInfo && $editInfo->output ) {
 			$key = self::getStashKey( $page->getTitle(), $content, $user );
 
+			// Let extensions add ParserOutput metadata or warm other caches
+			Hooks::run( 'ParserOutputStashForEdit', [ $page, $content, $editInfo->output ] );
+
 			list( $stashInfo, $ttl ) = self::buildStashValue(
-				$editInfo->pstContent, $editInfo->output, $editInfo->timestamp
+				$editInfo->pstContent,
+				$editInfo->output,
+				$editInfo->timestamp,
+				$user
 			);
 
 			if ( $stashInfo ) {
@@ -213,8 +227,11 @@ class ApiStashEdit extends ApiBase {
 			return false;
 		}
 
+		// Set the time the output was generated
+		$pOut->setCacheTime( wfTimestampNow() );
+
 		// Build a value to cache with a proper TTL
-		list( $stashInfo, $ttl ) = self::buildStashValue( $pstContent, $pOut, $timestamp );
+		list( $stashInfo, $ttl ) = self::buildStashValue( $pstContent, $pOut, $timestamp, $user );
 		if ( !$stashInfo ) {
 			$logger->info( "Uncacheable parser output for key '$key' (rev/TTL)." );
 			return false;
@@ -248,6 +265,10 @@ class ApiStashEdit extends ApiBase {
 	 * @return stdClass|bool Returns false on cache miss
 	 */
 	public static function checkCache( Title $title, Content $content, User $user ) {
+		if ( $user->isBot() ) {
+			return false; // bots never stash - don't pollute stats
+		}
+
 		$cache = ObjectCache::getLocalClusterInstance();
 		$logger = LoggerFactory::getInstance( 'StashEdit' );
 		$stats = RequestContext::getMain()->getStats();
@@ -268,25 +289,37 @@ class ApiStashEdit extends ApiBase {
 			}
 
 			$timeMs = 1000 * max( 0, microtime( true ) - $start );
-			$stats->timing( 'editstash.lock-wait-time', $timeMs );
+			$stats->timing( 'editstash.lock_wait_time', $timeMs );
 		}
 
 		if ( !is_object( $editInfo ) || !$editInfo->output ) {
-			$stats->increment( 'editstash.cache-misses' );
+			$stats->increment( 'editstash.cache_misses.no_stash' );
 			$logger->debug( "No cache value for key '$key'." );
 			return false;
 		}
 
-		$time = wfTimestamp( TS_UNIX, $editInfo->output->getTimestamp() );
-		if ( ( time() - $time ) <= 3 ) {
-			$stats->increment( 'editstash.cache-hits' );
-			$logger->debug( "Timestamp-based cache hit for key '$key'." );
+		$age = time() - wfTimestamp( TS_UNIX, $editInfo->output->getCacheTime() );
+		if ( $age <= self::PRESUME_FRESH_TTL_SEC ) {
+			$stats->increment( 'editstash.cache_hits.presumed_fresh' );
+			$logger->debug( "Timestamp-based cache hit for key '$key' (age: $age sec)." );
 			return $editInfo; // assume nothing changed
+		} elseif ( isset( $editInfo->edits ) && $editInfo->edits === $user->getEditCount() ) {
+			// Logged-in user made no local upload/template edits in the meantime
+			$stats->increment( 'editstash.cache_hits.presumed_fresh' );
+			$logger->debug( "Edit count based cache hit for key '$key' (age: $age sec)." );
+			return $editInfo;
+		} elseif ( $user->isAnon()
+			&& self::lastEditTime( $user ) < $editInfo->output->getCacheTime()
+		) {
+			// Logged-out user made no local upload/template edits in the meantime
+			$stats->increment( 'editstash.cache_hits.presumed_fresh' );
+			$logger->debug( "Edit check based cache hit for key '$key' (age: $age sec)." );
+			return $editInfo;
 		}
 
 		$dbr = wfGetDB( DB_SLAVE );
 
-		$templates = array(); // conditions to find changes/creations
+		$templates = []; // conditions to find changes/creations
 		$templateUses = 0; // expected existing templates
 		foreach ( $editInfo->output->getTemplateIds() as $ns => $stuff ) {
 			foreach ( $stuff as $dbkey => $revId ) {
@@ -298,7 +331,7 @@ class ApiStashEdit extends ApiBase {
 		if ( count( $templates ) ) {
 			$res = $dbr->select(
 				'page',
-				array( 'ns' => 'page_namespace', 'dbk' => 'page_title', 'page_latest' ),
+				[ 'ns' => 'page_namespace', 'dbk' => 'page_title', 'page_latest' ],
 				$dbr->makeWhereFrom2d( $templates, 'page_namespace', 'page_title' ),
 				__METHOD__
 			);
@@ -308,13 +341,13 @@ class ApiStashEdit extends ApiBase {
 			}
 
 			if ( $changed || $res->numRows() != $templateUses ) {
-				$stats->increment( 'editstash.cache-misses' );
-				$logger->info( "Stale cache for key '$key'; template changed." );
+				$stats->increment( 'editstash.cache_misses.proven_stale' );
+				$logger->info( "Stale cache for key '$key'; template changed. (age: $age sec)" );
 				return false;
 			}
 		}
 
-		$files = array(); // conditions to find changes/creations
+		$files = []; // conditions to find changes/creations
 		foreach ( $editInfo->output->getFileSearchOptions() as $name => $options ) {
 			$files[$name] = (string)$options['sha1'];
 		}
@@ -322,8 +355,8 @@ class ApiStashEdit extends ApiBase {
 		if ( count( $files ) ) {
 			$res = $dbr->select(
 				'image',
-				array( 'name' => 'img_name', 'img_sha1' ),
-				array( 'img_name' => array_keys( $files ) ),
+				[ 'name' => 'img_name', 'img_sha1' ],
+				[ 'img_name' => array_keys( $files ) ],
 				__METHOD__
 			);
 			$changed = false;
@@ -332,16 +365,31 @@ class ApiStashEdit extends ApiBase {
 			}
 
 			if ( $changed || $res->numRows() != count( $files ) ) {
-				$stats->increment( 'editstash.cache-misses' );
-				$logger->info( "Stale cache for key '$key'; file changed." );
+				$stats->increment( 'editstash.cache_misses.proven_stale' );
+				$logger->info( "Stale cache for key '$key'; file changed. (age: $age sec)" );
 				return false;
 			}
 		}
 
-		$stats->increment( 'editstash.cache-hits' );
-		$logger->debug( "Cache hit for key '$key'." );
+		$stats->increment( 'editstash.cache_hits.proven_fresh' );
+		$logger->debug( "Verified cache hit for key '$key' (age: $age sec)." );
 
 		return $editInfo;
+	}
+
+	/**
+	 * @param User $user
+	 * @return string|null TS_MW timestamp or null
+	 */
+	private static function lastEditTime( User $user ) {
+		$time = wfGetDB( DB_SLAVE )->selectField(
+			'recentchanges',
+			'MAX(rc_timestamp)',
+			[ 'rc_user_text' => $user->getName() ],
+			__METHOD__
+		);
+
+		return wfTimestampOrNull( TS_MW, $time );
 	}
 
 	/**
@@ -356,14 +404,14 @@ class ApiStashEdit extends ApiBase {
 	 * @param User $user User to get parser options from
 	 * @return string
 	 */
-	protected static function getStashKey( Title $title, Content $content, User $user ) {
-		$hash = sha1( implode( ':', array(
+	private static function getStashKey( Title $title, Content $content, User $user ) {
+		$hash = sha1( implode( ':', [
 			$content->getModel(),
 			$content->getDefaultFormat(),
 			sha1( $content->serialize( $content->getDefaultFormat() ) ),
 			$user->getId() ?: md5( $user->getName() ), // account for user parser options
 			$user->getId() ? $user->getDBTouched() : '-' // handle preference change races
-		) ) );
+		] ) );
 
 		return wfMemcKey( 'prepared-edit', md5( $title->getPrefixedDBkey() ), $hash );
 	}
@@ -376,72 +424,75 @@ class ApiStashEdit extends ApiBase {
 	 * @param Content $pstContent
 	 * @param ParserOutput $parserOutput
 	 * @param string $timestamp TS_MW
+	 * @param User $user
 	 * @return array (stash info array, TTL in seconds) or (null, 0)
 	 */
-	protected static function buildStashValue(
-		Content $pstContent, ParserOutput $parserOutput, $timestamp
+	private static function buildStashValue(
+		Content $pstContent, ParserOutput $parserOutput, $timestamp, User $user
 	) {
-		// If an item is renewed, mind the cache TTL determined by config and parser functions
+		// If an item is renewed, mind the cache TTL determined by config and parser functions.
+		// Put an upper limit on the TTL for sanity to avoid extreme template/file staleness.
 		$since = time() - wfTimestamp( TS_UNIX, $parserOutput->getTimestamp() );
 		$ttl = min( $parserOutput->getCacheExpiry() - $since, 5 * 60 );
 
 		if ( $ttl > 0 && !$parserOutput->getFlag( 'vary-revision' ) ) {
 			// Only store what is actually needed
-			$stashInfo = (object)array(
+			$stashInfo = (object)[
 				'pstContent' => $pstContent,
 				'output'     => $parserOutput,
-				'timestamp'  => $timestamp
-			);
-			return array( $stashInfo, $ttl );
+				'timestamp'  => $timestamp,
+				'edits'      => $user->getEditCount()
+			];
+			return [ $stashInfo, $ttl ];
 		}
 
-		return array( null, 0 );
+		return [ null, 0 ];
 	}
 
 	public function getAllowedParams() {
-		return array(
-			'title' => array(
+		return [
+			'title' => [
 				ApiBase::PARAM_TYPE => 'string',
 				ApiBase::PARAM_REQUIRED => true
-			),
-			'section' => array(
+			],
+			'section' => [
 				ApiBase::PARAM_TYPE => 'string',
-			),
-			'sectiontitle' => array(
+			],
+			'sectiontitle' => [
 				ApiBase::PARAM_TYPE => 'string'
-			),
-			'text' => array(
+			],
+			'text' => [
 				ApiBase::PARAM_TYPE => 'text',
 				ApiBase::PARAM_REQUIRED => true
-			),
-			'contentmodel' => array(
+			],
+			'contentmodel' => [
 				ApiBase::PARAM_TYPE => ContentHandler::getContentModels(),
 				ApiBase::PARAM_REQUIRED => true
-			),
-			'contentformat' => array(
+			],
+			'contentformat' => [
 				ApiBase::PARAM_TYPE => ContentHandler::getAllContentFormats(),
 				ApiBase::PARAM_REQUIRED => true
-			),
-			'baserevid' => array(
+			],
+			'baserevid' => [
 				ApiBase::PARAM_TYPE => 'integer',
 				ApiBase::PARAM_REQUIRED => true
-			)
-		);
+			]
+		];
 	}
 
-	function needsToken() {
+	public function needsToken() {
 		return 'csrf';
 	}
 
-	function mustBePosted() {
+	public function mustBePosted() {
 		return true;
 	}
 
-	function isWriteMode() {
+	public function isWriteMode() {
 		return true;
 	}
 
-	function isInternal() {
+	public function isInternal() {
 		return true;
 	}
 }

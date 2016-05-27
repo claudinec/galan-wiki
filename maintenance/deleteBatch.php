@@ -39,7 +39,7 @@ class DeleteBatch extends Maintenance {
 
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Deletes a batch of pages";
+		$this->addDescription( 'Deletes a batch of pages' );
 		$this->addOption( 'u', "User to perform deletion", false, true );
 		$this->addOption( 'r', "Reason to delete page", false, true );
 		$this->addOption( 'i', "Interval to sleep between deletions" );
@@ -60,7 +60,7 @@ class DeleteBatch extends Maintenance {
 		$interval = $this->getOption( 'i', 0 );
 
 		if ( $username === false ) {
-			$user = User::newSystemUser( 'Delete page script', array( 'steal' => true ) );
+			$user = User::newSystemUser( 'Delete page script', [ 'steal' => true ] );
 		} else {
 			$user = User::newFromName( $username );
 		}
@@ -80,7 +80,7 @@ class DeleteBatch extends Maintenance {
 			$this->error( "Unable to read file, exiting", true );
 		}
 
-		$dbw = wfGetDB( DB_MASTER );
+		$dbw = $this->getDB( DB_MASTER );
 
 		# Handle each entry
 		// @codingStandardsIgnoreStart Ignore Generic.CodeAnalysis.ForLoopWithTestFunctionCall.NotAllowed
@@ -102,7 +102,7 @@ class DeleteBatch extends Maintenance {
 
 			$this->output( $title->getPrefixedText() );
 			if ( $title->getNamespace() == NS_FILE ) {
-				$img = wfFindFile( $title, array( 'ignoreRedirect' => true ) );
+				$img = wfFindFile( $title, [ 'ignoreRedirect' => true ] );
 				if ( $img && $img->isLocal() && !$img->delete( $reason ) ) {
 					$this->output( " FAILED to delete associated file... " );
 				}

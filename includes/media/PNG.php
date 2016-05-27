@@ -71,11 +71,11 @@ class PNGHandler extends BitmapHandler {
 		$meta = $image->getMetadata();
 
 		if ( !$meta ) {
-			return array();
+			return [];
 		}
 		$meta = unserialize( $meta );
 		if ( !isset( $meta['metadata'] ) ) {
-			return array();
+			return [];
 		}
 		unset( $meta['metadata']['_MW_PNG_VERSION'] );
 
@@ -155,7 +155,7 @@ class PNGHandler extends BitmapHandler {
 			return $original;
 		}
 
-		$info = array();
+		$info = [];
 		$info[] = $original;
 
 		if ( $metadata['loopCount'] == 0 ) {
@@ -180,7 +180,7 @@ class PNGHandler extends BitmapHandler {
 	 *
 	 * Shown in the &query=imageinfo&iiprop=size api query.
 	 *
-	 * @param $file File
+	 * @param File $file
 	 * @return float The duration of the file.
 	 */
 	public function getLength( $file ) {

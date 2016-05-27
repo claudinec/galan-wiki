@@ -31,11 +31,11 @@ require_once __DIR__ . '/Maintenance.php';
  * @ingroup Maintenance
  */
 class CreateAndPromote extends Maintenance {
-	private static $permitRoles = array( 'sysop', 'bureaucrat', 'bot' );
+	private static $permitRoles = [ 'sysop', 'bureaucrat', 'bot' ];
 
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Create a new user account and/or grant it additional rights";
+		$this->addDescription( 'Create a new user account and/or grant it additional rights' );
 		$this->addOption(
 			'force',
 			'If acccount exists already, just grant it rights or change password.'
@@ -59,7 +59,7 @@ class CreateAndPromote extends Maintenance {
 		$username = $this->getArg( 0 );
 		$password = $this->getArg( 1 );
 		$force = $this->hasOption( 'force' );
-		$inGroups = array();
+		$inGroups = [];
 
 		$user = User::newFromName( $username );
 		if ( !is_object( $user ) ) {
@@ -77,13 +77,18 @@ class CreateAndPromote extends Maintenance {
 			$inGroups = $user->getGroups();
 		}
 
-		$groups = array_filter( self::$permitRoles, array( $this, 'hasOption' ) );
+		$groups = array_filter( self::$permitRoles, [ $this, 'hasOption' ] );
 		if ( $this->hasOption( 'custom-groups' ) ) {
+			$allGroups = array_flip( User::getAllGroups() );
 			$customGroupsText = $this->getOption( 'custom-groups' );
 			if ( $customGroupsText !== '' ) {
 				$customGroups = explode( ',', $customGroupsText );
 				foreach ( $customGroups as $customGroup ) {
-					$groups[] = trim( $customGroup );
+					if ( isset( $allGroups[$customGroup] ) ) {
+						$groups[] = trim( $customGroup );
+					} else {
+						$this->output( "$customGroup is not a valid group, ignoring!\n" );
+					}
 				}
 			}
 		}
@@ -126,7 +131,7 @@ class CreateAndPromote extends Maintenance {
 		}
 
 		# Promote user
-		array_map( array( $user, 'addGroup' ), $promotions );
+		array_map( [ $user, 'addGroup' ], $promotions );
 
 		if ( !$exists ) {
 			# Increment site_stats.ss_users

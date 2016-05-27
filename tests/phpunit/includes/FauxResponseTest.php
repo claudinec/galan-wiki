@@ -39,7 +39,7 @@ class FauxResponseTest extends MediaWikiTestCase {
 	 */
 	public function testCookie() {
 		$expire = time() + 100;
-		$cookie = array(
+		$cookie = [
 			'value' => 'val',
 			'path' => '/path',
 			'domain' => 'domain',
@@ -47,20 +47,20 @@ class FauxResponseTest extends MediaWikiTestCase {
 			'httpOnly' => false,
 			'raw' => false,
 			'expire' => $expire,
-		);
+		];
 
 		$this->assertEquals( null, $this->response->getCookie( 'xkey' ), 'Non-existing cookie' );
-		$this->response->setCookie( 'key', 'val', $expire, array(
+		$this->response->setCookie( 'key', 'val', $expire, [
 			'prefix' => 'x',
 			'path' => '/path',
 			'domain' => 'domain',
 			'secure' => 1,
 			'httpOnly' => 0,
-		) );
+		] );
 		$this->assertEquals( 'val', $this->response->getCookie( 'xkey' ), 'Existing cookie' );
 		$this->assertEquals( $cookie, $this->response->getCookieData( 'xkey' ),
 			'Existing cookie (data)' );
-		$this->assertEquals( array( 'xkey' => $cookie ), $this->response->getCookies(),
+		$this->assertEquals( [ 'xkey' => $cookie ], $this->response->getCookies(),
 			'Existing cookies' );
 	}
 
@@ -69,33 +69,33 @@ class FauxResponseTest extends MediaWikiTestCase {
 	 * @covers FauxResponse::header
 	 */
 	public function testHeader() {
-		$this->assertEquals( null, $this->response->getheader( 'Location' ), 'Non-existing header' );
+		$this->assertEquals( null, $this->response->getHeader( 'Location' ), 'Non-existing header' );
 
 		$this->response->header( 'Location: http://localhost/' );
 		$this->assertEquals(
 			'http://localhost/',
-			$this->response->getheader( 'Location' ),
+			$this->response->getHeader( 'Location' ),
 			'Set header'
 		);
 
 		$this->response->header( 'Location: http://127.0.0.1/' );
 		$this->assertEquals(
 			'http://127.0.0.1/',
-			$this->response->getheader( 'Location' ),
+			$this->response->getHeader( 'Location' ),
 			'Same header'
 		);
 
 		$this->response->header( 'Location: http://127.0.0.2/', false );
 		$this->assertEquals(
 			'http://127.0.0.1/',
-			$this->response->getheader( 'Location' ),
+			$this->response->getHeader( 'Location' ),
 			'Same header with override disabled'
 		);
 
 		$this->response->header( 'Location: http://localhost/' );
 		$this->assertEquals(
 			'http://localhost/',
-			$this->response->getheader( 'LOCATION' ),
+			$this->response->getHeader( 'LOCATION' ),
 			'Get header case insensitive'
 		);
 	}

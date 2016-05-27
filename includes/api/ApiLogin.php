@@ -24,6 +24,10 @@
  *
  * @file
  */
+
+use MediaWiki\Auth\AuthManager;
+use MediaWiki\Auth\AuthenticationRequest;
+use MediaWiki\Auth\AuthenticationResponse;
 use MediaWiki\Logger\LoggerFactory;
 
 /**
@@ -35,6 +39,16 @@ class ApiLogin extends ApiBase {
 
 	public function __construct( ApiMain $main, $action ) {
 		parent::__construct( $main, $action, 'lg' );
+	}
+
+	protected function getDescriptionMessage() {
+		if ( $this->getConfig()->get( 'DisableAuthManager' ) ) {
+			return 'apihelp-login-description-nonauthmanager';
+		} elseif ( $this->getConfig()->get( 'EnableBotPasswords' ) ) {
+			return 'apihelp-login-description';
+		} else {
+			return 'apihelp-login-description-nobotpasswords';
+		}
 	}
 
 	/**
@@ -50,53 +64,152 @@ class ApiLogin extends ApiBase {
 		// If we're in a mode that breaks the same-origin policy, no tokens can
 		// be obtained
 		if ( $this->lacksSameOriginSecurity() ) {
-			$this->getResult()->addValue( null, 'login', array(
+			$this->getResult()->addValue( null, 'login', [
 				'result' => 'Aborted',
 				'reason' => 'Cannot log in when the same-origin policy is not applied',
-			) );
+			] );
 
 			return;
 		}
 
 		$params = $this->extractRequestParams();
 
-		$result = array();
+		$result = [];
 
-		// Init session if necessary
-		if ( session_id() == '' ) {
-			wfSetupSession();
+		// Make sure session is persisted
+		$session = MediaWiki\Session\SessionManager::getGlobalSession();
+		$session->persist();
+
+		// Make sure it's possible to log in
+		if ( !$session->canSetUser() ) {
+			$this->getResult()->addValue( null, 'login', [
+				'result' => 'Aborted',
+				'reason' => 'Cannot log in when using ' .
+					$session->getProvider()->describe( Language::factory( 'en' ) ),
+			] );
+
+			return;
 		}
 
+		$authRes = false;
 		$context = new DerivativeContext( $this->getContext() );
-		$context->setRequest( new DerivativeRequest(
-			$this->getContext()->getRequest(),
-			array(
-				'wpName' => $params['name'],
-				'wpPassword' => $params['password'],
-				'wpDomain' => $params['domain'],
-				'wpLoginToken' => $params['token'],
-				'wpRemember' => ''
-			)
-		) );
-		$loginForm = new LoginForm();
-		$loginForm->setContext( $context );
+		$loginType = 'N/A';
 
-		$authRes = $loginForm->authenticateUserData();
+		// Check login token
+		$token = $session->getToken( '', 'login' );
+		if ( $token->wasNew() || !$params['token'] ) {
+			$authRes = 'NeedToken';
+		} elseif ( !$token->match( $params['token'] ) ) {
+			$authRes = 'WrongToken';
+		}
+
+		// Try bot passwords
+		if ( $authRes === false && $this->getConfig()->get( 'EnableBotPasswords' ) &&
+			strpos( $params['name'], BotPassword::getSeparator() ) !== false
+		) {
+			$status = BotPassword::login(
+				$params['name'], $params['password'], $this->getRequest()
+			);
+			if ( $status->isOK() ) {
+				$session = $status->getValue();
+				$authRes = 'Success';
+				$loginType = 'BotPassword';
+			} else {
+				$authRes = 'Failed';
+				$message = $status->getMessage();
+				LoggerFactory::getInstance( 'authmanager' )->info(
+					'BotPassword login failed: ' . $status->getWikiText( false, false, 'en' )
+				);
+			}
+		}
+
+		if ( $authRes === false ) {
+			if ( $this->getConfig()->get( 'DisableAuthManager' ) ) {
+				// Non-AuthManager login
+				$context->setRequest( new DerivativeRequest(
+					$this->getContext()->getRequest(),
+					[
+						'wpName' => $params['name'],
+						'wpPassword' => $params['password'],
+						'wpDomain' => $params['domain'],
+						'wpLoginToken' => $params['token'],
+						'wpRemember' => ''
+					]
+				) );
+				$loginForm = new LoginForm();
+				$loginForm->setContext( $context );
+				$authRes = $loginForm->authenticateUserData();
+				$loginType = 'LoginForm';
+
+				switch ( $authRes ) {
+					case LoginForm::SUCCESS:
+						$authRes = 'Success';
+						break;
+					case LoginForm::NEED_TOKEN:
+						$authRes = 'NeedToken';
+						break;
+				}
+			} else {
+				// Simplified AuthManager login, for backwards compatibility
+				$manager = AuthManager::singleton();
+				$reqs = AuthenticationRequest::loadRequestsFromSubmission(
+					$manager->getAuthenticationRequests( AuthManager::ACTION_LOGIN, $this->getUser() ),
+					[
+						'username' => $params['name'],
+						'password' => $params['password'],
+						'domain' => $params['domain'],
+						'rememberMe' => true,
+					]
+				);
+				$res = AuthManager::singleton()->beginAuthentication( $reqs, 'null:' );
+				switch ( $res->status ) {
+					case AuthenticationResponse::PASS:
+						if ( $this->getConfig()->get( 'EnableBotPasswords' ) ) {
+							$warn = 'Main-account login via action=login is deprecated and may stop working ' .
+								'without warning.';
+							$warn .= ' To continue login with action=login, see [[Special:BotPasswords]].';
+							$warn .= ' To safely continue using main-account login, see action=clientlogin.';
+						} else {
+							$warn = 'Login via action=login is deprecated and may stop working without warning.';
+							$warn .= ' To safely log in, see action=clientlogin.';
+						}
+						$this->setWarning( $warn );
+						$authRes = 'Success';
+						$loginType = 'AuthManager';
+						break;
+
+					case AuthenticationResponse::FAIL:
+						// Hope it's not a PreAuthenticationProvider that failed...
+						$authRes = 'Failed';
+						$message = $res->message;
+						\MediaWiki\Logger\LoggerFactory::getInstance( 'authentication' )
+							->info( __METHOD__ . ': Authentication failed: ' . $message->plain() );
+						break;
+
+					default:
+						$authRes = 'Aborted';
+						break;
+				}
+			}
+		}
+
+		$result['result'] = $authRes;
 		switch ( $authRes ) {
-			case LoginForm::SUCCESS:
-				$user = $context->getUser();
-				$this->getContext()->setUser( $user );
-				$user->setCookies( $this->getRequest(), null, true );
+			case 'Success':
+				if ( $this->getConfig()->get( 'DisableAuthManager' ) ) {
+					$user = $context->getUser();
+					$this->getContext()->setUser( $user );
+					$user->setCookies( $this->getRequest(), null, true );
+				} else {
+					$user = $session->getUser();
+				}
 
 				ApiQueryInfo::resetTokenCache();
 
-				// Run hooks.
-				// @todo FIXME: Split back and frontend from this hook.
-				// @todo FIXME: This hook should be placed in the backend
+				// Deprecated hook
 				$injected_html = '';
-				Hooks::run( 'UserLoginComplete', array( &$user, &$injected_html ) );
+				Hooks::run( 'UserLoginComplete', [ &$user, &$injected_html ] );
 
-				$result['result'] = 'Success';
 				$result['lguserid'] = intval( $user->getId() );
 				$result['lgusername'] = $user->getName();
 
@@ -104,21 +217,42 @@ class ApiLogin extends ApiBase {
 				// point (1.28 at the earliest, and see T121527). They were ok
 				// when the core cookie-based login was the only thing, but
 				// CentralAuth broke that a while back and
-				// SessionManager/AuthManager are *really* going to break it.
+				// SessionManager/AuthManager *really* break it.
 				$result['lgtoken'] = $user->getToken();
 				$result['cookieprefix'] = $this->getConfig()->get( 'CookiePrefix' );
-				$result['sessionid'] = session_id();
+				$result['sessionid'] = $session->getId();
 				break;
 
-			case LoginForm::NEED_TOKEN:
-				$result['result'] = 'NeedToken';
-				$result['token'] = $loginForm->getLoginToken();
+			case 'NeedToken':
+				$result['token'] = $token->toString();
+				$this->setWarning( 'Fetching a token via action=login is deprecated. ' .
+				   'Use action=query&meta=tokens&type=login instead.' );
+				$this->logFeatureUsage( 'action=login&!lgtoken' );
 
 				// @todo: See above about deprecation
 				$result['cookieprefix'] = $this->getConfig()->get( 'CookiePrefix' );
-				$result['sessionid'] = session_id();
+				$result['sessionid'] = $session->getId();
 				break;
 
+			case 'WrongToken':
+				break;
+
+			case 'Failed':
+				$result['reason'] = $message->useDatabase( 'false' )->inLanguage( 'en' )->text();
+				break;
+
+			case 'Aborted':
+				$result['reason'] = 'Authentication requires user interaction, ' .
+				   'which is not supported by action=login.';
+				if ( $this->getConfig()->get( 'EnableBotPasswords' ) ) {
+					$result['reason'] .= ' To be able to login with action=login, see [[Special:BotPasswords]].';
+					$result['reason'] .= ' To continue using main-account login, see action=clientlogin.';
+				} else {
+					$result['reason'] .= ' To log in, see action=clientlogin.';
+				}
+				break;
+
+			// Results from LoginForm for when $wgDisableAuthManager is true
 			case LoginForm::WRONG_TOKEN:
 				$result['result'] = 'WrongToken';
 				break;
@@ -161,8 +295,7 @@ class ApiLogin extends ApiBase {
 
 			case LoginForm::THROTTLED:
 				$result['result'] = 'Throttled';
-				$throttle = $this->getConfig()->get( 'PasswordAttemptThrottle' );
-				$result['wait'] = intval( $throttle['seconds'] );
+				$result['wait'] = intval( $loginForm->mThrottleWait );
 				break;
 
 			case LoginForm::USER_BLOCKED:
@@ -184,11 +317,20 @@ class ApiLogin extends ApiBase {
 
 		$this->getResult()->addValue( null, 'login', $result );
 
-		LoggerFactory::getInstance( 'authmanager' )->info( 'Login attempt', array(
+		if ( $loginType === 'LoginForm' && isset( LoginForm::$statusCodes[$authRes] ) ) {
+			$authRes = LoginForm::$statusCodes[$authRes];
+		}
+		LoggerFactory::getInstance( 'authmanager' )->info( 'Login attempt', [
 			'event' => 'login',
-			'successful' => $authRes === LoginForm::SUCCESS,
-			'status' => LoginForm::$statusCodes[$authRes],
-		) );
+			'successful' => $authRes === 'Success',
+			'loginType' => $loginType,
+			'status' => $authRes,
+		] );
+	}
+
+	public function isDeprecated() {
+		return !$this->getConfig()->get( 'DisableAuthManager' ) &&
+			!$this->getConfig()->get( 'EnableBotPasswords' );
 	}
 
 	public function mustBePosted() {
@@ -200,23 +342,27 @@ class ApiLogin extends ApiBase {
 	}
 
 	public function getAllowedParams() {
-		return array(
+		return [
 			'name' => null,
-			'password' => array(
+			'password' => [
 				ApiBase::PARAM_TYPE => 'password',
-			),
+			],
 			'domain' => null,
-			'token' => null,
-		);
+			'token' => [
+				ApiBase::PARAM_TYPE => 'string',
+				ApiBase::PARAM_REQUIRED => false, // for BC
+				ApiBase::PARAM_HELP_MSG => [ 'api-help-param-token', 'login' ],
+			],
+		];
 	}
 
 	protected function getExamplesMessages() {
-		return array(
+		return [
 			'action=login&lgname=user&lgpassword=password'
 				=> 'apihelp-login-example-gettoken',
 			'action=login&lgname=user&lgpassword=password&lgtoken=123ABC'
 				=> 'apihelp-login-example-login',
-		);
+		];
 	}
 
 	public function getHelpUrls() {

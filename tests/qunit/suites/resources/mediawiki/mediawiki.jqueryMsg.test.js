@@ -81,8 +81,9 @@
 			'jquerymsg-test-version-entrypoints-index-php': '[https://www.mediawiki.org/wiki/Manual:index.php index.php]',
 
 			'external-link-replace': 'Foo [$1 bar]',
-			'external-link-plural': 'Foo {{PLURAL:$1|is [$2 one]|are [$2 some]|2=[$2 two]|3=three|4=a=b|5=}} things.',
-			'plural-only-explicit-forms': 'It is a {{PLURAL:$1|1=single|2=double}} room.'
+			'external-link-plural': 'Foo {{PLURAL:$1|is [$2 one]|are [$2 some]|2=[$2 two]|3=three|4=a=b}} things.',
+			'plural-only-explicit-forms': 'It is a {{PLURAL:$1|1=single|2=double}} room.',
+			'plural-empty-explicit-form': 'There is me{{PLURAL:$1|0=| and other people}}.'
 		}
 	} ) );
 
@@ -119,9 +120,8 @@
 	/**
 	 * @param {Function[]} tasks List of functions that perform tasks
 	 *  that may be asynchronous. Invoke the callback parameter when done.
-	 * @param {Function} complete Called when all tasks are done, or when the sequence is aborted.
 	 */
-	function process( tasks, complete ) {
+	function process( tasks ) {
 		/*jshint latedef:false */
 		function abort() {
 			tasks.splice( 0, tasks.length );
@@ -140,13 +140,12 @@
 			} else {
 				// Remove tasks list to indicate the process is final.
 				tasks = null;
-				complete();
 			}
 		}
 		next();
 	}
 
-	QUnit.test( 'Replace', 16, function ( assert ) {
+	QUnit.test( 'Replace', 15, function ( assert ) {
 		mw.messages.set( 'simple', 'Foo $1 baz $2' );
 
 		assert.equal( formatParse( 'simple' ), 'Foo $1 baz $2', 'Replacements with no substitutes' );
@@ -215,11 +214,6 @@
 			'Only first equal sign is used as delimiter for explicit plural form. Repeated equal signs does not create issue'
 		);
 		assert.equal(
-			formatParse( 'external-link-plural', 5, 'http://example.org' ),
-			'Foo are <a href="http://example.org">some</a> things.',
-			'Invalid explicit plural form. Plural fallback to the "other" plural form'
-		);
-		assert.equal(
 			formatParse( 'external-link-plural', 6, 'http://example.org' ),
 			'Foo are <a href="http://example.org">some</a> things.',
 			'Plural fallback to the "other" plural form'
@@ -231,13 +225,16 @@
 		);
 	} );
 
-	QUnit.test( 'Plural', 6, function ( assert ) {
+	QUnit.test( 'Plural', 9, function ( assert ) {
 		assert.equal( formatParse( 'plural-msg', 0 ), 'Found 0 items', 'Plural test for english with zero as count' );
 		assert.equal( formatParse( 'plural-msg', 1 ), 'Found 1 item', 'Singular test for english' );
 		assert.equal( formatParse( 'plural-msg', 2 ), 'Found 2 items', 'Plural test for english' );
 		assert.equal( formatParse( 'plural-msg-explicit-forms-nested', 6 ), 'Found 6 results', 'Plural message with explicit plural forms' );
 		assert.equal( formatParse( 'plural-msg-explicit-forms-nested', 0 ), 'Found no results in Wiki', 'Plural message with explicit plural forms, with nested {{SITENAME}}' );
 		assert.equal( formatParse( 'plural-msg-explicit-forms-nested', 1 ), 'Found 1 result', 'Plural message with explicit plural forms with placeholder nested' );
+		assert.equal( formatParse( 'plural-empty-explicit-form', 0 ), 'There is me.' );
+		assert.equal( formatParse( 'plural-empty-explicit-form', 1 ), 'There is me and other people.' );
+		assert.equal( formatParse( 'plural-empty-explicit-form', 2 ), 'There is me and other people.' );
 	} );
 
 	QUnit.test( 'Gender', 15, function ( assert ) {
@@ -367,6 +364,7 @@
 		mw.messages.set( mw.libs.phpParserData.messages );
 		var tasks = $.map( mw.libs.phpParserData.tests, function ( test ) {
 			return function ( next, abort ) {
+				var done = assert.async();
 				getMwLanguage( test.lang )
 					.then( function ( langClass ) {
 						mw.config.set( 'wgUserLanguage', test.lang );
@@ -379,12 +377,12 @@
 					}, function () {
 						assert.ok( false, 'Language "' + test.lang + '" failed to load.' );
 					} )
+					.then( done, done )
 					.then( next, abort );
 			};
 		} );
 
-		QUnit.stop();
-		process( tasks, QUnit.start );
+		process( tasks );
 	} );
 
 	QUnit.test( 'Links', 14, function ( assert ) {
@@ -888,6 +886,7 @@
 		mw.messages.set( 'formatnum-msg-int', '{{formatnum:$1|R}}' );
 		var queue = $.map( formatnumTests, function ( test ) {
 			return function ( next, abort ) {
+				var done = assert.async();
 				getMwLanguage( test.lang )
 					.then( function ( langClass ) {
 						mw.config.set( 'wgUserLanguage', test.lang );
@@ -901,15 +900,15 @@
 					}, function () {
 						assert.ok( false, 'Language "' + test.lang + '" failed to load' );
 					} )
+					.then( done, done )
 					.then( next, abort );
 			};
 		} );
-		QUnit.stop();
-		process( queue, QUnit.start );
+		process( queue );
 	} );
 
 	// HTML in wikitext
-	QUnit.test( 'HTML', 32, function ( assert ) {
+	QUnit.test( 'HTML', 33, function ( assert ) {
 		mw.messages.set( 'jquerymsg-italics-msg', '<i>Very</i> important' );
 
 		assertBothModes( assert, [ 'jquerymsg-italics-msg' ], mw.messages.get( 'jquerymsg-italics-msg' ), 'Simple italics unchanged' );
@@ -1049,6 +1048,13 @@
 			'Self-closing tags don\'t cause a parse error'
 		);
 
+		mw.messages.set( 'jquerymsg-asciialphabetliteral-regression', '<b >>>="dir">asd</b>' );
+		assert.htmlEqual(
+			formatParse( 'jquerymsg-asciialphabetliteral-regression' ),
+			'<b>&gt;&gt;="dir"&gt;asd</b>',
+			'Regression test for bad "asciiAlphabetLiteral" definition'
+		);
+
 		mw.messages.set( 'jquerymsg-entities1', 'A&B' );
 		mw.messages.set( 'jquerymsg-entities2', 'A&gt;B' );
 		mw.messages.set( 'jquerymsg-entities3', 'A&rarr;B' );
@@ -1085,6 +1091,29 @@
 			formatParse( 'jquerymsg-entities-attr3' ),
 			'<i title="A&amp;rarr;B"></i>',
 			'"&rarr;" entity is double-escaped in attribute'
+		);
+	} );
+
+	QUnit.test( 'Nowiki', 3, function ( assert ) {
+		mw.messages.set( 'jquerymsg-nowiki-link', 'Foo <nowiki>[[bar]]</nowiki> baz.' );
+		assert.equal(
+			formatParse( 'jquerymsg-nowiki-link' ),
+			'Foo [[bar]] baz.',
+			'Link inside nowiki is not parsed'
+		);
+
+		mw.messages.set( 'jquerymsg-nowiki-htmltag', 'Foo <nowiki><b>bar</b></nowiki> baz.' );
+		assert.equal(
+			formatParse( 'jquerymsg-nowiki-htmltag' ),
+			'Foo &lt;b&gt;bar&lt;/b&gt; baz.',
+			'HTML inside nowiki is not parsed and escaped'
+		);
+
+		mw.messages.set( 'jquerymsg-nowiki-template', 'Foo <nowiki>{{bar}}</nowiki> baz.' );
+		assert.equal(
+			formatParse( 'jquerymsg-nowiki-template' ),
+			'Foo {{bar}} baz.',
+			'Template inside nowiki is not parsed and does not cause a parse error'
 		);
 	} );
 

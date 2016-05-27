@@ -1,7 +1,7 @@
 <?php
 // @codingStandardsIgnoreFile
 /**
- * Html form for user login (since 1.22 with VForm appearance).
+ * HTML form for user login (since 1.22 with VForm appearance).
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@
  *
  * @file
  * @ingroup Templates
+ * @deprecated Will be removed when AuthManager lands.
+ *   The login form will be generated via HTMLForm.
  */
 
 class UserloginTemplate extends BaseTemplate {
@@ -58,24 +60,24 @@ class UserloginTemplate extends BaseTemplate {
 
 			<?php if ( $this->data['formheader'] ) { ?>
 				<div class="mw-form-formheader">
-					<?php $this->html( 'formheader' ); /* extensions such as MobileFrontend add html here */ ?>
+					<?php $this->html( 'formheader' ); /* extensions such as MobileFrontend add HTML here */ ?>
 				</div>
 			<?php } ?>
 			<div class="mw-ui-vform-field">
-				<label for='wpName1'>
+				<label for="wpName1">
 					<?php
 					$this->msg( 'userlogin-yourname' );
 
 					if ( $this->data['secureLoginUrl'] ) {
-						echo Html::element( 'a', array(
+						echo Html::element( 'a', [
 							'href' => $this->data['secureLoginUrl'],
 							'class' => 'mw-ui-flush-right mw-secure',
-						), $this->getMsg( 'userlogin-signwithsecure' )->text() );
+						], $this->getMsg( 'userlogin-signwithsecure' )->text() );
 					}
 					?>
 				</label>
 				<?php
-				echo Html::input( 'wpName', $this->data['name'], 'text', array(
+				echo Html::input( 'wpName', $this->data['name'], 'text', [
 					'class' => 'loginText mw-ui-input',
 					'id' => 'wpName1',
 					'tabindex' => '1',
@@ -85,25 +87,25 @@ class UserloginTemplate extends BaseTemplate {
 					// Set focus to this field if it's blank.
 					'autofocus' => !$this->data['name'],
 					'placeholder' => $this->getMsg( 'userlogin-yourname-ph' )->text()
-				) );
+				] );
 				?>
 			</div>
 
 			<div class="mw-ui-vform-field">
-				<label for='wpPassword1'>
+				<label for="wpPassword1">
 					<?php
 					$this->msg( 'userlogin-yourpassword' );
 					?>
 				</label>
 				<?php
-				echo Html::input( 'wpPassword', null, 'password', array(
+				echo Html::input( 'wpPassword', null, 'password', [
 					'class' => 'loginPassword mw-ui-input',
 					'id' => 'wpPassword1',
 					'tabindex' => '2',
 					// Set focus to this field if username is filled in.
 					'autofocus' => (bool)$this->data['name'],
 					'placeholder' => $this->getMsg( 'userlogin-yourpassword-ph' )->text()
-				) );
+				] );
 				?>
 			</div>
 
@@ -116,7 +118,7 @@ class UserloginTemplate extends BaseTemplate {
 				}
 			?>
 				<div class="mw-ui-vform-field" id="mw-user-domain-section">
-					<label for='wpDomain'><?php $this->msg( 'yourdomainname' ); ?></label>
+					<label for="wpDomain"><?php $this->msg( 'yourdomainname' ); ?></label>
 					<?php echo $select->getHTML(); ?>
 				</div>
 			<?php } ?>
@@ -142,14 +144,14 @@ class UserloginTemplate extends BaseTemplate {
 
 			<div class="mw-ui-vform-field">
 				<?php
-				$attrs = array(
+				$attrs = [
 					'id' => 'wpLoginAttempt',
 					'name' => 'wpLoginAttempt',
 					'tabindex' => '6',
-				);
-				$modifiers = array(
-					'mw-ui-constructive',
-				);
+				];
+				$modifiers = [
+					'mw-ui-progressive',
+				];
 				echo Html::submitButton( $this->getMsg( 'pt-login-button' )->text(), $attrs, $modifiers );
 				?>
 			</div>
@@ -158,11 +160,11 @@ class UserloginTemplate extends BaseTemplate {
 				<?php
 				echo Html::element(
 					'a',
-					array(
+					[
 						'href' => Skin::makeInternalOrExternalUrl(
 							wfMessage( 'helplogin-url' )->inContentLanguage()->text()
 						),
-					),
+					],
 					$this->getMsg( 'userlogin-helplink2' )->text()
 				);
 				?>
@@ -172,9 +174,9 @@ class UserloginTemplate extends BaseTemplate {
 			if ( $this->data['useemail'] && $this->data['canreset'] && $this->data['resetlink'] === true ) {
 				echo Html::rawElement(
 					'div',
-					array(
+					[
 						'class' => 'mw-ui-vform-field mw-form-related-link-container',
-					),
+					],
 					Linker::link(
 						SpecialPage::getTitleFor( 'PasswordReset' ),
 						$this->getMsg( 'userlogin-resetpassword-link' )->escaped()
@@ -188,8 +190,8 @@ class UserloginTemplate extends BaseTemplate {
 						<a href="<?php $this->text( 'createOrLoginHref' ); ?>" id="mw-createaccount-join" tabindex="7"><?php $this->msg( 'userlogin-createanother' ); ?></a>
 					</div>
 				<?php } else { ?>
-					<div id="mw-createaccount-cta" class="mw-form-related-link-container mw-ui-vform-field">
-						<?php $this->msg( 'userlogin-noaccount' ); ?><a href="<?php $this->text( 'createOrLoginHref' ); ?>" id="mw-createaccount-join" tabindex="7" class="mw-ui-button mw-ui-progressive"><?php $this->msg( 'userlogin-joinproject' ); ?></a>
+					<div id="mw-createaccount-cta" class="mw-ui-vform-field">
+						<?php $this->msg( 'userlogin-noaccount' ); ?><a href="<?php $this->text( 'createOrLoginHref' ); ?>" id="mw-createaccount-join" tabindex="7" class="mw-ui-button"><?php $this->msg( 'userlogin-joinproject' ); ?></a>
 					</div>
 				<?php
 				}

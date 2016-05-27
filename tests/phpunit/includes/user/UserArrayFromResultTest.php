@@ -1,7 +1,7 @@
 <?php
 
 /**
- * @author Adam Shorland
+ * @author Addshore
  * @covers UserArrayFromResult
  */
 class UserArrayFromResultTest extends MediaWikiTestCase {
@@ -62,11 +62,11 @@ class UserArrayFromResultTest extends MediaWikiTestCase {
 	}
 
 	public static function provideNumberOfRows() {
-		return array(
-			array( 0 ),
-			array( 1 ),
-			array( 122 ),
-		);
+		return [
+			[ 0 ],
+			[ 1 ],
+			[ 122 ],
+		];
 	}
 
 	/**
@@ -93,10 +93,10 @@ class UserArrayFromResultTest extends MediaWikiTestCase {
 	}
 
 	public function provideTestValid() {
-		return array(
-			array( $this->getRowWithUsername(), true ),
-			array( false, false ),
-		);
+		return [
+			[ $this->getRowWithUsername(), true ],
+			[ false, false ],
+		];
 	}
 
 	/**

@@ -46,11 +46,7 @@
 			.text( mw.msg( msgKey ) )
 			.attr( 'title', mw.msg( 'tooltip-ca-' + action ) )
 			.updateTooltipAccessKeys()
-			.attr( 'href', mw.util.wikiScript() + '?' + $.param( {
-					title: title,
-					action: action
-				} )
-			);
+			.attr( 'href', mw.util.getUrl( title, { action: action } ) );
 
 		// Most common ID style
 		if ( $li.prop( 'id' ) === 'ca-' + otherAction ) {
@@ -112,14 +108,13 @@
 		$links.click( function ( e ) {
 			var action, api, $link;
 
-			// Start preloading the notification module (normally loaded by mw.notify())
+			// Preload the notification module for mw.notify
 			mw.loader.load( 'mediawiki.notification' );
 
 			action = mwUriGetAction( this.href );
 
 			if ( action !== 'watch' && action !== 'unwatch' ) {
-				// Could not extract target action from link url,
-				// let native browsing handle it further
+				// Let native browsing handle the link
 				return true;
 			}
 			e.preventDefault();

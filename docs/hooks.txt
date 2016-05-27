@@ -178,7 +178,8 @@ once for 'TimStarling', and once for 'brion'.
 
 Hooks can return three possible values:
 
-  * true: the hook has operated successfully
+  * No return value (or null): the hook has operated successfully. Previously,
+    true was required. This is the default since MediaWiki 1.23.
   * "some string": an error occurred; processing should stop and the error
                    should be shown to the user
   * false: the hook has successfully done the work necessary and the calling
@@ -237,21 +238,16 @@ MediaWiki 1.4rc1.
 This is a list of known events and parameters; please add to it if you're going
 to add events to the MediaWiki code.
 
-'AbortAutoAccount': Return false to cancel automated local account creation,
-where normally authentication against an external auth plugin would be creating
-a local account.
+'AbortAutoAccount': DEPRECATED! Create a PreAuthenticationProvider instead.
+Return false to cancel automated local account creation, where normally
+authentication against an external auth plugin would be creating a local
+account.
 $user: the User object about to be created (read-only, incomplete)
 &$abortMsg: out parameter: name of error message to be displayed to user
 
 'AbortAutoblock': Return false to cancel an autoblock.
 $autoblockip: The IP going to be autoblocked.
 &$block: The block from which the autoblock is coming.
-
-'AbortChangePassword': Return false to cancel password change.
-$user: the User object to which the password change is occuring
-$mOldpass: the old password provided by the user
-$newpass: the new password provided by the user
-&$abortMsg: the message identifier for abort reason
 
 'AbortDiffCache': Can be used to cancel the caching of a diff.
 &$diffEngine: DifferenceEngine object
@@ -261,7 +257,8 @@ $editor: The User who made the change.
 $title: The Title of the page that was edited.
 $rc: The current RecentChange object.
 
-'AbortLogin': Return false to cancel account login.
+'AbortLogin': DEPRECATED! Create a PreAuthenticationProvider instead.
+Return false to cancel account login.
 $user: the User object being authenticated against
 $password: the password being submitted, not yet checked for validity
 &$retval: a LoginForm class constant to return from authenticateUserData();
@@ -270,7 +267,8 @@ $password: the password being submitted, not yet checked for validity
 &$msg: the message identifier for abort reason (new in 1.18, not available
   before 1.18)
 
-'AbortNewAccount': Return false to cancel explicit account creation.
+'AbortNewAccount': DEPRECATED! Create a PreAuthenticationProvider instead.
+Return false to cancel explicit account creation.
 $user: the User object about to be created (read-only, incomplete)
 &$msg: out parameter: HTML to display on abort
 &$status: out parameter: Status object to return, replaces the older $msg param
@@ -294,7 +292,8 @@ $name: name of the action
 &$fields: HTMLForm descriptor array
 $article: Article object
 
-'AddNewAccount': After a user account is created.
+'AddNewAccount': DEPRECATED! Use LocalUserCreated.
+After a user account is created.
 $user: the User object that was created. (Parameter added in 1.7)
 $byEmail: true when account was created "by email" (added in 1.12)
 
@@ -307,6 +306,11 @@ $loginForm: the LoginForm used
 $apiModule: the ApiCreateAccount module calling
 $loginForm: the LoginForm used
 &$result: associative array for API result data
+
+'AfterBuildFeedLinks': Executed in OutputPage.php after all feed links (atom, rss,...)
+are created. Can be used to omit specific feeds from being outputted. You must not use
+this hook to add feeds, use OutputPage::addFeedLink() instead.
+&$feedLinks: Array of created feed links
 
 'AfterFinalPageOutput': Nearly at the end of OutputPage::output() but
 before OutputPage::sendCacheControl() and final ob_end_flush() which
@@ -370,6 +374,7 @@ $user: Current user
 'APIEditBeforeSave': Before saving a page with api.php?action=edit, after
 processing request parameters. Return false to let the request fail, returning
 an error message or an <edit result="Failure"> tag if $resultArr was filled.
+Unlike for example 'EditFilterMergedContent' this also being run on undo.
 $editPage: the EditPage object
 $text: the new text of the article (has yet to be saved)
 &$resultArr: data in this array will be added to the API result
@@ -508,7 +513,8 @@ sites statistics information.
 'ApiQueryTokensRegisterTypes': Use this hook to add additional token types to
 action=query&meta=tokens. Note that most modules will probably be able to use
 the 'csrf' token instead of creating their own token types.
-&$salts: array( type => salt to pass to User::getEditToken() )
+&$salts: array( type => salt to pass to User::getEditToken() or array of salt
+  and key to pass to Session::getToken() )
 
 'APIQueryUsersTokens': DEPRECATED! Use ApiQueryTokensRegisterTypes instead.
 Use this hook to add custom token to list=users. Every token has an action,
@@ -736,12 +742,32 @@ viewing.
 redirect was followed.
 &$article: target article (object)
 
-'AuthPluginAutoCreate': Called when creating a local account for an user logged
-in from an external authentication method.
+'AuthChangeFormFields': After converting a field information array obtained
+from a set of AuthenticationRequest classes into a form descriptor; hooks
+can tweak the array to change how login etc. forms should look.
+$requests: array of AuthenticationRequests the fields are created from
+$fieldInfo: field information array (union of all AuthenticationRequest::getFieldInfo() responses).
+&$formDescriptor: HTMLForm descriptor. The special key 'weight' can be set
+  to change the order of the fields.
+$action: one of the AuthManager::ACTION_* constants.
+
+'AuthManagerLoginAuthenticateAudit': A login attempt either succeeded or failed
+for a reason other than misconfiguration or session loss. No return data is
+accepted; this hook is for auditing only.
+$response: The MediaWiki\Auth\AuthenticationResponse in either a PASS or FAIL state.
+$user: The User object being authenticated against, or null if authentication
+  failed before getting that far.
+$username: A guess at the user name being authenticated, or null if we can't
+  even determine that.
+
+'AuthPluginAutoCreate': DEPRECATED! Use the 'LocalUserCreated' hook instead.
+Called when creating a local account for an user logged in from an external
+authentication method.
 $user: User object created locally
 
-'AuthPluginSetup': Update or replace authentication plugin object ($wgAuth).
-Gives a chance for an extension to set it programmatically to a variable class.
+'AuthPluginSetup': DEPRECATED! Extensions should be updated to use AuthManager.
+Update or replace authentication plugin object ($wgAuth). Gives a chance for an
+extension to set it programmatically to a variable class.
 &$auth: the $wgAuth object, probably a stub
 
 'AutopromoteCondition': Check autopromote condition for user.
@@ -907,8 +933,14 @@ $html: Requested html content of anchor
 &$link: Returned value. When set to a non-null value by a hook subscriber
   this value will be used as the anchor instead of Linker::link
 
-'ChangePasswordForm': For extensions that need to add a field to the
-ChangePassword form via the Preferences form.
+'ChangeAuthenticationDataAudit': Called when user changes his password.
+No return data is accepted; this hook is for auditing only.
+$req: AuthenticationRequest object describing the change (and target user)
+$status: StatusValue with the result of the action
+
+'ChangePasswordForm': DEPRECATED! Use AuthChangeFormFields or security levels.
+For extensions that need to add a field to the ChangePassword form via the
+Preferences form.
 &$extraFields: An array of arrays that hold fields like would be passed to the
   pretty function.
 
@@ -1640,6 +1672,11 @@ Return false to stop further processing of the tag
 $reader: XMLReader object
 $revisionInfo: Array of information
 
+'ImportLogInterwikiLink': Hook to change the interwiki link used in log entries
+and edit summaries for transwiki imports.
+&$fullInterwikiPrefix: Interwiki prefix, may contain colons.
+&$pageTitle: String that contains page title.
+
 'ImportSources': Called when reading from the $wgImportSources configuration
 variable. Can be used to lazy-load the import sources list.
 &$importSources: The value of $wgImportSources. Modify as necessary. See the
@@ -1746,7 +1783,8 @@ $title: The page's Title.
 $out: The output page.
 $cssClassName: CSS class name of the language selector.
 
-'LinkBegin': Used when generating internal and interwiki links in
+'LinkBegin': DEPRECATED! Use HtmlPageLinkRendererBegin instead.
+Used when generating internal and interwiki links in
 Linker::link(), before processing starts.  Return false to skip default
 processing and return $ret. See documentation for Linker::link() for details on
 the expected meanings of parameters.
@@ -1763,7 +1801,8 @@ $target: the Title that the link is pointing to
 &$options: array of options.  Can include 'known', 'broken', 'noclasses'.
 &$ret: the value to return if your hook returns false.
 
-'LinkEnd': Used when generating internal and interwiki links in Linker::link(),
+'LinkEnd': DEPRECATED! Use HtmlPageLinkRendererEnd hook instead
+Used when generating internal and interwiki links in Linker::link(),
 just before the function returns a value.  If you return true, an <a> element
 with HTML attributes $attribs and contents $html will be returned.  If you
 return false, $ret will be returned.
@@ -1797,6 +1836,35 @@ $file: the File object or false if broken link
 &$html: the link text
 &$attribs: the attributes to be applied
 &$ret: the value to return if your hook returns false
+
+'LinkRendererBegin':
+Used when generating internal and interwiki links in
+LinkRenderer, before processing starts.  Return false to skip default
+processing and return $ret.
+$linkRenderer: the LinkRenderer object
+$target: the LinkTarget that the link is pointing to
+&$html: the contents that the <a> tag should have (raw HTML); null means
+  "default".
+&$customAttribs: the HTML attributes that the <a> tag should have, in
+  associative array form, with keys and values unescaped.  Should be merged
+  with default values, with a value of false meaning to suppress the
+  attribute.
+&$query: the query string to add to the generated URL (the bit after the "?"),
+  in associative array form, with keys and values unescaped.
+&$ret: the value to return if your hook returns false.
+
+'LinkRendererEnd':
+Used when generating internal and interwiki links in LinkRenderer,
+just before the function returns a value.  If you return true, an <a> element
+with HTML attributes $attribs and contents $html will be returned.  If you
+return false, $ret will be returned.
+$linkRenderer: the LinkRenderer object
+$target: the LinkTarget object that the link is pointing to
+$isKnown: boolean indicating whether the page is known or not
+&$html: the final (raw HTML) contents of the <a> tag, after processing.
+&$attribs: the final HTML attributes of the <a> tag, after processing, in
+  associative array form.
+&$ret: the value to return if your hook returns false.
 
 'LinksUpdate': At the beginning of LinksUpdate::doUpdate() just before the
 actual update.
@@ -1910,16 +1978,11 @@ in LoginForm::$validErrorMessages).
 &$messages: Already added messages (inclusive messages from
   LoginForm::$validErrorMessages)
 
-'LoginPasswordResetMessage': User is being requested to reset their password on
-login. Use this hook to change the Message that will be output on
-Special:ChangePassword.
-&$msg: Message object that will be shown to the user
-$username: Username of the user who's password was expired.
-
-'LoginUserMigrated': Called during login to allow extensions the opportunity to
-inform a user that their username doesn't exist for a specific reason, instead
-of letting the login form give the generic error message that the account does
-not exist. For example, when the account has been renamed or deleted.
+'LoginUserMigrated': DEPRECATED! Create a PreAuthenticationProvider instead.
+Called during login to allow extensions the opportunity to inform a user that
+their username doesn't exist for a specific reason, instead of letting the
+login form give the generic error message that the account does not exist. For
+example, when the account has been renamed or deleted.
 $user: the User object being authenticated against.
 &$msg: the message identifier for abort reason, or an array to pass a message
   key and parameters.
@@ -1982,6 +2045,12 @@ $title: Title on which the action will be performed
 $user: $wgUser
 $request: $wgRequest
 $mediaWiki: The $mediawiki object
+
+'MediaWikiServices': Called when a global MediaWikiServices instance is
+initialized. Extensions may use this to define, replace, or wrap services.
+However, the preferred way to define a new service is
+the $wgServiceWiringFiles array.
+$services: MediaWikiServices
 
 'MessageCache::get': When fetching a message. Can be used to override the key
 for customisations. Given and returned message key must be in special format:
@@ -2064,17 +2133,6 @@ $rev: the new revision
 $baseID: the revision ID this was based off, if any
 $user: the editing user
 
-'NormalizeMessageKey': Called before the software gets the text of a message
-(stuff in the MediaWiki: namespace), useful for changing WHAT message gets
-displayed.
-&$key: the message being looked up. Change this to something else to change
-  what message gets displayed (string)
-&$useDB: whether or not to look up the message in the database (bool)
-&$langCode: the language code to get the message for (string) - or -
-  whether to use the content language (true) or site language (false) (bool)
-&$transform: whether or not to expand variables and templates
-  in the message (bool)
-
 'OldChangesListRecentChangesLine': Customize entire recent changes line, or
 return false to omit the line from RecentChanges and Watchlist special pages.
 &$changeslist: The OldChangesList instance.
@@ -2119,6 +2177,7 @@ $sk: The Skin that called OutputPage::headElement
 since the last visit.
 &$modifiedTimes: array of timestamps.
   The following keys are set: page, user, epoch
+$out: OutputPage object (since 1.28)
 
 'OutputPageMakeCategoryLinks': Links are about to be generated for the page's
 categories. Implementations should return false if they generate the category
@@ -2335,6 +2394,11 @@ run. Use when page save hooks require the presence of custom tables to ensure
 that tests continue to run properly.
 &$tables: array of table names
 
+'ParserOutputStashForEdit': Called when an edit stash parse finishes, before the output is cached.
+$page: the WikiPage of the candidate edit
+$content: the Content object of the candidate edit
+$output: the ParserOutput result of the candidate edit
+
 'PasswordPoliciesForUser': Alter the effective password policy for a user.
 $user: User object whose policy you are modifying
 &$effectivePolicy: Array of policy statements that apply to this user
@@ -2391,7 +2455,8 @@ $key: the section name
 &$legend: the legend text. Defaults to wfMessage( "prefs-$key" )->text() but may
   be overridden
 
-'PrefixSearchBackend': Override the title prefix search used for OpenSearch and
+'PrefixSearchBackend': DEPRECATED! Override SearchEngine::completionSearchBackend instead.
+Override the title prefix search used for OpenSearch and
 AJAX search suggestions. Put results into &$results outparam and return false.
 $ns: array of int namespace keys to search in
 $search: search term (not guaranteed to be conveniently normalized)
@@ -2410,11 +2475,6 @@ namespace from the search string so that extensions can attempt it.
 $user: User (object) changing his email address
 $oldaddr: old email address (string)
 $newaddr: new email address (string)
-
-'PrefsPasswordAudit': Called when user changes his password.
-$user: User (object) changing his password
-$newPass: new password
-$error: error (string) 'badretype', 'wrongpassword', 'error' or 'success'
 
 'ProtectionForm::buildForm': Called after all protection type fieldsets are made
 in the form.
@@ -2464,6 +2524,12 @@ contexts.
 $context: (IContextSource) The RequestContext the skin is being created for.
 &$skin: A variable reference you may set a Skin instance or string key on to
   override the skin that will be used for the context.
+
+'RequestHasSameOriginSecurity': Called to determine if the request is somehow
+flagged to lack same-origin security. Return false to indicate the lack. Note
+if the "somehow" involves HTTP headers, you'll probably need to make sure
+the header is varied on.
+WebRequest $request: The request.
 
 'ResetPasswordExpiration': Allow extensions to set a default password expiration
 $user: The user having their password expiration reset
@@ -2555,6 +2621,17 @@ $parserOutput: ParserOutput representing the rendered version of the page
 &$updates: a list of DataUpdate objects, to be modified or replaced by
   the hook handler.
 
+'SecuritySensitiveOperationStatus': Affect the return value from
+MediaWiki\Auth\AuthManager::securitySensitiveOperationStatus().
+&$status: (string) The status to be returned. One of the AuthManager::SEC_*
+  constants. SEC_REAUTH will be automatically changed to SEC_FAIL if
+  authentication isn't possible for the current session type.
+$operation: (string) The operation being checked.
+$session: (MediaWiki\Session\Session) The current session. The
+  currently-authenticated user may be retrieved as $session->getUser().
+$timeSinceAuth: (int) The time since last authentication. PHP_INT_MAX if
+  the time of last auth is unknown, or -1 if authentication is not possible.
+
 'SelfLinkBegin': Called before a link to the current article is displayed to
 allow the display of the link to be customized.
 $nt: the Title object
@@ -2569,7 +2646,28 @@ $targetUser: the user whom to send watchlist email notification
 $title: the page title
 $enotif: EmailNotification object
 
+'SessionCheckInfo': Validate a MediaWiki\Session\SessionInfo as it's being
+loaded from storage. Return false to prevent it from being used.
+&$reason: String rejection reason to be logged
+$info: MediaWiki\Session\SessionInfo being validated
+$request: WebRequest being loaded from
+$metadata: Array|false Metadata array for the MediaWiki\Session\Session
+$data: Array|false Data array for the MediaWiki\Session\Session
+
+'SessionMetadata': Add metadata to a session being saved.
+$backend: MediaWiki\Session\SessionBackend being saved.
+&$metadata: Array Metadata to be stored. Add new keys here.
+$requests: Array of WebRequests potentially being saved to. Generally 0-1 real
+  request and 0+ FauxRequests.
+
 'SetupAfterCache': Called in Setup.php, after cache objects are set
+
+'ShortPagesQuery': Allow extensions to modify the query used by
+Special:ShortPages.
+&$tables: tables to join in the query
+&$conds: conditions for the query
+&$joinConds: join conditions for the query
+&$options: options for the query
 
 'ShowMissingArticle': Called when generating the output for a non-existent page.
 $article: The article object corresponding to the page
@@ -2761,6 +2859,11 @@ $id: User id number, only provided for backwards-compatibility
 $user: User object representing user contributions are being fetched for
 $sp: SpecialPage instance, providing context
 
+'SpecialContributions::getForm::filters': Called with a list of filters to render
+on Special:Contributions.
+$sp: SpecialContributions object, for context
+&$filters: List of filters rendered as HTML
+
 'SpecialListusersDefaultQuery': Called right before the end of
 UsersPager::getDefaultQuery().
 $pager: The UsersPager instance
@@ -2820,6 +2923,7 @@ $special: the SpecialPage object
 $subPage: the subpage string or null if no subpage was specified
 
 'SpecialPageBeforeExecute': Called before SpecialPage::execute.
+Return false to prevent execution.
 $special: the SpecialPage object
 $subPage: the subpage string or null if no subpage was specified
 
@@ -2880,6 +2984,14 @@ SpecialResetTokens.
 go to the existing page.
 $t: title object searched for
 &$params: an array of the default message name and page title (as parameter)
+
+'SpecialSearchGoResult': If a hook returns false the 'go' feature will be
+canceled and a normal search will be performed. Returning true without setting
+$url does a standard redirect to $title. Setting $url redirects to the
+specified URL.
+$term - The string the user searched for
+$title - The title the 'go' feature has decided to forward the user to
+&$url - Initially null, hook subscribers can set this to specify the final url to redirect to
 
 'SpecialSearchNogomatch': Called when user clicked the "Go" button but the
 target doesn't exist.
@@ -3033,6 +3145,11 @@ $old: old title
 $nt: new title
 $user: user who does the move
 
+'TitleMoveStarting': Before moving an article (title), but just after the atomic DB section starts.
+$old: old title
+$nt: new title
+$user: user who does the move
+
 'TitleMoveComplete': After moving an article (title), post-commit.
 &$old: old title
 &$nt: new title
@@ -3161,6 +3278,10 @@ $mime: (string) The uploaded file's MIME type, as detected by MediaWiki.
   representing the problem with the file, where the first element is the message
   key and the remaining elements are used as parameters to the message.
 
+'UserIsBot': when determining whether a user is a bot account
+$user: the user
+&$isBot: whether this is user a bot or not (boolean)
+
 'User::mailPasswordInternal': before creation and mailing of a user's new
 temporary password
 &$user: the user who sent the message out
@@ -3194,7 +3315,8 @@ messages!" message, return false to not delete it.
 &$user: User (object) that will clear the message
 $oldid: ID of the talk page revision being viewed (0 means the most recent one)
 
-'UserCreateForm': change to manipulate the login form
+'UserCreateForm': DEPRECATED! Create an AuthenticationProvider instead.
+Manipulate the login form.
 &$template: SimpleTemplate instance for the form
 
 'UserEffectiveGroups': Called in User::getEffectiveGroups().
@@ -3242,6 +3364,8 @@ $user: User whose groups changed
 $added: Groups added
 $removed: Groups removed
 $performer: User who performed the change, false if via autopromotion
+$reason: The reason, if any, given by the user performing the change,
+false if via autopromotion.
 
 'UserIsBlockedFrom': Check if a user is blocked from a specific page (for
 specific block exemptions).
@@ -3280,8 +3404,9 @@ $name: user name
 $user: user object
 &$s: database query object
 
-'UserLoadFromSession': Called to authenticate users on external/environmental
-means; occurs before session is loaded.
+'UserLoadFromSession': DEPRECATED! Create a MediaWiki\Session\SessionProvider instead.
+Called to authenticate users on external/environmental means; occurs before
+session is loaded.
 $user: user object being loaded
 &$result: set this to a boolean value to abort the normal authentication
   process
@@ -3294,12 +3419,14 @@ $user: User object
 'UserLoggedIn': Called after a user is logged in
 $user: User object for the logged-in user
 
-'UserLoginComplete': After a user has logged in.
+'UserLoginComplete': Show custom content after a user has logged in via the web interface.
+For functionality that needs to run after any login (API or web) use UserLoggedIn.
 &$user: the user object that was created on login
 &$inject_html: Any HTML to inject after the "logged in" message.
 
-'UserLoginForm': change to manipulate the login form
-&$template: SimpleTemplate instance for the form
+'UserLoginForm': DEPRECATED! Create an AuthenticationProvider instead.
+Manipulate the login form.
+&$template: QuickTemplate instance for the form
 
 'UserLogout': Before a user logs out.
 &$user: the user object that is about to be logged out
@@ -3372,9 +3499,13 @@ $user: User object
 'UserSaveSettings': Called when saving user settings.
 $user: User object
 
-'UserSetCookies': Called when setting user cookies.
+'UserSetCookies': DEPRECATED! If you're trying to replace core session cookie
+handling, you want to create a subclass of MediaWiki\Session\CookieSessionProvider
+instead. Otherwise, you can no longer count on user data being saved to cookies
+versus some other mechanism.
+Called when setting user cookies.
 $user: User object
-&$session: session array, will be added to $_SESSION
+&$session: session array, will be added to the session
 &$cookies: cookies array mapping cookie name to its value
 
 'UserSetEmail': Called when changing user email address.
@@ -3435,7 +3566,7 @@ Return false to prevent setting of the cookie.
 &$name: Cookie name passed to WebResponse::setcookie()
 &$value: Cookie value passed to WebResponse::setcookie()
 &$expire: Cookie expiration, as for PHP's setcookie()
-$options: Options passed to WebResponse::setcookie()
+&$options: Options passed to WebResponse::setcookie()
 
 'wfShellWikiCmd': Called when generating a shell-escaped command line string to
 run a MediaWiki cli script.

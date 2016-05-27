@@ -17,9 +17,9 @@
 		};
 
 	/**
-	 * @private
 	 * Get nonce for iframe IDs on the page.
 	 *
+	 * @private
 	 * @return {number}
 	 */
 	function getNonce() {
@@ -27,9 +27,9 @@
 	}
 
 	/**
-	 * @private
 	 * Given a non-empty object, return one of its keys.
 	 *
+	 * @private
 	 * @param {Object} obj
 	 * @return {string}
 	 */
@@ -42,9 +42,9 @@
 	}
 
 	/**
-	 * @private
 	 * Get new iframe object for an upload.
 	 *
+	 * @private
 	 * @return {HTMLIframeElement}
 	 */
 	function getNewIframe( id ) {
@@ -55,13 +55,13 @@
 	}
 
 	/**
-	 * @private
 	 * Shortcut for getting hidden inputs
 	 *
+	 * @private
 	 * @return {jQuery}
 	 */
 	function getHiddenInput( name, val ) {
-		return $( '<input type="hidden" />' )
+		return $( '<input>' ).attr( 'type', 'hidden' )
 			.attr( 'name', name )
 			.val( val );
 	}
@@ -116,7 +116,7 @@
 		 * - It is incompatible with uploads to a foreign wiki using mw.ForeignApi
 		 * - You must pass a HTMLInputElement and not a File for it to be possible
 		 *
-		 * @param {HTMLInputElement|File} file HTML input type=file element with a file already inside
+		 * @param {HTMLInputElement|File|Blob} file HTML input type=file element with a file already inside
 		 *  of it, or a File object.
 		 * @param {Object} data Other upload options, see action=upload API docs for more
 		 * @return {jQuery.Promise}
@@ -134,7 +134,8 @@
 				throw new Error( 'No file' );
 			}
 
-			canUseFormData = formDataAvailable() && file instanceof window.File;
+			// Blobs are allowed in formdata uploads, it turns out
+			canUseFormData = formDataAvailable() && ( file instanceof window.File || file instanceof window.Blob );
 
 			if ( !isFileInput && !canUseFormData ) {
 				throw new Error( 'Unsupported argument type passed to mw.Api.upload' );
@@ -203,7 +204,7 @@
 						deferred.reject( 'ok-but-empty', 'No response from API on upload attempt.' );
 					} else if ( result.error ) {
 						if ( result.error.code === 'badtoken' ) {
-							api.badToken( 'edit' );
+							api.badToken( 'csrf' );
 						}
 
 						deferred.reject( result.error.code, result );
@@ -218,7 +219,7 @@
 				} );
 			} );
 
-			$iframe.error( function ( error ) {
+			$iframe.on( 'error', function ( error ) {
 				deferred.reject( 'http', error );
 			} );
 
@@ -346,21 +347,7 @@
 			}
 
 			function finishUpload( moreData ) {
-				data = $.extend( data, moreData );
-				data.filekey = filekey;
-				data.action = 'upload';
-				data.format = 'json';
-
-				if ( !data.filename ) {
-					throw new Error( 'Filename not included in file data.' );
-				}
-
-				return api.postWithEditToken( data ).then( function ( result ) {
-					if ( result.upload && result.upload.warnings ) {
-						return $.Deferred().reject( getFirstKey( result.upload.warnings ), result ).promise();
-					}
-					return result;
-				} );
+				return api.uploadFromStash( filekey, $.extend( data, moreData ) );
 			}
 
 			return this.upload( file, { stash: true, filename: data.filename } ).then(
@@ -377,6 +364,29 @@
 					return $.Deferred().reject( errorCode, result );
 				}
 			);
+		},
+
+		/**
+		 * Finish an upload in the stash.
+		 *
+		 * @param {string} filekey
+		 * @param {Object} data
+		 */
+		uploadFromStash: function ( filekey, data ) {
+			data.filekey = filekey;
+			data.action = 'upload';
+			data.format = 'json';
+
+			if ( !data.filename ) {
+				throw new Error( 'Filename not included in file data.' );
+			}
+
+			return this.postWithEditToken( data ).then( function ( result ) {
+				if ( result.upload && result.upload.warnings ) {
+					return $.Deferred().reject( getFirstKey( result.upload.warnings ), result ).promise();
+				}
+				return result;
+			} );
 		},
 
 		needToken: function () {

@@ -33,7 +33,7 @@ class UserMailer {
 	/**
 	 * Send mail using a PEAR mailer
 	 *
-	 * @param UserMailer $mailer
+	 * @param Mail_smtp $mailer
 	 * @param string $dest
 	 * @param string $headers
 	 * @param string $body
@@ -65,7 +65,7 @@ class UserMailer {
 	 * @return string
 	 */
 	static function arrayToHeaderString( $headers, $endl = PHP_EOL ) {
-		$strings = array();
+		$strings = [];
 		foreach ( $headers as $name => $value ) {
 			// Prevent header injection by stripping newlines from value
 			$value = self::sanitizeHeaderValue( $value );
@@ -107,27 +107,19 @@ class UserMailer {
 	 * 		'contentType' string default 'text/plain; charset=UTF-8'
 	 * 		'headers' array Extra headers to set
 	 *
-	 * Previous versions of this function had $replyto as the 5th argument and $contentType
-	 * as the 6th. These are still supported for backwards compatability, but deprecated.
-	 *
 	 * @throws MWException
 	 * @throws Exception
 	 * @return Status
 	 */
-	public static function send( $to, $from, $subject, $body, $options = array() ) {
+	public static function send( $to, $from, $subject, $body, $options = [] ) {
 		global $wgAllowHTMLEmail;
-		$contentType = 'text/plain; charset=UTF-8';
-		if ( !is_array( $options ) ) {
-			// Old calling style
-			wfDeprecated( __METHOD__ . ' with $replyto as 5th parameter', '1.26' );
-			$options = array( 'replyTo' => $options );
-			if ( func_num_args() === 6 ) {
-				$options['contentType'] = func_get_arg( 5 );
-			}
+
+		if ( !isset( $options['contentType'] ) ) {
+			$options['contentType'] = 'text/plain; charset=UTF-8';
 		}
 
 		if ( !is_array( $to ) ) {
-			$to = array( $to );
+			$to = [ $to ];
 		}
 
 		// mail body must have some content
@@ -176,7 +168,7 @@ class UserMailer {
 		// target differently to split up the address list
 		if ( count( $to ) > 1 ) {
 			$oldTo = $to;
-			Hooks::run( 'UserMailerSplitTo', array( &$to ) );
+			Hooks::run( 'UserMailerSplitTo', [ &$to ] );
 			if ( $oldTo != $to ) {
 				$splitTo = array_diff( $oldTo, $to );
 				$to = array_diff( $oldTo, $splitTo ); // ignore new addresses added in the hook
@@ -188,7 +180,7 @@ class UserMailer {
 				}
 				foreach ( $splitTo as $newTo ) {
 					$status->merge( UserMailer::sendInternal(
-						array( $newTo ), $from, $subject, $body, $options ) );
+						[ $newTo ], $from, $subject, $body, $options ) );
 				}
 				return $status;
 			}
@@ -218,7 +210,7 @@ class UserMailer {
 		MailAddress $from,
 		$subject,
 		$body,
-		$options = array()
+		$options = []
 	) {
 		global $wgSMTP, $wgEnotifMaxRecips, $wgAdditionalMailParams;
 		$mime = null;
@@ -226,11 +218,11 @@ class UserMailer {
 		$replyto = isset( $options['replyTo'] ) ? $options['replyTo'] : null;
 		$contentType = isset( $options['contentType'] ) ?
 			$options['contentType'] : 'text/plain; charset=UTF-8';
-		$headers = isset( $options['headers'] ) ? $options['headers'] : array();
+		$headers = isset( $options['headers'] ) ? $options['headers'] : [];
 
 		// Allow transformation of content, such as encrypting/signing
 		$error = false;
-		if ( !Hooks::run( 'UserMailerTransformContent', array( $to, $from, &$body, &$error ) ) ) {
+		if ( !Hooks::run( 'UserMailerTransformContent', [ $to, $from, &$body, &$error ] ) ) {
 			if ( $error ) {
 				return Status::newFatal( 'php-mail-error', $error );
 			} else {
@@ -272,7 +264,7 @@ class UserMailer {
 		$extraParams = $wgAdditionalMailParams;
 
 		// Hook to generate custom VERP address for 'Return-Path'
-		Hooks::run( 'UserMailerChangeReturnPath', array( $to, &$returnPath ) );
+		Hooks::run( 'UserMailerChangeReturnPath', [ $to, &$returnPath ] );
 		// Add the envelope sender address using the -f command line option when PHP mail() is used.
 		// Will default to the $from->address when the UserMailerChangeReturnPath hook fails and the
 		// generated VERP address when the hook runs effectively.
@@ -310,11 +302,11 @@ class UserMailer {
 					$body['text'] = str_replace( "\n", "\r\n", $body['text'] );
 					$body['html'] = str_replace( "\n", "\r\n", $body['html'] );
 				}
-				$mime = new Mail_mime( array(
+				$mime = new Mail_mime( [
 					'eol' => $endl,
 					'text_charset' => 'UTF-8',
 					'html_charset' => 'UTF-8'
-				) );
+				] );
 				$mime->setTXTBody( $body['text'] );
 				$mime->setHTMLBody( $body['html'] );
 				$body = $mime->get(); // must call get() before headers()
@@ -327,14 +319,13 @@ class UserMailer {
 				$body = str_replace( "\n", "\r\n", $body );
 			}
 			$headers['MIME-Version'] = '1.0';
-			$headers['Content-type'] = ( is_null( $contentType ) ?
-				'text/plain; charset=UTF-8' : $contentType );
+			$headers['Content-type'] = $contentType;
 			$headers['Content-transfer-encoding'] = '8bit';
 		}
 
 		// allow transformation of MIME-encoded message
 		if ( !Hooks::run( 'UserMailerTransformMessage',
-			array( $to, $from, &$subject, &$headers, &$body, &$error ) )
+			[ $to, $from, &$subject, &$headers, &$body, &$error ] )
 		) {
 			if ( $error ) {
 				return Status::newFatal( 'php-mail-error', $error );
@@ -343,7 +334,7 @@ class UserMailer {
 			}
 		}
 
-		$ret = Hooks::run( 'AlternateUserMailer', array( $headers, $to, $from, $subject, $body ) );
+		$ret = Hooks::run( 'AlternateUserMailer', [ $headers, $to, $from, $subject, $body ] );
 		if ( $ret === false ) {
 			// the hook implementation will return false to skip regular mail sending
 			return Status::newGood();
@@ -409,20 +400,14 @@ class UserMailer {
 			set_error_handler( 'UserMailer::errorHandler' );
 
 			try {
-				$safeMode = wfIniGetBool( 'safe_mode' );
-
 				foreach ( $to as $recip ) {
-					if ( $safeMode ) {
-						$sent = mail( $recip, self::quotedPrintable( $subject ), $body, $headers );
-					} else {
-						$sent = mail(
-							$recip,
-							self::quotedPrintable( $subject ),
-							$body,
-							$headers,
-							$extraParams
-						);
-					}
+					$sent = mail(
+						$recip,
+						self::quotedPrintable( $subject ),
+						$body,
+						$headers,
+						$extraParams
+					);
 				}
 			} catch ( Exception $e ) {
 				restore_error_handler();
@@ -461,7 +446,7 @@ class UserMailer {
 	 * @return string
 	 */
 	public static function sanitizeHeaderValue( $val ) {
-		return strtr( $val, array( "\r" => '', "\n" => '' ) );
+		return strtr( $val, [ "\r" => '', "\n" => '' ] );
 	}
 
 	/**
@@ -505,12 +490,12 @@ class UserMailer {
 		}
 		$out = "=?$charset?Q?";
 		$out .= preg_replace_callback( "/([$replace])/",
-			array( __CLASS__, 'quotedPrintableCallback' ), $string );
+			function ( $matches ) {
+				return sprintf( "=%02X", ord( $matches[1] ) );
+			},
+			$string
+		);
 		$out .= '?=';
 		return $out;
-	}
-
-	protected static function quotedPrintableCallback( $matches ) {
-		return sprintf( "=%02X", ord( $matches[1] ) );
 	}
 }

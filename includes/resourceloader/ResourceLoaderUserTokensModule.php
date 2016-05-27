@@ -30,7 +30,7 @@ class ResourceLoaderUserTokensModule extends ResourceLoaderModule {
 
 	protected $origin = self::ORIGIN_CORE_INDIVIDUAL;
 
-	protected $targets = array( 'desktop', 'mobile' );
+	protected $targets = [ 'desktop', 'mobile' ];
 
 	/* Methods */
 
@@ -43,19 +43,18 @@ class ResourceLoaderUserTokensModule extends ResourceLoaderModule {
 	protected function contextUserTokens( ResourceLoaderContext $context ) {
 		$user = $context->getUserObj();
 
-		return array(
+		return [
 			'editToken' => $user->getEditToken(),
 			'patrolToken' => $user->getEditToken( 'patrol' ),
 			'watchToken' => $user->getEditToken( 'watch' ),
 			'csrfToken' => $user->getEditToken(),
-		);
+		];
 	}
 
 	/**
 	 * Generate the JavaScript content of this module.
 	 *
-	 * Add '@nomin' annotation to prevent the module's contents from getting
-	 * cached (T84960).
+	 * Add FILTER_NOMIN annotation to prevent needless minification and caching (T84960).
 	 *
 	 * @param ResourceLoaderContext $context
 	 * @return string
@@ -63,7 +62,7 @@ class ResourceLoaderUserTokensModule extends ResourceLoaderModule {
 	public function getScript( ResourceLoaderContext $context ) {
 		return Xml::encodeJsCall(
 			'mw.user.tokens.set',
-			array( $this->contextUserTokens( $context ) ),
+			[ $this->contextUserTokens( $context ) ],
 			ResourceLoader::inDebugMode()
 		) . ResourceLoader::FILTER_NOMIN;
 	}

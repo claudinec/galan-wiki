@@ -60,16 +60,16 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	/* Protected Members */
 
 	protected $name = null;
-	protected $targets = array( 'desktop' );
+	protected $targets = [ 'desktop' ];
 
 	// In-object cache for file dependencies
-	protected $fileDeps = array();
+	protected $fileDeps = [];
 	// In-object cache for message blob (keyed by language)
-	protected $msgBlobs = array();
+	protected $msgBlobs = [];
 	// In-object cache for version hash
-	protected $versionHash = array();
+	protected $versionHash = [];
 	// In-object cache for module content
-	protected $contents = array();
+	protected $contents = [];
 
 	/**
 	 * @var Config
@@ -115,16 +115,6 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	}
 
 	/**
-	 * Set this module's origin. This is called by ResourceLoader::register()
-	 * when registering the module. Other code should not call this.
-	 *
-	 * @param int $origin Origin
-	 */
-	public function setOrigin( $origin ) {
-		$this->origin = $origin;
-	}
-
-	/**
 	 * @param ResourceLoaderContext $context
 	 * @return bool
 	 */
@@ -153,7 +143,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 */
 	public function getTemplates() {
 		// Stub, override expected.
-		return array();
+		return [];
 	}
 
 	/**
@@ -180,6 +170,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	/**
 	 * @since 1.27
 	 * @param LoggerInterface $logger
+	 * @return null
 	 */
 	public function setLogger( LoggerInterface $logger ) {
 		$this->logger = $logger;
@@ -213,7 +204,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	public function getScriptURLsForDebug( ResourceLoaderContext $context ) {
 		$resourceLoader = $context->getResourceLoader();
 		$derivative = new DerivativeResourceLoaderContext( $context );
-		$derivative->setModules( array( $this->getName() ) );
+		$derivative->setModules( [ $this->getName() ] );
 		$derivative->setOnly( 'scripts' );
 		$derivative->setDebug( true );
 
@@ -222,7 +213,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 			$derivative
 		);
 
-		return array( $url );
+		return [ $url ];
 	}
 
 	/**
@@ -245,7 +236,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 */
 	public function getStyles( ResourceLoaderContext $context ) {
 		// Stub, override expected
-		return array();
+		return [];
 	}
 
 	/**
@@ -260,7 +251,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	public function getStyleURLsForDebug( ResourceLoaderContext $context ) {
 		$resourceLoader = $context->getResourceLoader();
 		$derivative = new DerivativeResourceLoaderContext( $context );
-		$derivative->setModules( array( $this->getName() ) );
+		$derivative->setModules( [ $this->getName() ] );
 		$derivative->setOnly( 'styles' );
 		$derivative->setDebug( true );
 
@@ -269,7 +260,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 			$derivative
 		);
 
-		return array( 'all' => array( $url ) );
+		return [ 'all' => [ $url ] ];
 	}
 
 	/**
@@ -281,7 +272,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 */
 	public function getMessages() {
 		// Stub, override expected
-		return array();
+		return [];
 	}
 
 	/**
@@ -340,7 +331,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 */
 	public function getDependencies( ResourceLoaderContext $context = null ) {
 		// Stub, override expected
-		return array();
+		return [];
 	}
 
 	/**
@@ -386,10 +377,10 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 			$dbr = wfGetDB( DB_SLAVE );
 			$deps = $dbr->selectField( 'module_deps',
 				'md_deps',
-				array(
+				[
 					'md_module' => $this->getName(),
 					'md_skin' => $vary,
-				),
+				],
 				__METHOD__
 			);
 
@@ -398,7 +389,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 					(array)FormatJson::decode( $deps, true )
 				);
 			} else {
-				$this->fileDeps[$vary] = array();
+				$this->fileDeps[$vary] = [];
 			}
 		}
 		return $this->fileDeps[$vary];
@@ -410,8 +401,8 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * This is used to retrieve data in batches. See ResourceLoader::preloadModuleInfo().
 	 * To save the data, use saveFileDependencies().
 	 *
-	 * @param string $skin Skin name
-	 * @param array $deps Array of file names
+	 * @param ResourceLoaderContext $context
+	 * @param string[] $files Array of file names
 	 */
 	public function setFileDependencies( ResourceLoaderContext $context, $files ) {
 		$vary = $context->getSkin() . '|' . $context->getLanguage();
@@ -433,16 +424,28 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 		try {
 			// If the list has been modified since last time we cached it, update the cache
 			if ( $localFileRefs !== $this->getFileDependencies( $context ) ) {
+				$cache = ObjectCache::getLocalClusterInstance();
+				$key = $cache->makeKey( __METHOD__, $this->getName() );
+				$scopeLock = $cache->getScopedLock( $key, 0 );
+				if ( !$scopeLock ) {
+					return; // T124649; avoid write slams
+				}
+
 				$vary = $context->getSkin() . '|' . $context->getLanguage();
 				$dbw = wfGetDB( DB_MASTER );
 				$dbw->replace( 'module_deps',
-					array( array( 'md_module', 'md_skin' ) ), array(
+					[ [ 'md_module', 'md_skin' ] ],
+					[
 						'md_module' => $this->getName(),
 						'md_skin' => $vary,
 						// Use relative paths to avoid ghost entries when $IP changes (T111481)
 						'md_deps' => FormatJson::encode( self::getRelativePaths( $localFileRefs ) ),
-					)
+					]
 				);
+
+				$dbw->onTransactionIdle( function () use ( &$scopeLock ) {
+					ScopedCallback::consume( $scopeLock ); // release after commit
+				} );
 			}
 		} catch ( Exception $e ) {
 			wfDebugLog( 'resourceloader', __METHOD__ . ": failed to update DB: $e" );
@@ -459,7 +462,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @param array $filePaths
 	 * @return array
 	 */
-	public static function getRelativePaths( Array $filePaths ) {
+	public static function getRelativePaths( array $filePaths ) {
 		global $IP;
 		return array_map( function ( $path ) use ( $IP ) {
 			return RelPath\getRelativePath( $path, $IP );
@@ -473,7 +476,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @param array $filePaths
 	 * @return array
 	 */
-	public static function expandRelativePaths( Array $filePaths ) {
+	public static function expandRelativePaths( array $filePaths ) {
 		global $IP;
 		return array_map( function ( $path ) use ( $IP ) {
 			return RelPath\joinPath( $IP, $path );
@@ -495,9 +498,9 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 		// Message blobs may only vary language, not by context keys
 		$lang = $context->getLanguage();
 		if ( !isset( $this->msgBlobs[$lang] ) ) {
-			$this->getLogger()->warning( 'Message blob for {module} should have been preloaded', array(
+			$this->getLogger()->warning( 'Message blob for {module} should have been preloaded', [
 				'module' => $this->getName(),
-			) );
+			] );
 			$store = $context->getResourceLoader()->getMessageBlobStore();
 			$this->msgBlobs[$lang] = $store->getBlob( $this, $lang );
 		}
@@ -525,7 +528,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @return array Module-specific LESS variables.
 	 */
 	protected function getLessVars( ResourceLoaderContext $context ) {
-		return array();
+		return [];
 	}
 
 	/**
@@ -561,7 +564,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 		// and that are non-empty (e.g. don't include "templates" for modules without
 		// templates). This helps prevent invalidating cache for all modules when new
 		// optional properties are introduced.
-		$content = array();
+		$content = [];
 
 		// Scripts
 		if ( $context->shouldIncludeScripts() ) {
@@ -590,7 +593,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 
 		// Styles
 		if ( $context->shouldIncludeStyles() ) {
-			$styles = array();
+			$styles = [];
 			// Don't create empty stylesheets like array( '' => '' ) for modules
 			// that don't *have* any stylesheets (bug 38024).
 			$stylePairs = $this->getStyles( $context );
@@ -598,9 +601,9 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 				// If we are in debug mode without &only= set, we'll want to return an array of URLs
 				// See comment near shouldIncludeScripts() for more details
 				if ( $context->getDebug() && !$context->getOnly() && $this->supportsURLLoading() ) {
-					$styles = array(
+					$styles = [
 						'url' => $this->getStyleURLsForDebug( $context )
-					);
+					];
 				} else {
 					// Minify CSS before embedding in mw.loader.implement call
 					// (unless in debug mode)
@@ -608,7 +611,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 						foreach ( $stylePairs as $media => $style ) {
 							// Can be either a string or an array of strings.
 							if ( is_array( $style ) ) {
-								$stylePairs[$media] = array();
+								$stylePairs[$media] = [];
 								foreach ( $style as $cssText ) {
 									if ( is_string( $cssText ) ) {
 										$stylePairs[$media][] =
@@ -621,9 +624,9 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 						}
 					}
 					// Wrap styles into @media groups as needed and flatten into a numerical array
-					$styles = array(
+					$styles = [
 						'css' => $rl->makeCombinedStyles( $stylePairs )
-					);
+					];
 				}
 			}
 			$content['styles'] = $styles;
@@ -675,7 +678,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 		// Typically, the request for the startup module itself has only=scripts. That must apply
 		// only to the startup module content, and not to the module version computed here.
 		$context = new DerivativeResourceLoaderContext( $context );
-		$context->setModules( array() );
+		$context->setModules( [] );
 		// Version hash must cover all resources, regardless of startup request itself.
 		$context->setOnly( null );
 		// Compute version hash based on content, not debug urls.
@@ -772,10 +775,10 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @return array|null
 	 */
 	public function getDefinitionSummary( ResourceLoaderContext $context ) {
-		return array(
+		return [
 			'_class' => get_class( $this ),
 			'_cacheEpoch' => $this->getConfig()->get( 'CacheEpoch' ),
-		);
+		];
 	}
 
 	/**

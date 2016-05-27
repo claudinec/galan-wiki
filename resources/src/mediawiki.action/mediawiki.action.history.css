@@ -2,3 +2,8 @@
 #pagehistory li.after input[name="diff"] {
 	visibility: hidden;
 }
+
+span.updatedmarker {
+	color: #000;
+	background-color: #0f0;
+}

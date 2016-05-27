@@ -96,11 +96,21 @@ table.toc td {
 }
 
 /* Space between the columns for tocnumber and toctext */
-/* Ignored by IE7 and lower */
-.tocnumber:after {
-	content: "";
-	display: inline-block;
-	width: 0.5em;
+.tocnumber {
+	padding-left: 0;
+	padding-right: 0.5em;
+}
+
+/* @noflip */
+.mw-content-ltr .tocnumber {
+	padding-left: 0;
+	padding-right: 0.5em;
+}
+
+/* @noflip */
+.mw-content-rtl .tocnumber {
+	padding-left: 0.5em;
+	padding-right: 0;
 }
 
 /* Warning */
@@ -142,6 +152,8 @@ div.thumbinner {
 	background-color: #f9f9f9;
 	font-size: 94%;
 	text-align: center;
+	/* new block formatting context,
+	 * to clear background from floating content  */
 	overflow: hidden;
 }
 
@@ -176,9 +188,9 @@ div.magnify a {
 	/* Default styles when there's no .mw-content-ltr or .mw-content-rtl, overridden below */
 
 	/* Use same SVG support hack as mediawiki.legacy's shared.css */
-	background-image: url(images/magnify-clip-ltr.png);
+	background-image: url( images/magnify-clip-ltr.png );
 	/* @embed */
-	background-image: linear-gradient(transparent, transparent), url(images/magnify-clip-ltr.svg);
+	background-image: linear-gradient( transparent, transparent ), url( images/magnify-clip-ltr.svg );
 	/* Don't annoy people who copy-paste everything too much */
 	-moz-user-select: none;
 	-webkit-user-select: none;
@@ -187,7 +199,7 @@ div.magnify a {
 }
 
 img.thumbborder {
-	border: 1px solid #dddddd;
+	border: 1px solid #ddd;
 }
 
 /* Directionality-specific styles for thumbnails - their positioning depends on content language */
@@ -207,9 +219,9 @@ img.thumbborder {
 /* @noflip */
 .mw-content-ltr div.magnify a {
 	/* Use same SVG support hack as mediawiki.legacy's shared.css */
-	background-image: url(images/magnify-clip-ltr.png);
+	background-image: url( images/magnify-clip-ltr.png );
 	/* @embed */
-	background-image: linear-gradient(transparent, transparent), url(images/magnify-clip-ltr.svg);
+	background-image: linear-gradient( transparent, transparent ), url( images/magnify-clip-ltr.svg );
 }
 
 /* @noflip */
@@ -227,9 +239,9 @@ img.thumbborder {
 /* @noflip */
 .mw-content-rtl div.magnify a {
 	/* Use same SVG support hack as mediawiki.legacy's shared.css */
-	background-image: url(images/magnify-clip-rtl.png);
+	background-image: url( images/magnify-clip-rtl.png );
 	/* @embed */
-	background-image: linear-gradient(transparent, transparent), url(images/magnify-clip-rtl.svg);
+	background-image: linear-gradient( transparent, transparent ), url( images/magnify-clip-rtl.svg );
 }
 
 /* @noflip */

@@ -322,6 +322,10 @@
 									"type": "string",
 									"description": "Equivalent of remoteBasePath, but relative to $wgExtensionAssetsPath"
 								},
+								"skipFunction": {
+									"type": "string",
+									"description": "Path to a file containing a JavaScript \"skip function\", if desired."
+								},
 								"scripts": {
 									"type": ["string", "array"],
 									"description": "Scripts to always include (array of file paths)",
@@ -422,7 +426,7 @@
 									]
 								},
 								"templates": {
-									"type": "object",
+									"type": ["object", "array"],
 									"description": "Templates to be loaded for client-side usage"
 								},
 								"targets": {
@@ -504,6 +508,33 @@
 			"type": "object",
 			"description": "Registry of factory functions to create Config objects"
 		},
+		"SessionProviders": {
+			"type": "object",
+			"description": "Session providers"
+		},
+		"AuthManagerAutoConfig": {
+			"type": "object",
+			"description": "AuthManager auto-configuration",
+			"additionalProperties": false,
+			"properties": {
+				"preauth": {
+					"type": "object",
+					"description": "Pre-authentication providers"
+				},
+				"primaryauth": {
+					"type": "object",
+					"description": "Primary authentication providers"
+				},
+				"secondaryauth": {
+					"type": "object",
+					"description": "Secondary authentication providers"
+				}
+			}
+		},
+		"CentralIdLookupProviders": {
+			"type": "object",
+			"description": "Central ID lookup providers"
+		},
 		"namespaces": {
 			"type": "array",
 			"description": "Method to add extra namespaces",
@@ -555,7 +586,10 @@
 		},
 		"TrackingCategories": {
 			"type": "array",
-			"description": "Tracking category message keys"
+			"description": "Tracking category message keys",
+			"items": {
+				"type": "string"
+			}
 		},
 		"DefaultUserOptions": {
 			"type": "object",
@@ -563,15 +597,38 @@
 		},
 		"HiddenPrefs": {
 			"type": "array",
-			"description": "Preferences users cannot set"
+			"description": "Preferences users cannot set",
+			"items": {
+				"type": "string"
+			}
 		},
 		"GroupPermissions": {
 			"type": "object",
-			"description": "Default permissions to give to user groups"
+			"description": "Default permissions to give to user groups",
+			"patternProperties": {
+				"^[a-z]+$": {
+					"type": "object",
+					"patternProperties": {
+						"^[a-z]+$": {
+							"type": "boolean"
+						}
+					}
+				}
+			}
 		},
 		"RevokePermissions": {
 			"type": "object",
-			"description": "Default permissions to revoke from user groups"
+			"description": "Default permissions to revoke from user groups",
+			"patternProperties": {
+				"^[a-z]+$": {
+					"type": "object",
+					"patternProperties": {
+						"^[a-z]+$": {
+							"type": "boolean"
+						}
+					}
+				}
+			}
 		},
 		"ImplicitGroups": {
 			"type": "array",
@@ -595,11 +652,19 @@
 		},
 		"AvailableRights": {
 			"type": "array",
-			"description": "User rights added by the extension"
+			"description": "User rights added by the extension",
+			"items": {
+				"type": "string"
+			}
 		},
 		"ContentHandlers": {
 			"type": "object",
-			"description": "Mapping of model ID to class name"
+			"description": "Mapping of model ID to class name",
+			"patternProperties": {
+				"^[A-Za-z]+$": {
+					"type": "string"
+				}
+			}
 		},
 		"RateLimits": {
 			"type": "object",
@@ -618,7 +683,10 @@
 				"array",
 				"string"
 			],
-			"description": "Function to call after setup has finished"
+			"description": "Function to call after setup has finished",
+			"items": {
+				"type": "string"
+			}
 		},
 		"ExtensionMessagesFiles": {
 			"type": "object",
@@ -639,7 +707,7 @@
 			"type": "object"
 		},
 		"Hooks": {
-			"type": "object",
+			"type": [ "string", "object" ],
 			"description": "Hooks this extension uses (mapping of hook name to callback)"
 		},
 		"JobClasses": {
@@ -655,6 +723,23 @@
 		},
 		"FilterLogTypes": {
 			"type": "object"
+		},
+		"ActionFilteredLogs": {
+			"type": "object",
+			"description": "List of log types which can be filtered by log actions",
+			"patternProperties": {
+				"^[a-z-]+$": {
+					"type": "object",
+					"patternProperties": {
+						"^[a-z-]+$": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
 		},
 		"LogNames": {
 			"type": "object"
@@ -688,6 +773,10 @@
 		},
 		"ValidSkinNames": {
 			"type": "object"
+		},
+		"FeedClasses": {
+			"type": "object",
+			"description": "Available feeds objects"
 		},
 		"SkinOOUIThemes": {
 			"type": "object"
@@ -729,6 +818,10 @@
 		"ParserTestFiles": {
 			"type": "array",
 			"description": "Parser test suite files to be run by parserTests.php when no specific filename is passed to it"
+		},
+		"load_composer_autoloader": {
+			"type": "boolean",
+			"description": "Load the composer autoloader for this extension, if one is present"
 		}
 	}
 }

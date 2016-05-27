@@ -34,7 +34,7 @@ require_once __DIR__ . '/Benchmarker.php';
 class BenchWikimediaBaseConvert extends Benchmarker {
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Benchmark for Wikimedia\\base_convert.";
+		$this->addDescription( 'Benchmark for Wikimedia\base_convert.' );
 		$this->addOption( "inbase", "Input base", false, true );
 		$this->addOption( "outbase", "Output base", false, true );
 		$this->addOption( "length", "Size in digits to generate for input", false, true );
@@ -46,20 +46,20 @@ class BenchWikimediaBaseConvert extends Benchmarker {
 		$length = $this->getOption( "length", 128 );
 		$number = self::makeRandomNumber( $inbase, $length );
 
-		$this->bench( array(
-			array(
+		$this->bench( [
+			[
 				'function' => 'Wikimedia\base_convert',
-				'args' => array( $number, $inbase, $outbase, 0, true, 'php' )
-			),
-			array(
+				'args' => [ $number, $inbase, $outbase, 0, true, 'php' ]
+			],
+			[
 				'function' => 'Wikimedia\base_convert',
-				'args' => array( $number, $inbase, $outbase, 0, true, 'bcmath' )
-			),
-			array(
+				'args' => [ $number, $inbase, $outbase, 0, true, 'bcmath' ]
+			],
+			[
 				'function' => 'Wikimedia\base_convert',
-				'args' => array( $number, $inbase, $outbase, 0, true, 'gmp' )
-			),
-		) );
+				'args' => [ $number, $inbase, $outbase, 0, true, 'gmp' ]
+			],
+		] );
 
 		$this->output( $this->getFormattedResults() );
 	}

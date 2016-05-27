@@ -20,6 +20,7 @@
  * @file
  * @ingroup JobQueue
  */
+use MediaWiki\MediaWikiServices;
 
 /**
  * Job to update link tables for pages
@@ -103,7 +104,7 @@ class RefreshLinksJob extends Job {
 				$this,
 				$wgUpdateRowsPerJob,
 				1, // job-per-title
-				array( 'params' => $extraParams )
+				[ 'params' => $extraParams ]
 			);
 			JobQueueGroup::singleton()->push( $jobs );
 		// Job to update link tables for a set of titles
@@ -149,9 +150,18 @@ class RefreshLinksJob extends Job {
 			$revision = Revision::newFromTitle( $title, false, Revision::READ_LATEST );
 		}
 
+		$stats = MediaWikiServices::getInstance()->getStatsdDataFactory();
+
 		if ( !$revision ) {
+			$stats->increment( 'refreshlinks.rev_not_found' );
 			$this->setLastError( "Revision not found for {$title->getPrefixedDBkey()}" );
 			return false; // just deleted?
+		} elseif ( !$revision->isCurrent() ) {
+			// If the revision isn't current, there's no point in doing a bunch
+			// of work just to fail at the lockAndGetLatest() check later.
+			$stats->increment( 'refreshlinks.rev_not_current' );
+			$this->setLastError( "Revision {$revision->getId()} is not current" );
+			return false;
 		}
 
 		$content = $revision->getContent( Revision::RAW );
@@ -181,21 +191,27 @@ class RefreshLinksJob extends Job {
 
 			if ( $page->getLinksTimestamp() > $skewedTimestamp ) {
 				// Something already updated the backlinks since this job was made
+				$stats->increment( 'refreshlinks.update_skipped' );
 				return true;
 			}
 
-			if ( $page->getTouched() >= $skewedTimestamp || $opportunistic ) {
-				// Something bumped page_touched since this job was made
-				// or the cache is otherwise suspected to be up-to-date
+			if ( $page->getTouched() >= $this->params['rootJobTimestamp'] || $opportunistic ) {
+				// Cache is suspected to be up-to-date. As long as the cache rev ID matches
+				// and it reflects the job's triggering change, then it is usable.
 				$parserOutput = ParserCache::singleton()->getDirty( $page, $parserOptions );
-				if ( $parserOutput && $parserOutput->getCacheTime() < $skewedTimestamp ) {
+				if ( !$parserOutput
+					|| $parserOutput->getCacheRevisionId() != $revision->getId()
+					|| $parserOutput->getCacheTime() < $skewedTimestamp
+				) {
 					$parserOutput = false; // too stale
 				}
 			}
 		}
 
 		// Fetch the current revision and parse it if necessary...
-		if ( $parserOutput == false ) {
+		if ( $parserOutput ) {
+			$stats->increment( 'refreshlinks.parser_cached' );
+		} else {
 			$start = microtime( true );
 			// Revision ID must be passed to the parser output to get revision variables correct
 			$parserOutput = $content->getParserOutput(
@@ -213,6 +229,7 @@ class RefreshLinksJob extends Job {
 					$parserOutput, $page, $parserOptions, $ctime, $revision->getId()
 				);
 			}
+			$stats->increment( 'refreshlinks.parser_uncached' );
 		}
 
 		$updates = $content->getSecondaryDataUpdates(
@@ -227,6 +244,7 @@ class RefreshLinksJob extends Job {
 			// Needed by things like Echo notifications which need
 			// to know which user caused the links update
 			if ( $update instanceof LinksUpdate ) {
+				$update->setRevision( $revision );
 				if ( !empty( $this->params['triggeringUser'] ) ) {
 					$userInfo = $this->params['triggeringUser'];
 					if ( $userInfo['userId'] ) {
@@ -246,6 +264,7 @@ class RefreshLinksJob extends Job {
 			// serialized, it would be OK to update links based on older revisions since it
 			// would eventually get to the latest. Since that is not the case (by design),
 			// only update the link tables to a state matching the current revision's output.
+			$stats->increment( 'refreshlinks.rev_cas_failure' );
 			$this->setLastError( "page_latest changed from {$revision->getId()} to $latestNow" );
 			return false;
 		}

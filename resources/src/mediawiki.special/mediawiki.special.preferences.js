@@ -94,11 +94,6 @@
 						notif = null;
 					}
 				} );
-
-				// Remove now-unnecessary success=1 querystring to prevent reappearance of notification on reload
-				if ( history.replaceState ) {
-					history.replaceState( {}, document.title, location.href.replace( /&?success=1/, '' ) );
-				}
 			}
 		}
 
@@ -215,19 +210,27 @@
 			var minuteDiff, localTime,
 				type = $tzSelect.val();
 
-			if ( type === 'guess' ) {
-				// Get browser timezone & fill it in
-				minuteDiff = -( new Date().getTimezoneOffset() );
-				$tzTextbox.val( minutesToHours( minuteDiff ) );
-				$tzSelect.val( 'other' );
-				$tzTextbox.prop( 'disabled', false );
-			} else if ( type === 'other' ) {
+			if ( type === 'other' ) {
+				// User specified time zone manually in <input>
 				// Grab data from the textbox, parse it.
 				minuteDiff = hoursToMinutes( $tzTextbox.val() );
 			} else {
-				// Grab data from the $tzSelect value
-				minuteDiff = parseInt( type.split( '|' )[ 1 ], 10 ) || 0;
-				$tzTextbox.val( minutesToHours( minuteDiff ) );
+				// Time zone not manually specified by user
+				if ( type === 'guess' ) {
+					// Get browser timezone & fill it in
+					minuteDiff = -( new Date().getTimezoneOffset() );
+					$tzTextbox.val( minutesToHours( minuteDiff ) );
+					$tzSelect.val( 'other' );
+					$tzTextbox.prop( 'disabled', false );
+				} else {
+					// Grab data from the $tzSelect value
+					minuteDiff = parseInt( type.split( '|' )[ 1 ], 10 ) || 0;
+					$tzTextbox.val( minutesToHours( minuteDiff ) );
+				}
+
+				// Set defaultValue prop on the generated box so we don't trigger the
+				// unsaved preferences check
+				$tzTextbox.prop( 'defaultValue', $tzTextbox.val() );
 			}
 
 			// Determine local time from server time and minutes difference, for display.
@@ -263,7 +266,7 @@
 
 		// Check if all of the form values are unchanged
 		function isPrefsChanged() {
-			var inputs = $( '#mw-prefs-form :input' ),
+			var inputs = $( '#mw-prefs-form :input[name]' ),
 				input, $input, inputType,
 				index, optIndex,
 				opt;
@@ -273,7 +276,8 @@
 				$input = $( input );
 
 				// Different types of inputs have different methods for accessing defaults
-				if ( $input.is( 'select' ) ) { // <select> has the property defaultSelected for each option
+				if ( $input.is( 'select' ) ) {
+					// <select> has the property defaultSelected for each option
 					for ( optIndex = 0; optIndex < input.options.length; optIndex++ ) {
 						opt = input.options[ optIndex ];
 						if ( opt.selected !== opt.defaultSelected ) {
@@ -293,6 +297,15 @@
 			}
 
 			return false;
+		}
+
+		// Disable the button to save preferences unless preferences have changed
+		// Check if preferences have been changed before JS has finished loading
+		if ( !isPrefsChanged() ) {
+			$( '#prefcontrol' ).prop( 'disabled', true );
+			$( '#preferences > fieldset' ).one( 'change keydown mousedown', function () {
+				$( '#prefcontrol' ).prop( 'disabled', false );
+			} );
 		}
 
 		// Set up a message to notify users if they try to leave the page without

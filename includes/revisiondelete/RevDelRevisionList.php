@@ -59,19 +59,19 @@ class RevDelRevisionList extends RevDelList {
 	 */
 	public function doQuery( $db ) {
 		$ids = array_map( 'intval', $this->ids );
-		$queryInfo = array(
-			'tables' => array( 'revision', 'user' ),
+		$queryInfo = [
+			'tables' => [ 'revision', 'user' ],
 			'fields' => array_merge( Revision::selectFields(), Revision::selectUserFields() ),
-			'conds' => array(
+			'conds' => [
 				'rev_page' => $this->title->getArticleID(),
 				'rev_id' => $ids,
-			),
-			'options' => array( 'ORDER BY' => 'rev_id DESC' ),
-			'join_conds' => array(
+			],
+			'options' => [ 'ORDER BY' => 'rev_id DESC' ],
+			'join_conds' => [
 				'page' => Revision::pageJoinCond(),
 				'user' => Revision::userJoinCond(),
-			),
-		);
+			],
+		];
 		ChangeTags::modifyDisplayQuery(
 			$queryInfo['tables'],
 			$queryInfo['fields'],
@@ -94,13 +94,33 @@ class RevDelRevisionList extends RevDelList {
 			return $live;
 		}
 
+		$archiveQueryInfo = [
+			'tables' => [ 'archive' ],
+			'fields' => Revision::selectArchiveFields(),
+			'conds' => [
+				'ar_rev_id' => $ids,
+			],
+			'options' => [ 'ORDER BY' => 'ar_rev_id DESC' ],
+			'join_conds' => [],
+		];
+
+		ChangeTags::modifyDisplayQuery(
+			$archiveQueryInfo['tables'],
+			$archiveQueryInfo['fields'],
+			$archiveQueryInfo['conds'],
+			$archiveQueryInfo['join_conds'],
+			$archiveQueryInfo['options'],
+			''
+		);
+
 		// Check if any requested revisions are available fully deleted.
-		$archived = $db->select( array( 'archive' ), Revision::selectArchiveFields(),
-			array(
-				'ar_rev_id' => $ids
-			),
+		$archived = $db->select(
+			$archiveQueryInfo['tables'],
+			$archiveQueryInfo['fields'],
+			$archiveQueryInfo['conds'],
 			__METHOD__,
-			array( 'ORDER BY' => 'ar_rev_id DESC' )
+			$archiveQueryInfo['options'],
+			$archiveQueryInfo['join_conds']
 		);
 
 		if ( $archived->numRows() == 0 ) {
@@ -109,7 +129,7 @@ class RevDelRevisionList extends RevDelList {
 			return $archived;
 		} else {
 			// Combine the two! Whee
-			$rows = array();
+			$rows = [];
 			foreach ( $live as $row ) {
 				$rows[$row->rev_id] = $row;
 			}
@@ -153,7 +173,7 @@ class RevDelRevisionList extends RevDelList {
 	public function doPostCommitUpdates() {
 		$this->title->purgeSquid();
 		// Extensions that require referencing previous revisions may need this
-		Hooks::run( 'ArticleRevisionVisibilitySet', array( $this->title, $this->ids ) );
+		Hooks::run( 'ArticleRevisionVisibilitySet', [ $this->title, $this->ids ] );
 		return Status::newGood();
 	}
 }

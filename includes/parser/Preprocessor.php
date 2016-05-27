@@ -33,23 +33,23 @@ abstract class Preprocessor {
 	/**
 	 * @var array Brace matching rules.
 	 */
-	protected $rules = array(
-		'{' => array(
+	protected $rules = [
+		'{' => [
 			'end' => '}',
-			'names' => array(
+			'names' => [
 				2 => 'template',
 				3 => 'tplarg',
-			),
+			],
 			'min' => 2,
 			'max' => 3,
-		),
-		'[' => array(
+		],
+		'[' => [
 			'end' => ']',
-			'names' => array( 2 => null ),
+			'names' => [ 2 => null ],
 			'min' => 2,
 			'max' => 2,
-		)
-	);
+		]
+	];
 
 	/**
 	 * Store a document tree in the cache.
@@ -67,9 +67,7 @@ abstract class Preprocessor {
 		}
 
 		$key = wfMemcKey(
-			// TODO: Once we require PHP 5.5, use static::class instead of
-			// get_called_class() or get_class( $this ).
-			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : get_called_class(),
+			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : static::class,
 			md5( $text ), $flags );
 		$value = sprintf( "%08d", static::CACHE_VERSION ) . $tree;
 
@@ -100,9 +98,7 @@ abstract class Preprocessor {
 		$cache = ObjectCache::getInstance( $config->get( 'MainCacheType' ) );
 
 		$key = wfMemcKey(
-			// TODO: Once we require PHP 5.5, use static::class instead of
-			// get_called_class() or get_class( $this ).
-			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : get_called_class(),
+			defined( 'static::CACHE_PREFIX' ) ? static::CACHE_PREFIX : static::class,
 			md5( $text ), $flags );
 
 		$value = $cache->get( $key );
@@ -264,8 +260,8 @@ interface PPFrame {
 
 	/**
 	 * Get an argument to this frame by name
-	 * @param string $name
-	 * @return bool
+	 * @param int|string $name
+	 * @return string|bool
 	 */
 	public function getArgument( $name );
 

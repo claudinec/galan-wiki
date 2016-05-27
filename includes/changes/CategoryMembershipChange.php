@@ -19,7 +19,7 @@
  *
  * @file
  * @author Kai Nissen
- * @author Adam Shorland
+ * @author Addshore
  * @since 1.27
  */
 
@@ -65,9 +65,13 @@ class CategoryMembershipChange {
 	 */
 	public function __construct( Title $pageTitle, Revision $revision = null ) {
 		$this->pageTitle = $pageTitle;
-		$this->timestamp = wfTimestampNow();
+		if ( $revision === null ) {
+			$this->timestamp = wfTimestampNow();
+		} else {
+			$this->timestamp = $revision->getTimestamp();
+		}
 		$this->revision = $revision;
-		$this->newForCategorizationCallback = array( 'RecentChange', 'newForCategorization' );
+		$this->newForCategorizationCallback = [ 'RecentChange', 'newForCategorization' ];
 	}
 
 	/**
@@ -123,10 +127,11 @@ class CategoryMembershipChange {
 			$this->timestamp,
 			$categoryTitle,
 			$this->getUser(),
-			$this->getChangeMessageText( $type, array(
-				'prefixedText' => $this->pageTitle->getPrefixedText(),
-				'numTemplateLinks' => $this->numTemplateLinks
-			) ),
+			$this->getChangeMessageText(
+				$type,
+				[ 'prefixedText' => $this->pageTitle->getPrefixedText() ],
+				$this->numTemplateLinks
+			),
 			$this->pageTitle,
 			$this->getPreviousRevisionTimestamp(),
 			$this->revision
@@ -181,7 +186,7 @@ class CategoryMembershipChange {
 		/** @var RecentChange $rc */
 		$rc = call_user_func_array(
 			$this->newForCategorizationCallback,
-			array(
+			[
 				$timestamp,
 				$categoryTitle,
 				$user,
@@ -193,7 +198,7 @@ class CategoryMembershipChange {
 				$bot,
 				$ip,
 				$deleted
-			)
+			]
 		);
 		$rc->save();
 	}
@@ -242,18 +247,19 @@ class CategoryMembershipChange {
 	 * or CategoryMembershipChange::CATEGORY_REMOVAL
 	 * @param array $params
 	 * - prefixedText: result of Title::->getPrefixedText()
+	 * @param int $numTemplateLinks
 	 *
 	 * @return string
 	 */
-	private function getChangeMessageText( $type, array $params ) {
-		$array = array(
+	private function getChangeMessageText( $type, array $params, $numTemplateLinks ) {
+		$array = [
 			self::CATEGORY_ADDITION => 'recentchanges-page-added-to-category',
 			self::CATEGORY_REMOVAL => 'recentchanges-page-removed-from-category',
-		);
+		];
 
 		$msgKey = $array[$type];
 
-		if ( intval( $params['numTemplateLinks'] ) > 0 ) {
+		if ( intval( $numTemplateLinks ) > 0 ) {
 			$msgKey .= '-bundled';
 		}
 

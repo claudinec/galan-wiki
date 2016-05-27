@@ -18,6 +18,7 @@ DROP SEQUENCE IF EXISTS ipblocks_ipb_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS filearchive_fa_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS uploadstash_us_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS recentchanges_rc_id_seq CASCADE;
+DROP SEQUENCE IF EXISTS watchlist_wl_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS logging_log_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS job_job_id_seq CASCADE;
 DROP SEQUENCE IF EXISTS category_cat_id_seq CASCADE;
@@ -74,6 +75,15 @@ CREATE TABLE user_newtalk (
 CREATE INDEX user_newtalk_id_idx ON user_newtalk (user_id);
 CREATE INDEX user_newtalk_ip_idx ON user_newtalk (user_ip);
 
+CREATE TABLE bot_passwords (
+  bp_user INTEGER NOT NULL,
+  bp_app_id TEXT NOT NULL,
+  bp_password TEXT NOT NULL,
+  bp_token TEXT NOT NULL,
+  bp_restrictions TEXT NOT NULL,
+  bp_grants TEXT NOT NULL,
+  PRIMARY KEY ( bp_user, bp_app_id )
+);
 
 CREATE SEQUENCE page_page_id_seq;
 CREATE TABLE page (
@@ -438,7 +448,9 @@ CREATE INDEX new_name_timestamp ON recentchanges (rc_new, rc_namespace, rc_times
 CREATE INDEX rc_ip              ON recentchanges (rc_ip);
 
 
+CREATE SEQUENCE watchlist_wl_id_seq;
 CREATE TABLE watchlist (
+  wl_id                     INTEGER     NOT NULL  PRIMARY KEY DEFAULT nextval('watchlist_wl_id_seq'),
   wl_user                   INTEGER     NOT NULL  REFERENCES mwuser(user_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
   wl_namespace              SMALLINT    NOT NULL  DEFAULT 0,
   wl_title                  TEXT        NOT NULL,

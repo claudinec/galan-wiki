@@ -101,36 +101,38 @@
 		/**
 		 * Get the link to a page name (relative to `wgServer`),
 		 *
-		 * @param {string|null} [str=wgPageName] Page name
+		 * @param {string|null} [pageName=wgPageName] Page name
 		 * @param {Object} [params] A mapping of query parameter names to values,
 		 *  e.g. `{ action: 'edit' }`
-		 * @return {string} Url of the page with name of `str`
+		 * @return {string} Url of the page with name of `pageName`
 		 */
-		getUrl: function ( str, params ) {
-			var titleFragmentStart,
-				url,
+		getUrl: function ( pageName, params ) {
+			var titleFragmentStart, url, query,
 				fragment = '',
-				pageName = typeof str === 'string' ? str : mw.config.get( 'wgPageName' );
+				title = typeof pageName === 'string' ? pageName : mw.config.get( 'wgPageName' );
 
-			// Find any fragment should one exist
-			if ( typeof str === 'string' ) {
-				titleFragmentStart = pageName.indexOf( '#' );
-				if ( titleFragmentStart !== -1 ) {
-					fragment = pageName.slice( titleFragmentStart + 1 );
-					// Exclude the fragment from the page name
-					pageName = pageName.slice( 0, titleFragmentStart );
-				}
+			// Find any fragment
+			titleFragmentStart = title.indexOf( '#' );
+			if ( titleFragmentStart !== -1 ) {
+				fragment = title.slice( titleFragmentStart + 1 );
+				// Exclude the fragment from the page name
+				title = title.slice( 0, titleFragmentStart );
 			}
 
-			url = mw.config.get( 'wgArticlePath' ).replace( '$1', util.wikiUrlencode( pageName ) );
-
-			// Add query string if necessary
-			if ( params && !$.isEmptyObject( params ) ) {
-				url += ( url.indexOf( '?' ) !== -1 ? '&' : '?' ) + $.param( params );
+			// Produce query string
+			if ( params ) {
+				query = $.param( params );
+			}
+			if ( query ) {
+				url = title
+					? util.wikiScript() + '?title=' + util.wikiUrlencode( title ) + '&' + query
+					: util.wikiScript() + '?' + query;
+			} else {
+				url = mw.config.get( 'wgArticlePath' ).replace( '$1', util.wikiUrlencode( title ) );
 			}
 
 			// Append the encoded fragment
-			if ( fragment.length > 0 ) {
+			if ( fragment.length ) {
 				url += '#' + util.escapeId( fragment );
 			}
 
@@ -235,9 +237,19 @@
 		 * (e.g. `'#foobar'`) for that item.
 		 *
 		 *     mw.util.addPortletLink(
-		 *         'p-tb', 'http://mediawiki.org/',
-		 *         'MediaWiki.org', 't-mworg', 'Go to MediaWiki.org ', 'm', '#t-print'
+		 *         'p-tb', 'https://www.mediawiki.org/',
+		 *         'mediawiki.org', 't-mworg', 'Go to mediawiki.org', 'm', '#t-print'
 		 *     );
+		 *
+		 *     var node = mw.util.addPortletLink(
+		 *         'p-tb',
+		 *         new mw.Title( 'Special:Example' ).getUrl(),
+		 *         'Example'
+		 *     );
+		 *     $( node ).on( 'click', function ( e ) {
+		 *         console.log( 'Example' );
+		 *         e.preventDefault();
+		 *     } );
 		 *
 		 * @param {string} portlet ID of the target portlet ( 'p-cactions' or 'p-personal' etc.)
 		 * @param {string} href Link URL
@@ -439,7 +451,7 @@
 				RE_IP_BYTE = '(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|0?[0-9]?[0-9])',
 				RE_IP_ADD = '(?:' + RE_IP_BYTE + '\\.){3}' + RE_IP_BYTE;
 
-			return address.search( new RegExp( '^' + RE_IP_ADD + block + '$' ) ) !== -1;
+			return ( new RegExp( '^' + RE_IP_ADD + block + '$' ).test( address ) );
 		},
 
 		/**
@@ -464,15 +476,18 @@
 			'[0-9A-Fa-f]{1,4}' + '(?::' + '[0-9A-Fa-f]{1,4}' + '){7}' +
 			')';
 
-			if ( address.search( new RegExp( '^' + RE_IPV6_ADD + block + '$' ) ) !== -1 ) {
+			if ( new RegExp( '^' + RE_IPV6_ADD + block + '$' ).test( address ) ) {
 				return true;
 			}
 
-			RE_IPV6_ADD = // contains one "::" in the middle (single '::' check below)
-				'[0-9A-Fa-f]{1,4}' + '(?:::?' + '[0-9A-Fa-f]{1,4}' + '){1,6}';
+			// contains one "::" in the middle (single '::' check below)
+			RE_IPV6_ADD = '[0-9A-Fa-f]{1,4}' + '(?:::?' + '[0-9A-Fa-f]{1,4}' + '){1,6}';
 
-			return address.search( new RegExp( '^' + RE_IPV6_ADD + block + '$' ) ) !== -1
-				&& address.search( /::/ ) !== -1 && address.search( /::.*::/ ) === -1;
+			return (
+				new RegExp( '^' + RE_IPV6_ADD + block + '$' ).test( address )
+				&& /::/.test( address )
+				&& !/::.*::/.test( address )
+			);
 		},
 
 		/**
@@ -526,9 +541,7 @@
 	 * Add the appropriate prefix to the accesskey shown in the tooltip.
 	 *
 	 * If the `$nodes` parameter is given, only those nodes are updated;
-	 * otherwise, depending on browser support, we update either all elements
-	 * with accesskeys on the page or a bunch of elements which are likely to
-	 * have them on core skins.
+	 * otherwise we update all elements with accesskeys on the page.
 	 *
 	 * @method updateTooltipAccessKeys
 	 * @param {Array|jQuery} [$nodes] A jQuery object, or array of nodes to update.
@@ -536,19 +549,7 @@
 	 */
 	mw.log.deprecate( util, 'updateTooltipAccessKeys', function ( $nodes ) {
 		if ( !$nodes ) {
-			if ( document.querySelectorAll ) {
-				// If we're running on a browser where we can do this efficiently,
-				// just find all elements that have accesskeys. We can't use jQuery's
-				// polyfill for the selector since looping over all elements on page
-				// load might be too slow.
-				$nodes = $( document.querySelectorAll( '[accesskey]' ) );
-			} else {
-				// Otherwise go through some elements likely to have accesskeys rather
-				// than looping over all of them. Unfortunately this will not fully
-				// work for custom skins with different HTML structures. Input, label
-				// and button should be rare enough that no optimizations are needed.
-				$nodes = $( '#column-one a, #mw-head a, #mw-panel a, #p-logo a, input, label, button' );
-			}
+			$nodes = $( '[accesskey]' );
 		} else if ( !( $nodes instanceof $ ) ) {
 			$nodes = $( $nodes );
 		}

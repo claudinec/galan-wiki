@@ -221,6 +221,32 @@ CREATE UNIQUE INDEX /*i*/user_properties_user_property ON /*_*/user_properties (
 CREATE INDEX /*i*/user_properties_property ON /*_*/user_properties (up_property);
 
 --
+-- This table contains a user's bot passwords: passwords that allow access to
+-- the account via the API with limited rights.
+--
+CREATE TABLE /*_*/bot_passwords (
+  -- User ID obtained from CentralIdLookup.
+  bp_user int NOT NULL,
+
+  -- Application identifier
+  bp_app_id varbinary(32) NOT NULL,
+
+  -- Password hashes, like user.user_password
+  bp_password tinyblob NOT NULL,
+
+  -- Like user.user_token
+  bp_token binary(32) NOT NULL default '',
+
+  -- JSON blob for MWRestrictions
+  bp_restrictions blob NOT NULL,
+
+  -- Grants allowed to the account when authenticated with this bot-password
+  bp_grants blob NOT NULL,
+
+  PRIMARY KEY ( bp_user, bp_app_id )
+) /*$wgDBTableOptions*/;
+
+--
 -- Core of the wiki: each page has an entry here which identifies
 -- it by title and contains some essential metadata.
 --
@@ -593,8 +619,8 @@ CREATE INDEX /*i*/cl_sortkey ON /*_*/categorylinks (cl_to,cl_type,cl_sortkey,cl_
 -- Used by the API (and some extensions)
 CREATE INDEX /*i*/cl_timestamp ON /*_*/categorylinks (cl_to,cl_timestamp);
 
--- FIXME: Not used, delete this
-CREATE INDEX /*i*/cl_collation ON /*_*/categorylinks (cl_collation);
+-- Used when updating collation (e.g. updateCollation.php)
+CREATE INDEX /*i*/cl_collation_ext ON /*_*/categorylinks (cl_collation, cl_to, cl_type, cl_from);
 
 --
 -- Track all existing categories.  Something is a category if 1) it has an en-
@@ -1113,6 +1139,7 @@ CREATE INDEX /*i*/rc_user_text ON /*_*/recentchanges (rc_user_text, rc_timestamp
 
 
 CREATE TABLE /*_*/watchlist (
+  wl_id int unsigned NOT NULL PRIMARY KEY AUTO_INCREMENT,
   -- Key to user.user_id
   wl_user int unsigned NOT NULL,
 

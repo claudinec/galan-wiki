@@ -29,11 +29,10 @@
  */
 class LocalSettingsGenerator {
 
-	protected $extensions = array();
-	protected $values = array();
-	protected $groupPermissions = array();
+	protected $extensions = [];
+	protected $values = [];
+	protected $groupPermissions = [];
 	protected $dbSettings = '';
-	protected $safeMode = false;
 	protected $IP;
 
 	/**
@@ -56,7 +55,7 @@ class LocalSettingsGenerator {
 		$db = $installer->getDBInstaller( $installer->getVar( 'wgDBtype' ) );
 
 		$confItems = array_merge(
-			array(
+			[
 				'wgServer', 'wgScriptPath',
 				'wgPasswordSender', 'wgImageMagickConvertCommand', 'wgShellLocale',
 				'wgLanguageCode', 'wgEnableEmail', 'wgEnableUserEmail', 'wgDiff3',
@@ -65,16 +64,16 @@ class LocalSettingsGenerator {
 				'wgRightsText', '_MainCacheType', 'wgEnableUploads',
 				'_MemCachedServers', 'wgDBserver', 'wgDBuser',
 				'wgDBpassword', 'wgUseInstantCommons', 'wgUpgradeKey', 'wgDefaultSkin',
-				'wgMetaNamespace', 'wgLogo',
-			),
+				'wgMetaNamespace', 'wgLogo', 'wgAuthenticationTokenVersion',
+			],
 			$db->getGlobalNames()
 		);
 
-		$unescaped = array( 'wgRightsIcon', 'wgLogo' );
-		$boolItems = array(
+		$unescaped = [ 'wgRightsIcon', 'wgLogo' ];
+		$boolItems = [
 			'wgEnableEmail', 'wgEnableUserEmail', 'wgEnotifUserTalk',
 			'wgEnotifWatchlist', 'wgEmailAuthentication', 'wgEnableUploads', 'wgUseInstantCommons'
-		);
+		];
 
 		foreach ( $confItems as $c ) {
 			$val = $installer->getVar( $c );
@@ -91,7 +90,6 @@ class LocalSettingsGenerator {
 		}
 
 		$this->dbSettings = $db->getLocalSettings();
-		$this->safeMode = $installer->getVar( '_SafeMode' );
 		$this->values['wgEmergencyContact'] = $this->values['wgPasswordSender'];
 	}
 
@@ -119,14 +117,14 @@ class LocalSettingsGenerator {
 
 		return strtr(
 			$string,
-			array(
+			[
 				"\n" => "\\n",
 				"\r" => "\\r",
 				"\t" => "\\t",
 				"\\" => "\\\\",
 				"\$" => "\\\$",
 				"\"" => "\\\""
-			)
+			]
 		);
 	}
 
@@ -216,9 +214,9 @@ class LocalSettingsGenerator {
 		$servers = $this->values['_MemCachedServers'];
 
 		if ( !$servers ) {
-			return 'array()';
+			return '[]';
 		} else {
-			$ret = 'array( ';
+			$ret = '[ ';
 			$servers = explode( ',', $servers );
 
 			foreach ( $servers as $srv ) {
@@ -226,7 +224,7 @@ class LocalSettingsGenerator {
 				$ret .= "'$srv', ";
 			}
 
-			return rtrim( $ret, ', ' ) . ' )';
+			return rtrim( $ret, ', ' ) . ' ]';
 		}
 	}
 
@@ -248,7 +246,6 @@ class LocalSettingsGenerator {
 			$locale = '';
 		}
 
-		$hashedUploads = $this->safeMode ? '' : '#';
 		$metaNamespace = '';
 		if ( $this->values['wgMetaNamespace'] !== $this->values['wgSitename'] ) {
 			$metaNamespace = "\$wgMetaNamespace = \"{$this->values['wgMetaNamespace']}\";\n";
@@ -380,21 +377,18 @@ ${serverSetting}
 ## available UTF-8 locale
 {$locale}\$wgShellLocale = \"{$this->values['wgShellLocale']}\";
 
-## If you want to use image uploads under safe mode,
-## create the directories images/archive, images/thumb and
-## images/temp, and make them all writable. Then uncomment
-## this, if it's not already uncommented:
-{$hashedUploads}\$wgHashedUploadDirectory = false;
-
 ## Set \$wgCacheDirectory to a writable directory on the web server
 ## to make your wiki go slightly faster. The directory should not
 ## be publically accessible from the web.
 #\$wgCacheDirectory = \"\$IP/cache\";
 
-# Site language code, should be one of the list in ./languages/Names.php
+# Site language code, should be one of the list in ./languages/data/Names.php
 \$wgLanguageCode = \"{$this->values['wgLanguageCode']}\";
 
 \$wgSecretKey = \"{$this->values['wgSecretKey']}\";
+
+# Changing this will log out all existing sessions.
+\$wgAuthenticationTokenVersion = \"{$this->values['wgAuthenticationTokenVersion']}\";
 
 # Site upgrade key. Must be set to a string (default provided) to turn on the
 # web installer while LocalSettings.php is in place

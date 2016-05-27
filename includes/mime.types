@@ -36,7 +36,7 @@ application/x-gtar gtar tar
 application/x-gzip gz
 application/x-hdf hdf
 application/x-jar jar
-application/x-javascript js
+application/javascript js
 application/json json
 application/x-koan skp skd skt skm
 application/x-latex latex
@@ -64,6 +64,10 @@ application/xml xml xsl xsd kml
 application/xml-dtd dtd
 application/zip zip jar xpi sxc stc sxd std sxi sti sxm stm sxw stw
 application/x-rar rar
+application/font-woff woff
+application/font-woff2 woff2
+application/vnd.ms-fontobject eot
+application/x-font-ttf ttf
 audio/basic au snd
 audio/midi mid midi kar
 audio/mpeg mpga mp2 mp3
@@ -123,6 +127,7 @@ text/tab-separated-values tsv
 text/vnd.wap.wml wml
 text/vnd.wap.wmlscript wmls
 text/xml xml xsl xslt rss rdf
+text/x-component htc
 text/x-setext etx
 text/x-sawfish jl
 video/mpeg mpeg mpg mpe
@@ -179,3 +184,5 @@ chemical/x-mdl-sdfile sdf
 chemical/x-mdl-rxnfile rxn
 chemical/x-mdl-rdfile rd
 chemical/x-mdl-rgfile rg
+application/x-amf amf
+application/sla stl

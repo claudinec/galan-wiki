@@ -32,10 +32,10 @@ class MWCryptHash {
 	/**
 	 * The number of bytes outputted by the hash algorithm
 	 */
-	protected static $hashLength = array(
+	protected static $hashLength = [
 		true => null,
 		false => null,
-	);
+	];
 
 	/**
 	 * Decide on the best acceptable hash algorithm we have available for hash()
@@ -47,7 +47,7 @@ class MWCryptHash {
 		}
 
 		$algos = hash_algos();
-		$preference = array( 'whirlpool', 'sha256', 'sha1', 'md5' );
+		$preference = [ 'whirlpool', 'sha256', 'sha1', 'md5' ];
 
 		foreach ( $preference as $algorithm ) {
 			if ( in_array( $algorithm, $algos ) ) {
@@ -70,7 +70,7 @@ class MWCryptHash {
 	 * Return the byte-length output of the hash algorithm we are
 	 * using in self::hash and self::hmac.
 	 *
-	 * @param boolean $raw True to return the length for binary data, false to
+	 * @param bool $raw True to return the length for binary data, false to
 	 *   return for hex-encoded
 	 * @return int Number of bytes the hash outputs
 	 */
@@ -88,7 +88,7 @@ class MWCryptHash {
 	 * making use of the best hash algorithm that we have available.
 	 *
 	 * @param string $data
-	 * @param boolean $raw True to return binary data, false to return it hex-encoded
+	 * @param bool $raw True to return binary data, false to return it hex-encoded
 	 * @return string A hash of the data
 	 */
 	public static function hash( $data, $raw = true ) {
@@ -101,10 +101,14 @@ class MWCryptHash {
 	 *
 	 * @param string $data
 	 * @param string $key
-	 * @param boolean $raw True to return binary data, false to return it hex-encoded
+	 * @param bool $raw True to return binary data, false to return it hex-encoded
 	 * @return string An hmac hash of the data + key
 	 */
 	public static function hmac( $data, $key, $raw = true ) {
+		if ( !is_string( $key ) ) {
+			// a fatal error in HHVM; an exception will at least give us a stack trace
+			throw new InvalidArgumentException( 'Invalid key type: ' . gettype( $key ) );
+		}
 		return hash_hmac( self::hashAlgo(), $data, $key, $raw );
 	}
 

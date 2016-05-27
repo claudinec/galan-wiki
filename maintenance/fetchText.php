@@ -32,9 +32,10 @@ require_once __DIR__ . '/Maintenance.php';
 class FetchText extends Maintenance {
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = "Fetch the raw revision blob from an old_id.\n" .
+		$this->addDescription( "Fetch the raw revision blob from an old_id.\n" .
 			"NOTE: Export transformations are NOT applied. " .
-			"This is left to backupTextPass.php";
+			"This is left to backupTextPass.php"
+		);
 	}
 
 	/**
@@ -48,7 +49,7 @@ class FetchText extends Maintenance {
 	 * note that the text string itself is *not* followed by newline
 	 */
 	public function execute() {
-		$db = wfGetDB( DB_SLAVE );
+		$db = $this->getDB( DB_SLAVE );
 		$stdin = $this->getStdin();
 		while ( !feof( $stdin ) ) {
 			$line = fgets( $stdin );
@@ -77,8 +78,8 @@ class FetchText extends Maintenance {
 	private function doGetText( $db, $id ) {
 		$id = intval( $id );
 		$row = $db->selectRow( 'text',
-			array( 'old_text', 'old_flags' ),
-			array( 'old_id' => $id ),
+			[ 'old_text', 'old_flags' ],
+			[ 'old_id' => $id ],
 			__METHOD__ );
 		$text = Revision::getRevisionText( $row );
 		if ( $text === false ) {

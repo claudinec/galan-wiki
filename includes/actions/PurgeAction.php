@@ -66,11 +66,15 @@ class PurgeAction extends FormAction {
 		}
 
 		if ( $user->isAllowed( 'purge' ) ) {
+			// This will update the database immediately, even on HTTP GET.
+			// Lots of uses may exist for this feature, so just ignore warnings.
+			Profiler::instance()->getTransactionProfiler()->resetExpectations();
+
 			$this->redirectParams = wfArrayToCgi( array_diff_key(
 				$this->getRequest()->getQueryValues(),
-				array( 'title' => null, 'action' => null )
+				[ 'title' => null, 'action' => null ]
 			) );
-			if ( $this->onSubmit( array() ) ) {
+			if ( $this->onSubmit( [] ) ) {
 				$this->onSuccess();
 			}
 		} else {
@@ -96,5 +100,9 @@ class PurgeAction extends FormAction {
 
 	public function onSuccess() {
 		$this->getOutput()->redirect( $this->getTitle()->getFullURL( $this->redirectParams ) );
+	}
+
+	public function doesWrites() {
+		return true;
 	}
 }

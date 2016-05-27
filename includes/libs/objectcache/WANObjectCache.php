@@ -69,10 +69,10 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	protected $cache;
 	/** @var HashBagOStuff Script instance PHP cache */
 	protected $procCache;
-	/** @var string Cache pool name */
-	protected $pool;
+	/** @var string Purge channel name */
+	protected $purgeChannel;
 	/** @var EventRelayer Bus that handles purge broadcasts */
-	protected $relayer;
+	protected $purgeRelayer;
 	/** @var LoggerInterface */
 	protected $logger;
 
@@ -110,12 +110,12 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	/** Cache format version number */
 	const VERSION = 1;
 
-	const FLD_VERSION = 0;
-	const FLD_VALUE = 1;
-	const FLD_TTL = 2;
-	const FLD_TIME = 3;
-	const FLD_FLAGS = 4;
-	const FLD_HOLDOFF = 5;
+	const FLD_VERSION = 0; // key to cache version number
+	const FLD_VALUE = 1; // key to the cached value
+	const FLD_TTL = 2; // key to the original TTL
+	const FLD_TIME = 3; // key to the cache time
+	const FLD_FLAGS = 4; // key to the flags bitfield
+	const FLD_HOLDOFF = 5; // key to any hold-off TTL
 
 	/** @var integer Treat this value as expired-on-arrival */
 	const FLG_STALE = 1;
@@ -134,18 +134,24 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 
 	const MAX_PC_KEYS = 1000; // max keys to keep in process cache
 
+	const DEFAULT_PURGE_CHANNEL = 'wancache-purge';
+
 	/**
 	 * @param array $params
-	 *   - cache   : BagOStuff object
-	 *   - pool    : pool name
-	 *   - relayer : EventRelayer object
-	 *   - logger  : LoggerInterface object
+	 *   - cache    : BagOStuff object for a persistent cache
+	 *   - channels : Map of (action => channel string). Actions include "purge".
+	 *   - relayers : Map of (action => EventRelayer object). Actions include "purge".
+	 *   - logger   : LoggerInterface object
 	 */
 	public function __construct( array $params ) {
 		$this->cache = $params['cache'];
-		$this->pool = $params['pool'];
-		$this->relayer = $params['relayer'];
-		$this->procCache = new HashBagOStuff( array( 'maxKeys' => self::MAX_PC_KEYS ) );
+		$this->procCache = new HashBagOStuff( [ 'maxKeys' => self::MAX_PC_KEYS ] );
+		$this->purgeChannel = isset( $params['channels']['purge'] )
+			? $params['channels']['purge']
+			: self::DEFAULT_PURGE_CHANNEL;
+		$this->purgeRelayer = isset( $params['relayers']['purge'] )
+			? $params['relayers']['purge']
+			: new EventRelayerNull( [] );
 		$this->setLogger( isset( $params['logger'] ) ? $params['logger'] : new NullLogger() );
 	}
 
@@ -159,11 +165,11 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return WANObjectCache
 	 */
 	public static function newEmpty() {
-		return new self( array(
+		return new self( [
 			'cache'   => new EmptyBagOStuff(),
 			'pool'    => 'empty',
-			'relayer' => new EventRelayerNull( array() )
-		) );
+			'relayer' => new EventRelayerNull( [] )
+		] );
 	}
 
 	/**
@@ -205,9 +211,9 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @param array $checkKeys List of "check" keys
 	 * @return mixed Value of cache key or false on failure
 	 */
-	final public function get( $key, &$curTTL = null, array $checkKeys = array() ) {
-		$curTTLs = array();
-		$values = $this->getMulti( array( $key ), $curTTLs, $checkKeys );
+	final public function get( $key, &$curTTL = null, array $checkKeys = [] ) {
+		$curTTLs = [];
+		$values = $this->getMulti( [ $key ], $curTTLs, $checkKeys );
 		$curTTL = isset( $curTTLs[$key] ) ? $curTTLs[$key] : null;
 
 		return isset( $values[$key] ) ? $values[$key] : false;
@@ -225,17 +231,17 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return array Map of (key => value) for keys that exist
 	 */
 	final public function getMulti(
-		array $keys, &$curTTLs = array(), array $checkKeys = array()
+		array $keys, &$curTTLs = [], array $checkKeys = []
 	) {
-		$result = array();
-		$curTTLs = array();
+		$result = [];
+		$curTTLs = [];
 
 		$vPrefixLen = strlen( self::VALUE_KEY_PREFIX );
 		$valueKeys = self::prefixCacheKeys( $keys, self::VALUE_KEY_PREFIX );
 
-		$checkKeysForAll = array();
-		$checkKeysByKey = array();
-		$checkKeysFlat = array();
+		$checkKeysForAll = [];
+		$checkKeysByKey = [];
+		$checkKeysFlat = [];
 		foreach ( $checkKeys as $i => $keys ) {
 			$prefixed = self::prefixCacheKeys( (array)$keys, self::TIME_KEY_PREFIX );
 			$checkKeysFlat = array_merge( $checkKeysFlat, $prefixed );
@@ -256,7 +262,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 
 		// Collect timestamps from all "check" keys
 		$purgeValuesForAll = $this->processCheckKeys( $checkKeysForAll, $wrappedValues, $now );
-		$purgeValuesByKey = array();
+		$purgeValuesByKey = [];
 		foreach ( $checkKeysByKey as $cacheKey => $checks ) {
 			$purgeValuesByKey[$cacheKey] =
 				$this->processCheckKeys( $checks, $wrappedValues, $now );
@@ -304,7 +310,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return array List of purge value arrays
 	 */
 	private function processCheckKeys( array $timeKeys, array $wrappedValues, $now ) {
-		$purgeValues = array();
+		$purgeValues = [];
 		foreach ( $timeKeys as $timeKey ) {
 			$purge = isset( $wrappedValues[$timeKey] )
 				? self::parsePurgeValue( $wrappedValues[$timeKey] )
@@ -370,9 +376,10 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *               Default: WANObjectCache::TSE_NONE
 	 * @return bool Success
 	 */
-	final public function set( $key, $value, $ttl = 0, array $opts = array() ) {
+	final public function set( $key, $value, $ttl = 0, array $opts = [] ) {
+		$now = microtime( true );
 		$lockTSE = isset( $opts['lockTSE'] ) ? $opts['lockTSE'] : self::TSE_NONE;
-		$age = isset( $opts['since'] ) ? max( 0, microtime( true ) - $opts['since'] ) : 0;
+		$age = isset( $opts['since'] ) ? max( 0, $now - $opts['since'] ) : 0;
 		$lag = isset( $opts['lag'] ) ? $opts['lag'] : 0;
 
 		// Do not cache potentially uncommitted data as it might get rolled back
@@ -382,7 +389,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 			return true; // no-op the write for being unsafe
 		}
 
-		$wrapExtra = array(); // additional wrapped value fields
+		$wrapExtra = []; // additional wrapped value fields
 		// Check if there's a risk of writing stale data after the purge tombstone expired
 		if ( $lag === false || ( $lag + $age ) > self::MAX_READ_LAG ) {
 			// Case A: read lag with "lockTSE"; save but record value as stale
@@ -407,7 +414,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 		}
 
 		// Wrap that value with time/TTL/version metadata
-		$wrapped = $this->wrap( $value, $ttl ) + $wrapExtra;
+		$wrapped = $this->wrap( $value, $ttl, $now ) + $wrapExtra;
 
 		$func = function ( $cache, $key, $cWrapped ) use ( $wrapped ) {
 			return ( is_string( $cWrapped ) )
@@ -450,7 +457,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *
 	 * Example usage:
 	 * @code
-	 *     $dbw->begin(); // start of request
+	 *     $dbw->begin( __METHOD__ ); // start of request
 	 *     ... <execute some stuff> ...
 	 *     // Update the row in the DB
 	 *     $dbw->update( ... );
@@ -460,7 +467,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *         $cache->delete( $key );
 	 *     } );
 	 *     ... <execute some stuff> ...
-	 *     $dbw->commit(); // end of request
+	 *     $dbw->commit( __METHOD__ ); // end of request
 	 * @endcode
 	 *
 	 * The $ttl parameter can be used when purging values that have not actually changed
@@ -669,12 +676,12 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *
 	 *             return CatConfig::newFromRow( $dbr->selectRow( ... ) );
 	 *         },
-	 *         array(
+	 *         [
 	 *             // Calling touchCheckKey() on this key invalidates the cache
-	 *             'checkKeys' => array( $cache->makeKey( 'site-cat-config' ) ),
+	 *             'checkKeys' => [ $cache->makeKey( 'site-cat-config' ) ],
 	 *             // Try to only let one datacenter thread manage cache updates at a time
 	 *             'lockTSE' => 30
-	 *         )
+	 *         ]
 	 *     );
 	 * @endcode
 	 *
@@ -694,15 +701,15 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *
 	 *             return CatState::newFromResults( $dbr->select( ... ) );
 	 *         },
-	 *         array(
+	 *         [
 	 *              // The "check" keys that represent things the value depends on;
 	 *              // Calling touchCheckKey() on any of them invalidates the cache
-	 *             'checkKeys' => array(
+	 *             'checkKeys' => [
 	 *                 $cache->makeKey( 'sustenance-bowls', $cat->getRoomId() ),
 	 *                 $cache->makeKey( 'people-present', $cat->getHouseId() ),
 	 *                 $cache->makeKey( 'cat-laws', $cat->getCityId() ),
-	 *             )
-	 *         )
+	 *             ]
+	 *         ]
 	 *     );
 	 * @endcode
 	 *
@@ -720,7 +727,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *             $setOpts += Database::getCacheSetOptions( $dbr );
 	 *
 	 *             // Start off with the last cached list
-	 *             $list = $oldValue ?: array();
+	 *             $list = $oldValue ?: [];
 	 *             // Fetch the last 100 relevant rows in descending order;
 	 *             // only fetch rows newer than $list[0] to reduce scanning
 	 *             $rows = iterator_to_array( $dbr->select( ... ) );
@@ -728,7 +735,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *             return array_slice( array_merge( $new, $list ), 0, 100 );
 	 *        },
 	 *        // Try to only let one datacenter thread manage cache updates at a time
-	 *        array( 'lockTSE' => 30 )
+	 *        [ 'lockTSE' => 30 ]
 	 *     );
 	 * @endcode
 	 *
@@ -762,7 +769,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *      Default: WANObjectCache::TTL_UNCACHEABLE.
 	 * @return mixed Value to use for the key
 	 */
-	final public function getWithSetCallback( $key, $ttl, $callback, array $opts = array() ) {
+	final public function getWithSetCallback( $key, $ttl, $callback, array $opts = [] ) {
 		$pcTTL = isset( $opts['pcTTL'] ) ? $opts['pcTTL'] : self::TTL_UNCACHEABLE;
 
 		// Try the process cache if enabled
@@ -794,7 +801,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	protected function doGetWithSetCallback( $key, $ttl, $callback, array $opts ) {
 		$lowTTL = isset( $opts['lowTTL'] ) ? $opts['lowTTL'] : min( self::LOW_TTL, $ttl );
 		$lockTSE = isset( $opts['lockTSE'] ) ? $opts['lockTSE'] : self::TSE_NONE;
-		$checkKeys = isset( $opts['checkKeys'] ) ? $opts['checkKeys'] : array();
+		$checkKeys = isset( $opts['checkKeys'] ) ? $opts['checkKeys'] : [];
 
 		// Get the current key value
 		$curTTL = null;
@@ -841,8 +848,8 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 		}
 
 		// Generate the new value from the callback...
-		$setOpts = array();
-		$value = call_user_func_array( $callback, array( $cValue, &$ttl, &$setOpts ) );
+		$setOpts = [];
+		$value = call_user_func_array( $callback, [ $cValue, &$ttl, &$setOpts ] );
 		// When delete() is called, writes are write-holed by the tombstone,
 		// so use a special stash key to pass the new value around threads.
 		if ( $useMutex && $value !== false && $ttl >= 0 ) {
@@ -870,7 +877,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @since 1.27
 	 */
 	public function makeKey() {
-		return call_user_func_array( array( $this->cache, __FUNCTION__ ), func_get_args() );
+		return call_user_func_array( [ $this->cache, __FUNCTION__ ], func_get_args() );
 	}
 
 	/**
@@ -880,7 +887,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @since 1.27
 	 */
 	public function makeGlobalKey() {
-		return call_user_func_array( array( $this->cache, __FUNCTION__ ), func_get_args() );
+		return call_user_func_array( [ $this->cache, __FUNCTION__ ], func_get_args() );
 	}
 
 	/**
@@ -919,6 +926,15 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	}
 
 	/**
+	 * Clear the in-process caches; useful for testing
+	 *
+	 * @since 1.27
+	 */
+	public function clearProcessCache() {
+		$this->procCache->clear();
+	}
+
+	/**
 	 * Do the actual async bus purge of a key
 	 *
 	 * This must set the key to "PURGED:<UNIX timestamp>:<holdoff>"
@@ -929,15 +945,15 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return bool Success
 	 */
 	protected function relayPurge( $key, $ttl, $holdoff ) {
-		$event = $this->cache->modifySimpleRelayEvent( array(
+		$event = $this->cache->modifySimpleRelayEvent( [
 			'cmd' => 'set',
 			'key' => $key,
 			'val' => 'PURGED:$UNIXTIME$:' . (int)$holdoff,
 			'ttl' => max( $ttl, 1 ),
 			'sbt' => true, // substitute $UNIXTIME$ with actual microtime
-		) );
+		] );
 
-		$ok = $this->relayer->notify( "{$this->pool}:purge", $event );
+		$ok = $this->purgeRelayer->notify( $this->purgeChannel, $event );
 		if ( !$ok ) {
 			$this->lastRelayError = self::ERR_RELAY;
 		}
@@ -952,12 +968,12 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return bool Success
 	 */
 	protected function relayDelete( $key ) {
-		$event = $this->cache->modifySimpleRelayEvent( array(
+		$event = $this->cache->modifySimpleRelayEvent( [
 			'cmd' => 'delete',
 			'key' => $key,
-		) );
+		] );
 
-		$ok = $this->relayer->notify( "{$this->pool}:purge", $event );
+		$ok = $this->purgeRelayer->notify( $this->purgeChannel, $event );
 		if ( !$ok ) {
 			$this->lastRelayError = self::ERR_RELAY;
 		}
@@ -994,22 +1010,23 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 *
 	 * @param mixed $value
 	 * @param integer $ttl [0=forever]
+	 * @param float $now Unix Current timestamp just before calling set()
 	 * @return array
 	 */
-	protected function wrap( $value, $ttl ) {
-		return array(
+	protected function wrap( $value, $ttl, $now ) {
+		return [
 			self::FLD_VERSION => self::VERSION,
 			self::FLD_VALUE => $value,
 			self::FLD_TTL => $ttl,
-			self::FLD_TIME => microtime( true )
-		);
+			self::FLD_TIME => $now
+		];
 	}
 
 	/**
 	 * Do not use this method outside WANObjectCache
 	 *
 	 * @param array|string|bool $wrapped
-	 * @param float $now Unix Current timestamp (preferrable pre-query)
+	 * @param float $now Unix Current timestamp (preferrably pre-query)
 	 * @return array (mixed; false if absent/invalid, current time left)
 	 */
 	protected function unwrap( $wrapped, $now ) {
@@ -1018,14 +1035,14 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 		if ( $purge !== false ) {
 			// Purged values should always have a negative current $ttl
 			$curTTL = min( $purge[self::FLD_TIME] - $now, self::TINY_NEGATIVE );
-			return array( false, $curTTL );
+			return [ false, $curTTL ];
 		}
 
 		if ( !is_array( $wrapped ) // not found
 			|| !isset( $wrapped[self::FLD_VERSION] ) // wrong format
 			|| $wrapped[self::FLD_VERSION] !== self::VERSION // wrong version
 		) {
-			return array( false, null );
+			return [ false, null ];
 		}
 
 		$flags = isset( $wrapped[self::FLD_FLAGS] ) ? $wrapped[self::FLD_FLAGS] : 0;
@@ -1042,7 +1059,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 			$curTTL = INF;
 		}
 
-		return array( $wrapped[self::FLD_VALUE], $curTTL );
+		return [ $wrapped[self::FLD_VALUE], $curTTL ];
 	}
 
 	/**
@@ -1051,7 +1068,7 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 	 * @return string[]
 	 */
 	protected static function prefixCacheKeys( array $keys, $prefix ) {
-		$res = array();
+		$res = [];
 		foreach ( $keys as $key ) {
 			$res[] = $prefix . $key;
 		}
@@ -1078,10 +1095,10 @@ class WANObjectCache implements IExpiringStore, LoggerAwareInterface {
 			// Back-compat with old purge values without holdoff
 			$segments[2] = self::HOLDOFF_TTL;
 		}
-		return array(
+		return [
 			self::FLD_TIME => (float)$segments[1],
 			self::FLD_HOLDOFF => (int)$segments[2],
-		);
+		];
 	}
 
 	/**

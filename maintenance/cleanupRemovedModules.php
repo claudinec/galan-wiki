@@ -34,15 +34,16 @@ class CleanupRemovedModules extends Maintenance {
 
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = 'Remove cache entries for removed ResourceLoader modules from the database';
+		$this->addDescription(
+			'Remove cache entries for removed ResourceLoader modules from the database' );
 		$this->addOption( 'batchsize', 'Delete rows in batches of this size. Default: 500', false, true );
 	}
 
 	public function execute() {
-		$dbw = wfGetDB( DB_MASTER );
+		$dbw = $this->getDB( DB_MASTER );
 		$rl = new ResourceLoader( ConfigFactory::getDefaultInstance()->makeConfig( 'main' ) );
 		$moduleNames = $rl->getModuleNames();
-		$moduleList = implode( ', ', array_map( array( $dbw, 'addQuotes' ), $moduleNames ) );
+		$moduleList = implode( ', ', array_map( [ $dbw, 'addQuotes' ], $moduleNames ) );
 		$limit = max( 1, intval( $this->getOption( 'batchsize', 500 ) ) );
 
 		$this->output( "Cleaning up module_deps table...\n" );

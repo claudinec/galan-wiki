@@ -31,6 +31,10 @@ class SpecialPreferences extends SpecialPage {
 		parent::__construct( 'Preferences' );
 	}
 
+	public function doesWrites() {
+		return true;
+	}
+
 	public function execute( $par ) {
 		$this->setHeaders();
 		$this->outputHeader();
@@ -49,15 +53,19 @@ class SpecialPreferences extends SpecialPage {
 		$out->addModules( 'mediawiki.special.preferences' );
 		$out->addModuleStyles( 'mediawiki.special.preferences.styles' );
 
-		if ( $this->getRequest()->getCheck( 'success' ) ) {
+		$request = $this->getRequest();
+		if ( $request->getSessionData( 'specialPreferencesSaveSuccess' ) ) {
+			// Remove session data for the success message
+			$request->setSessionData( 'specialPreferencesSaveSuccess', null );
+
 			$out->wrapWikiMsg(
 				Html::rawElement(
 					'div',
-					array(
+					[
 						'class' => 'mw-preferences-messagebox successbox',
 						'id' => 'mw-preferences-success'
-					),
-					Html::element( 'p', array(), '$1' )
+					],
+					Html::element( 'p', [], '$1' )
 				),
 				'savedprefs'
 			);
@@ -66,28 +74,32 @@ class SpecialPreferences extends SpecialPage {
 		$this->addHelpLink( 'Help:Preferences' );
 
 		// Load the user from the master to reduce CAS errors on double post (T95839)
-		$user = $this->getUser()->getInstanceForUpdate() ?: $this->getUser();
+		if ( $this->getRequest()->wasPosted() ) {
+			$user = $this->getUser()->getInstanceForUpdate() ?: $this->getUser();
+		} else {
+			$user = $this->getUser();
+		}
 
 		$htmlForm = Preferences::getFormObject( $user, $this->getContext() );
-		$htmlForm->setSubmitCallback( array( 'Preferences', 'tryUISubmit' ) );
+		$htmlForm->setSubmitCallback( [ 'Preferences', 'tryUISubmit' ] );
 		$sectionTitles = $htmlForm->getPreferenceSections();
 
 		$prefTabs = '';
 		foreach ( $sectionTitles as $key ) {
 			$prefTabs .= Html::rawElement( 'li',
-				array(
+				[
 					'role' => 'presentation',
 					'class' => ( $key === 'personal' ) ? 'selected' : null
-				),
+				],
 				Html::rawElement( 'a',
-					array(
+					[
 						'id' => 'preftab-' . $key,
 						'role' => 'tab',
 						'href' => '#mw-prefsection-' . $key,
 						'aria-controls' => 'mw-prefsection-' . $key,
 						'aria-selected' => ( $key === 'personal' ) ? 'true' : 'false',
 						'tabIndex' => ( $key === 'personal' ) ? 0 : -1,
-					),
+					],
 					$htmlForm->getLegend( $key )
 				)
 			);
@@ -95,10 +107,10 @@ class SpecialPreferences extends SpecialPage {
 
 		$out->addHTML(
 			Html::rawElement( 'ul',
-				array(
+				[
 					'id' => 'preftoc',
 					'role' => 'tablist'
-				),
+				],
 				$prefTabs )
 		);
 		$htmlForm->show();
@@ -113,11 +125,11 @@ class SpecialPreferences extends SpecialPage {
 
 		$context = new DerivativeContext( $this->getContext() );
 		$context->setTitle( $this->getPageTitle( 'reset' ) ); // Reset subpage
-		$htmlForm = new HTMLForm( array(), $context, 'prefs-restore' );
+		$htmlForm = new HTMLForm( [], $context, 'prefs-restore' );
 
 		$htmlForm->setSubmitTextMsg( 'restoreprefs' );
 		$htmlForm->setSubmitDestructive();
-		$htmlForm->setSubmitCallback( array( $this, 'submitReset' ) );
+		$htmlForm->setSubmitCallback( [ $this, 'submitReset' ] );
 		$htmlForm->suppressReset();
 
 		$htmlForm->show();
@@ -128,12 +140,14 @@ class SpecialPreferences extends SpecialPage {
 			throw new PermissionsError( 'editmyoptions' );
 		}
 
-		$user = $this->getUser();
+		$user = $this->getUser()->getInstanceForUpdate();
 		$user->resetOptions( 'all', $this->getContext() );
 		$user->saveSettings();
 
-		$url = $this->getPageTitle()->getFullURL( 'success' );
+		// Set session data for the success message
+		$this->getRequest()->setSessionData( 'specialPreferencesSaveSuccess', 1 );
 
+		$url = $this->getPageTitle()->getFullURL();
 		$this->getOutput()->redirect( $url );
 
 		return true;

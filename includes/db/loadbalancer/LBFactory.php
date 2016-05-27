@@ -21,16 +21,25 @@
  * @ingroup Database
  */
 
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Services\DestructibleService;
+use Psr\Log\LoggerInterface;
+use MediaWiki\Logger\LoggerFactory;
+
 /**
  * An interface for generating database load balancers
  * @ingroup Database
  */
-abstract class LBFactory {
+abstract class LBFactory implements DestructibleService {
+
 	/** @var ChronologyProtector */
 	protected $chronProt;
 
-	/** @var LBFactory */
-	private static $instance;
+	/** @var TransactionProfiler */
+	protected $trxProfiler;
+
+	/** @var LoggerInterface */
+	protected $logger;
 
 	/** @var string|bool Reason all LBs are read-only or false if not */
 	protected $readOnlyReason = false;
@@ -47,6 +56,18 @@ abstract class LBFactory {
 		}
 
 		$this->chronProt = $this->newChronologyProtector();
+		$this->trxProfiler = Profiler::instance()->getTransactionProfiler();
+		$this->logger = LoggerFactory::getInstance( 'DBTransaction' );
+	}
+
+	/**
+	 * Disables all load balancers. All connections are closed, and any attempt to
+	 * open a new connection will result in a DBAccessError.
+	 * @see LoadBalancer::disable()
+	 */
+	public function destroy() {
+		$this->shutdown();
+		$this->forEachLBCallMethod( 'disable' );
 	}
 
 	/**
@@ -54,32 +75,24 @@ abstract class LBFactory {
 	 * to throw a DBAccessError
 	 */
 	public static function disableBackend() {
-		global $wgLBFactoryConf;
-		self::$instance = new LBFactoryFake( $wgLBFactoryConf );
+		MediaWikiServices::disableStorageBackend();
 	}
 
 	/**
 	 * Get an LBFactory instance
 	 *
+	 * @deprecated since 1.27, use MediaWikiServices::getDBLoadBalancerFactory() instead.
+	 *
 	 * @return LBFactory
 	 */
 	public static function singleton() {
-		global $wgLBFactoryConf;
-
-		if ( is_null( self::$instance ) ) {
-			$class = self::getLBFactoryClass( $wgLBFactoryConf );
-			$config = $wgLBFactoryConf;
-			if ( !isset( $config['readOnlyReason'] ) ) {
-				$config['readOnlyReason'] = wfConfiguredReadOnlyReason();
-			}
-			self::$instance = new $class( $config );
-		}
-
-		return self::$instance;
+		return MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
 	}
 
 	/**
 	 * Returns the LBFactory class to use and the load balancer configuration.
+	 *
+	 * @todo instead of this, use a ServiceContainer for managing the different implementations.
 	 *
 	 * @param array $config (e.g. $wgLBFactoryConf)
 	 * @return string Class name
@@ -87,12 +100,12 @@ abstract class LBFactory {
 	public static function getLBFactoryClass( array $config ) {
 		// For configuration backward compatibility after removing
 		// underscores from class names in MediaWiki 1.23.
-		$bcClasses = array(
+		$bcClasses = [
 			'LBFactory_Simple' => 'LBFactorySimple',
 			'LBFactory_Single' => 'LBFactorySingle',
 			'LBFactory_Multi' => 'LBFactoryMulti',
 			'LBFactory_Fake' => 'LBFactoryFake',
-		);
+		];
 
 		$class = $config['class'];
 
@@ -109,23 +122,11 @@ abstract class LBFactory {
 
 	/**
 	 * Shut down, close connections and destroy the cached instance.
+	 *
+	 * @deprecated since 1.27, use LBFactory::destroy()
 	 */
 	public static function destroyInstance() {
-		if ( self::$instance ) {
-			self::$instance->shutdown();
-			self::$instance->forEachLBCallMethod( 'closeAll' );
-			self::$instance = null;
-		}
-	}
-
-	/**
-	 * Set the instance to be the given object
-	 *
-	 * @param LBFactory $instance
-	 */
-	public static function setInstance( $instance ) {
-		self::destroyInstance();
-		self::$instance = $instance;
+		self::singleton()->destroy();
 	}
 
 	/**
@@ -173,7 +174,7 @@ abstract class LBFactory {
 	 * @param callable $callback
 	 * @param array $params
 	 */
-	abstract public function forEachLB( $callback, array $params = array() );
+	abstract public function forEachLB( $callback, array $params = [] );
 
 	/**
 	 * Prepare all tracked load balancers for shutdown
@@ -189,12 +190,12 @@ abstract class LBFactory {
 	 * @param string $methodName
 	 * @param array $args
 	 */
-	private function forEachLBCallMethod( $methodName, array $args = array() ) {
+	private function forEachLBCallMethod( $methodName, array $args = [] ) {
 		$this->forEachLB(
 			function ( LoadBalancer $loadBalancer, $methodName, array $args ) {
-				call_user_func_array( array( $loadBalancer, $methodName ), $args );
+				call_user_func_array( [ $loadBalancer, $methodName ], $args );
 			},
-			array( $methodName, $args )
+			[ $methodName, $args ]
 		);
 	}
 
@@ -205,8 +206,10 @@ abstract class LBFactory {
 	 * @param string $fname Caller name
 	 */
 	public function commitAll( $fname = __METHOD__ ) {
+		$this->logMultiDbTransaction();
+
 		$start = microtime( true );
-		$this->forEachLBCallMethod( 'commitAll', array( $fname ) );
+		$this->forEachLBCallMethod( 'commitAll', [ $fname ] );
 		$timeMs = 1000 * ( microtime( true ) - $start );
 
 		RequestContext::getMain()->getStats()->timing( "db.commit-all", $timeMs );
@@ -215,13 +218,26 @@ abstract class LBFactory {
 	/**
 	 * Commit changes on all master connections
 	 * @param string $fname Caller name
+	 * @param array $options Options map:
+	 *   - maxWriteDuration: abort if more than this much time was spent in write queries
 	 */
-	public function commitMasterChanges( $fname = __METHOD__ ) {
-		$start = microtime( true );
-		$this->forEachLBCallMethod( 'commitMasterChanges', array( $fname ) );
-		$timeMs = 1000 * ( microtime( true ) - $start );
+	public function commitMasterChanges( $fname = __METHOD__, array $options = [] ) {
+		$limit = isset( $options['maxWriteDuration'] ) ? $options['maxWriteDuration'] : 0;
 
-		RequestContext::getMain()->getStats()->timing( "db.commit-masters", $timeMs );
+		$this->logMultiDbTransaction();
+		$this->forEachLB( function ( LoadBalancer $lb ) use ( $limit ) {
+			$lb->forEachOpenConnection( function ( IDatabase $db ) use ( $limit ) {
+				$time = $db->pendingWriteQueryDuration();
+				if ( $limit > 0 && $time > $limit ) {
+					throw new DBTransactionError(
+						$db,
+						wfMessage( 'transaction-duration-limit-exceeded', $time, $limit )->text()
+					);
+				}
+			} );
+		} );
+
+		$this->forEachLBCallMethod( 'commitMasterChanges', [ $fname ] );
 	}
 
 	/**
@@ -230,7 +246,30 @@ abstract class LBFactory {
 	 * @since 1.23
 	 */
 	public function rollbackMasterChanges( $fname = __METHOD__ ) {
-		$this->forEachLBCallMethod( 'rollbackMasterChanges', array( $fname ) );
+		$this->forEachLBCallMethod( 'rollbackMasterChanges', [ $fname ] );
+	}
+
+	/**
+	 * Log query info if multi DB transactions are going to be committed now
+	 */
+	private function logMultiDbTransaction() {
+		$callersByDB = [];
+		$this->forEachLB( function ( LoadBalancer $lb ) use ( &$callersByDB ) {
+			$masterName = $lb->getServerName( $lb->getWriterIndex() );
+			$callers = $lb->pendingMasterChangeCallers();
+			if ( $callers ) {
+				$callersByDB[$masterName] = $callers;
+			}
+		} );
+
+		if ( count( $callersByDB ) >= 2 ) {
+			$dbs = implode( ', ', array_keys( $callersByDB ) );
+			$msg = "Multi-DB transaction [{$dbs}]:\n";
+			foreach ( $callersByDB as $db => $callers ) {
+				$msg .= "$db: " . implode( '; ', $callers ) . "\n";
+			}
+			$this->logger->info( $msg );
+		}
 	}
 
 	/**
@@ -275,6 +314,90 @@ abstract class LBFactory {
 	}
 
 	/**
+	 * Waits for the slave DBs to catch up to the current master position
+	 *
+	 * Use this when updating very large numbers of rows, as in maintenance scripts,
+	 * to avoid causing too much lag. Of course, this is a no-op if there are no slaves.
+	 *
+	 * By default this waits on all DB clusters actually used in this request.
+	 * This makes sense when lag being waiting on is caused by the code that does this check.
+	 * In that case, setting "ifWritesSince" can avoid the overhead of waiting for clusters
+	 * that were not changed since the last wait check. To forcefully wait on a specific cluster
+	 * for a given wiki, use the 'wiki' parameter. To forcefully wait on an "external" cluster,
+	 * use the "cluster" parameter.
+	 *
+	 * Never call this function after a large DB write that is *still* in a transaction.
+	 * It only makes sense to call this after the possible lag inducing changes were committed.
+	 *
+	 * @param array $opts Optional fields that include:
+	 *   - wiki : wait on the load balancer DBs that handles the given wiki
+	 *   - cluster : wait on the given external load balancer DBs
+	 *   - timeout : Max wait time. Default: ~60 seconds
+	 *   - ifWritesSince: Only wait if writes were done since this UNIX timestamp
+	 * @throws DBReplicationWaitError If a timeout or error occured waiting on a DB cluster
+	 * @since 1.27
+	 */
+	public function waitForReplication( array $opts = [] ) {
+		$opts += [
+			'wiki' => false,
+			'cluster' => false,
+			'timeout' => 60,
+			'ifWritesSince' => null
+		];
+
+		// Figure out which clusters need to be checked
+		/** @var LoadBalancer[] $lbs */
+		$lbs = [];
+		if ( $opts['cluster'] !== false ) {
+			$lbs[] = $this->getExternalLB( $opts['cluster'] );
+		} elseif ( $opts['wiki'] !== false ) {
+			$lbs[] = $this->getMainLB( $opts['wiki'] );
+		} else {
+			$this->forEachLB( function ( LoadBalancer $lb ) use ( &$lbs ) {
+				$lbs[] = $lb;
+			} );
+			if ( !$lbs ) {
+				return; // nothing actually used
+			}
+		}
+
+		// Get all the master positions of applicable DBs right now.
+		// This can be faster since waiting on one cluster reduces the
+		// time needed to wait on the next clusters.
+		$masterPositions = array_fill( 0, count( $lbs ), false );
+		foreach ( $lbs as $i => $lb ) {
+			if ( $lb->getServerCount() <= 1 ) {
+				// Bug 27975 - Don't try to wait for slaves if there are none
+				// Prevents permission error when getting master position
+				continue;
+			} elseif ( $opts['ifWritesSince']
+				&& $lb->lastMasterChangeTimestamp() < $opts['ifWritesSince']
+			) {
+				continue; // no writes since the last wait
+			}
+			$masterPositions[$i] = $lb->getMasterPos();
+		}
+
+		$failed = [];
+		foreach ( $lbs as $i => $lb ) {
+			if ( $masterPositions[$i] ) {
+				// The DBMS may not support getMasterPos() or the whole
+				// load balancer might be fake (e.g. $wgAllDBsAreLocalhost).
+				if ( !$lb->waitForAll( $masterPositions[$i], $opts['timeout'] ) ) {
+					$failed[] = $lb->getServerName( $lb->getWriterIndex() );
+				}
+			}
+		}
+
+		if ( $failed ) {
+			throw new DBReplicationWaitError(
+				"Could not wait for slaves to catch up to " .
+				implode( ', ', $failed )
+			);
+		}
+	}
+
+	/**
 	 * Disable the ChronologyProtector for all load balancers
 	 *
 	 * This can be called at the start of special API entry points
@@ -292,10 +415,10 @@ abstract class LBFactory {
 		$request = RequestContext::getMain()->getRequest();
 		$chronProt = new ChronologyProtector(
 			ObjectCache::getMainStashInstance(),
-			array(
+			[
 				'ip' => $request->getIP(),
 				'agent' => $request->getHeader( 'User-Agent' )
-			)
+			]
 		);
 		if ( PHP_SAPI === 'cli' ) {
 			$chronProt->setEnabled( false );
@@ -329,6 +452,15 @@ abstract class LBFactory {
 			}
 		} );
 	}
+
+	/**
+	 * Close all open database connections on all open load balancers.
+	 * @since 1.28
+	 */
+	public function closeAll() {
+		$this->forEachLBCallMethod( 'closeAll', [] );
+	}
+
 }
 
 /**
@@ -337,6 +469,12 @@ abstract class LBFactory {
 class DBAccessError extends MWException {
 	public function __construct() {
 		parent::__construct( "Mediawiki tried to access the database via wfGetDB(). " .
-			"This is not allowed." );
+			"This is not allowed, because database access has been disabled." );
 	}
+}
+
+/**
+ * Exception class for replica DB wait timeouts
+ */
+class DBReplicationWaitError extends Exception {
 }

@@ -33,8 +33,6 @@ class MultiWriteBagOStuff extends BagOStuff {
 	protected $caches;
 	/** @var bool Use async secondary writes */
 	protected $asyncWrites = false;
-	/** @var callback|null */
-	protected $asyncHandler;
 
 	/** Idiom for "write to all backends" */
 	const ALL = INF;
@@ -52,14 +50,12 @@ class MultiWriteBagOStuff extends BagOStuff {
 	 *      only use the primary store.
 	 *   - replication: Either 'sync' or 'async'. This controls whether writes
 	 *      to secondary stores are deferred when possible. Async writes
-	 *      require setting 'asyncCallback'. HHVM register_postsend_function() function.
+	 *      require setting 'asyncHandler'. HHVM register_postsend_function() function.
 	 *      Async writes can increase the chance of some race conditions
 	 *      or cause keys to expire seconds later than expected. It is
 	 *      safe to use for modules when cached values: are immutable,
 	 *      invalidation uses logical TTLs, invalidation uses etag/timestamp
 	 *      validation against the DB, or merge() is used to handle races.
-	 *   - asyncHandler: callable that takes a callback and runs it after the
-	 *      current web request ends. In CLI mode, it should run it immediately.
 	 * @param array $params
 	 * @throws InvalidArgumentException
 	 */
@@ -72,7 +68,7 @@ class MultiWriteBagOStuff extends BagOStuff {
 			);
 		}
 
-		$this->caches = array();
+		$this->caches = [];
 		foreach ( $params['caches'] as $cacheInfo ) {
 			if ( $cacheInfo instanceof BagOStuff ) {
 				$this->caches[] = $cacheInfo;
@@ -82,15 +78,12 @@ class MultiWriteBagOStuff extends BagOStuff {
 					// Callers intenting this to be for ObjectFactory::getObjectFromSpec
 					// should have set "args" per the docs above. Doings so avoids extra
 					// (likely harmless) params (factory/class/calls) ending up in "args".
-					$cacheInfo['args'] = array( $cacheInfo );
+					$cacheInfo['args'] = [ $cacheInfo ];
 				}
 				$this->caches[] = ObjectFactory::getObjectFromSpec( $cacheInfo );
 			}
 		}
 
-		$this->asyncHandler = isset( $params['asyncHandler'] )
-			? $params['asyncHandler']
-			: null;
 		$this->asyncWrites = (
 			isset( $params['replication'] ) &&
 			$params['replication'] === 'async' &&
@@ -194,7 +187,7 @@ class MultiWriteBagOStuff extends BagOStuff {
 
 			if ( $i == 0 || !$asyncWrites ) {
 				// First store or in sync mode: write now and get result
-				if ( !call_user_func_array( array( $cache, $method ), $args ) ) {
+				if ( !call_user_func_array( [ $cache, $method ], $args ) ) {
 					$ret = false;
 				}
 			} else {
@@ -203,7 +196,7 @@ class MultiWriteBagOStuff extends BagOStuff {
 				call_user_func(
 					$this->asyncHandler,
 					function () use ( $cache, $method, $args, $logger ) {
-						if ( !call_user_func_array( array( $cache, $method ), $args ) ) {
+						if ( !call_user_func_array( [ $cache, $method ], $args ) ) {
 							$logger->warning( "Async $method op failed" );
 						}
 					}

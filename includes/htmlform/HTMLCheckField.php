@@ -14,13 +14,13 @@ class HTMLCheckField extends HTMLFormField {
 		$attr = $this->getTooltipAndAccessKey();
 		$attr['id'] = $this->mID;
 
-		$attr += $this->getAttributes( array( 'disabled', 'tabindex' ) );
+		$attr += $this->getAttributes( [ 'disabled', 'tabindex' ] );
 
 		if ( $this->mClass !== '' ) {
 			$attr['class'] = $this->mClass;
 		}
 
-		$attrLabel = array( 'for' => $this->mID );
+		$attrLabel = [ 'for' => $this->mID ];
 		if ( isset( $attr['title'] ) ) {
 			// propagate tooltip to label
 			$attrLabel['title'] = $attr['title'];
@@ -33,7 +33,7 @@ class HTMLCheckField extends HTMLFormField {
 		if ( $wgUseMediaWikiUIEverywhere || $this->mParent instanceof VFormHTMLForm ) {
 			$chkLabel = Html::rawElement(
 				'div',
-				array( 'class' => 'mw-ui-checkbox' ),
+				[ 'class' => 'mw-ui-checkbox' ],
 				$chkLabel
 			);
 		}
@@ -56,13 +56,12 @@ class HTMLCheckField extends HTMLFormField {
 		$attr['id'] = $this->mID;
 		$attr['name'] = $this->mName;
 
-		$attr += $this->getAttributes(
-			array( 'disabled', 'tabindex' ),
-			array( 'tabindex' => 'tabIndex' )
+		$attr += OOUI\Element::configFromHtmlAttributes(
+			$this->getAttributes( [ 'disabled', 'tabindex' ] )
 		);
 
 		if ( $this->mClass !== '' ) {
-			$attr['classes'] = array( $this->mClass );
+			$attr['classes'] = [ $this->mClass ];
 		}
 
 		$attr['selected'] = $value;
@@ -112,7 +111,7 @@ class HTMLCheckField extends HTMLFormField {
 	/**
 	 * @param WebRequest $request
 	 *
-	 * @return string
+	 * @return bool
 	 */
 	function loadDataFromRequest( $request ) {
 		$invert = isset( $this->mParams['invert'] ) && $this->mParams['invert'];
@@ -126,7 +125,7 @@ class HTMLCheckField extends HTMLFormField {
 				? !$request->getBool( $this->mName )
 				: $request->getBool( $this->mName );
 		} else {
-			return $this->getDefault();
+			return (bool)$this->getDefault();
 		}
 	}
 }

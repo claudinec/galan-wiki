@@ -19,6 +19,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Handles the backend logic of moving a page from one title
  * to another.
@@ -55,7 +57,7 @@ class MovePage {
 		// Convert into a Status object
 		if ( $errors ) {
 			foreach ( $errors as $error ) {
-				call_user_func_array( array( $status, 'fatal' ), $error );
+				call_user_func_array( [ $status, 'fatal' ], $error );
 			}
 		}
 
@@ -70,7 +72,7 @@ class MovePage {
 		}
 
 		Hooks::run( 'MovePageCheckPermissions',
-			array( $this->oldTitle, $this->newTitle, $user, $reason, $status )
+			[ $this->oldTitle, $this->newTitle, $user, $reason, $status ]
 		);
 
 		return $status;
@@ -141,7 +143,7 @@ class MovePage {
 		}
 
 		// Hook for extensions to say a title can't be moved for technical reasons
-		Hooks::run( 'MovePageIsValidMove', array( $this->oldTitle, $this->newTitle, $status ) );
+		Hooks::run( 'MovePageIsValidMove', [ $this->oldTitle, $this->newTitle, $status ] );
 
 		return $status;
 	}
@@ -228,7 +230,7 @@ class MovePage {
 	public function move( User $user, $reason, $createRedirect ) {
 		global $wgCategoryCollation;
 
-		Hooks::run( 'TitleMove', array( $this->oldTitle, $this->newTitle, $user ) );
+		Hooks::run( 'TitleMove', [ $this->oldTitle, $this->newTitle, $user ] );
 
 		// If it is a file, move it first.
 		// It is done before all other moving stuff is done because it's hard to revert.
@@ -238,7 +240,7 @@ class MovePage {
 			$file->load( File::READ_LATEST );
 			if ( $file->exists() ) {
 				$status = $file->move( $this->newTitle );
-				if ( !$status->isOk() ) {
+				if ( !$status->isOK() ) {
 					return $status;
 				}
 			}
@@ -248,6 +250,9 @@ class MovePage {
 		}
 
 		$dbw->startAtomic( __METHOD__ );
+
+		Hooks::run( 'TitleMoveStarting', [ $this->oldTitle, $this->newTitle, $user ] );
+
 		$pageid = $this->oldTitle->getArticleID( Title::GAID_FOR_UPDATE );
 		$protected = $this->oldTitle->isProtected();
 
@@ -260,8 +265,8 @@ class MovePage {
 		// from LinksUpdate::getCategoryInsertions() and friends.
 		$prefixes = $dbw->select(
 			'categorylinks',
-			array( 'cl_sortkey_prefix', 'cl_to' ),
-			array( 'cl_from' => $pageid ),
+			[ 'cl_sortkey_prefix', 'cl_to' ],
+			[ 'cl_from' => $pageid ],
 			__METHOD__
 		);
 		if ( $this->newTitle->getNamespace() == NS_CATEGORY ) {
@@ -275,15 +280,15 @@ class MovePage {
 			$prefix = $prefixRow->cl_sortkey_prefix;
 			$catTo = $prefixRow->cl_to;
 			$dbw->update( 'categorylinks',
-				array(
+				[
 					'cl_sortkey' => Collation::singleton()->getSortKey(
 							$this->newTitle->getCategorySortkey( $prefix ) ),
 					'cl_collation' => $wgCategoryCollation,
 					'cl_type' => $type,
-					'cl_timestamp=cl_timestamp' ),
-				array(
+					'cl_timestamp=cl_timestamp' ],
+				[
 					'cl_from' => $pageid,
-					'cl_to' => $catTo ),
+					'cl_to' => $catTo ],
 				__METHOD__
 			);
 		}
@@ -293,17 +298,17 @@ class MovePage {
 		if ( $protected ) {
 			# Protect the redirect title as the title used to be...
 			$dbw->insertSelect( 'page_restrictions', 'page_restrictions',
-				array(
+				[
 					'pr_page' => $redirid,
 					'pr_type' => 'pr_type',
 					'pr_level' => 'pr_level',
 					'pr_cascade' => 'pr_cascade',
 					'pr_user' => 'pr_user',
 					'pr_expiry' => 'pr_expiry'
-				),
-				array( 'pr_page' => $pageid ),
+				],
+				[ 'pr_page' => $pageid ],
 				__METHOD__,
-				array( 'IGNORE' )
+				[ 'IGNORE' ]
 			);
 
 			// Build comment for log
@@ -320,10 +325,10 @@ class MovePage {
 			$insertedPrIds = $dbw->select(
 				'page_restrictions',
 				'pr_id',
-				array( 'pr_page' => $redirid ),
+				[ 'pr_page' => $redirid ],
 				__METHOD__
 			);
-			$logRelationsValues = array();
+			$logRelationsValues = [];
 			foreach ( $insertedPrIds as $prid ) {
 				$logRelationsValues[] = $prid->pr_id;
 			}
@@ -333,10 +338,10 @@ class MovePage {
 			$logEntry->setTarget( $this->newTitle );
 			$logEntry->setComment( $comment );
 			$logEntry->setPerformer( $user );
-			$logEntry->setParameters( array(
+			$logEntry->setParameters( [
 				'4::oldtitle' => $this->oldTitle->getPrefixedText(),
-			) );
-			$logEntry->setRelations( array( 'pr_id' => $logRelationsValues ) );
+			] );
+			$logEntry->setRelations( [ 'pr_id' => $logRelationsValues ] );
 			$logId = $logEntry->insert();
 			$logEntry->publish( $logId );
 		}
@@ -344,18 +349,18 @@ class MovePage {
 		// Update *_from_namespace fields as needed
 		if ( $this->oldTitle->getNamespace() != $this->newTitle->getNamespace() ) {
 			$dbw->update( 'pagelinks',
-				array( 'pl_from_namespace' => $this->newTitle->getNamespace() ),
-				array( 'pl_from' => $pageid ),
+				[ 'pl_from_namespace' => $this->newTitle->getNamespace() ],
+				[ 'pl_from' => $pageid ],
 				__METHOD__
 			);
 			$dbw->update( 'templatelinks',
-				array( 'tl_from_namespace' => $this->newTitle->getNamespace() ),
-				array( 'tl_from' => $pageid ),
+				[ 'tl_from_namespace' => $this->newTitle->getNamespace() ],
+				[ 'tl_from' => $pageid ],
 				__METHOD__
 			);
 			$dbw->update( 'imagelinks',
-				array( 'il_from_namespace' => $this->newTitle->getNamespace() ),
-				array( 'il_from' => $pageid ),
+				[ 'il_from_namespace' => $this->newTitle->getNamespace() ],
+				[ 'il_from' => $pageid ],
 				__METHOD__
 			);
 		}
@@ -366,18 +371,19 @@ class MovePage {
 		$oldsnamespace = MWNamespace::getSubject( $this->oldTitle->getNamespace() );
 		$newsnamespace = MWNamespace::getSubject( $this->newTitle->getNamespace() );
 		if ( $oldsnamespace != $newsnamespace || $oldtitle != $newtitle ) {
-			WatchedItem::duplicateEntries( $this->oldTitle, $this->newTitle );
+			$store = MediaWikiServices::getInstance()->getWatchedItemStore();
+			$store->duplicateAllAssociatedEntries( $this->oldTitle, $this->newTitle );
 		}
 
 		Hooks::run(
 			'TitleMoveCompleting',
-			array( $this->oldTitle, $this->newTitle,
-				$user, $pageid, $redirid, $reason, $nullRevision )
+			[ $this->oldTitle, $this->newTitle,
+				$user, $pageid, $redirid, $reason, $nullRevision ]
 		);
 
 		$dbw->endAtomic( __METHOD__ );
 
-		$params = array(
+		$params = [
 			&$this->oldTitle,
 			&$this->newTitle,
 			&$user,
@@ -385,7 +391,7 @@ class MovePage {
 			$redirid,
 			$reason,
 			$nullRevision
-		);
+		];
 		$dbw->onTransactionIdle( function () use ( $params, $dbw ) {
 			// Keep each single hook handler atomic
 			$dbw->setFlag( DBO_TRX ); // flag is automatically reset by DB layer
@@ -452,10 +458,10 @@ class MovePage {
 		$logEntry->setPerformer( $user );
 		$logEntry->setTarget( $logTitle );
 		$logEntry->setComment( $reason );
-		$logEntry->setParameters( array(
+		$logEntry->setParameters( [
 			'4::target' => $nt->getPrefixedText(),
 			'5::noredir' => $redirectContent ? '0': '1',
-		) );
+		] );
 
 		$formatter = LogFormatter::newFromEntry( $logEntry );
 		$formatter->setContext( RequestContext::newExtraneousContext( $this->oldTitle ) );
@@ -481,7 +487,7 @@ class MovePage {
 			# by definition if we've got here it's rather uninteresting.
 			# We have to remove it so that the next step doesn't trigger
 			# a conflict on the unique namespace+title index...
-			$dbw->delete( 'page', array( 'page_id' => $newid ), __METHOD__ );
+			$dbw->delete( 'page', [ 'page_id' => $newid ], __METHOD__ );
 
 			$newpage->doDeleteUpdates( $newid, $newcontent );
 		}
@@ -496,11 +502,11 @@ class MovePage {
 
 		# Change the name of the target page:
 		$dbw->update( 'page',
-			/* SET */ array(
+			/* SET */ [
 				'page_namespace' => $nt->getNamespace(),
 				'page_title' => $nt->getDBkey(),
-			),
-			/* WHERE */ array( 'page_id' => $oldid ),
+			],
+			/* WHERE */ [ 'page_id' => $oldid ],
 			__METHOD__
 		);
 
@@ -516,17 +522,17 @@ class MovePage {
 		$newpage->updateRevisionOn( $dbw, $nullRevision );
 
 		Hooks::run( 'NewRevisionFromEditComplete',
-			array( $newpage, $nullRevision, $nullRevision->getParentId(), $user ) );
+			[ $newpage, $nullRevision, $nullRevision->getParentId(), $user ] );
 
 		$newpage->doEditUpdates( $nullRevision, $user,
-			array( 'changed' => false, 'moved' => true, 'oldcountable' => $oldcountable ) );
+			[ 'changed' => false, 'moved' => true, 'oldcountable' => $oldcountable ] );
 
 		// If the default content model changes, we need to populate rev_content_model
 		if ( $defaultContentModelChanging ) {
 			$dbw->update(
 				'revision',
-				array( 'rev_content_model' => $contentModel ),
-				array( 'rev_page' => $nt->getArticleID(), 'rev_content_model IS NULL' ),
+				[ 'rev_content_model' => $contentModel ],
+				[ 'rev_page' => $nt->getArticleID(), 'rev_content_model IS NULL' ],
 				__METHOD__
 			);
 		}
@@ -542,20 +548,20 @@ class MovePage {
 			$newid = $redirectArticle->insertOn( $dbw );
 			if ( $newid ) { // sanity
 				$this->oldTitle->resetArticleID( $newid );
-				$redirectRevision = new Revision( array(
+				$redirectRevision = new Revision( [
 					'title' => $this->oldTitle, // for determining the default content model
 					'page' => $newid,
 					'user_text' => $user->getName(),
 					'user' => $user->getId(),
 					'comment' => $comment,
-					'content' => $redirectContent ) );
+					'content' => $redirectContent ] );
 				$redirectRevision->insertOn( $dbw );
 				$redirectArticle->updateRevisionOn( $dbw, $redirectRevision, 0 );
 
 				Hooks::run( 'NewRevisionFromEditComplete',
-					array( $redirectArticle, $redirectRevision, false, $user ) );
+					[ $redirectArticle, $redirectRevision, false, $user ] );
 
-				$redirectArticle->doEditUpdates( $redirectRevision, $user, array( 'created' => true ) );
+				$redirectArticle->doEditUpdates( $redirectRevision, $user, [ 'created' => true ] );
 			}
 		}
 

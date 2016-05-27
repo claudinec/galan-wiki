@@ -44,13 +44,13 @@ div.searchresult {
 	font-size: 108%;
 }
 .mw-search-result-data {
-	color: green;
+	color: #008000;
 	font-size: 97%;
 }
 .mw-search-profile-tabs {
 	background-color: #f3f3f3;
 	margin-top: 1em;
-	border: 1px solid silver;
+	border: 1px solid #c0c0c0;
 }
 .mw-search-profile-tabs div.search-types {
 	float: left;
@@ -71,7 +71,7 @@ div.searchresult {
 	padding: 0.5em;
 }
 .mw-search-profile-tabs div.search-types ul li.current a {
-	color: #333333;
+	color: #333;
 	cursor: default;
 }
 .mw-search-profile-tabs div.search-types ul li.current a:hover {
@@ -90,7 +90,7 @@ fieldset#mw-searchoptions {
 	padding: 0.5em 0.75em 0.75em 0.75em;
 	border: none;
 	background-color: #f9f9f9;
-	border: 1px solid silver;
+	border: 1px solid #c0c0c0;
 	border-top-width: 0;
 }
 fieldset#mw-searchoptions legend {
@@ -121,18 +121,18 @@ fieldset#mw-searchoptions table td {
 }
 fieldset#mw-searchoptions div.divider {
 	clear: both;
-	border-bottom: 1px solid #DDDDDD;
+	border-bottom: 1px solid #ddd;
 	padding-top: 0.5em;
 	margin-bottom: 0.5em;
 }
 td#mw-search-menu {
-	padding-left:6em;
-	font-size:85%;
+	padding-left: 6em;
+	font-size: 85%;
 }
 div#mw-search-interwiki {
 	float: right;
 	width: 18em;
-	border: 1px solid #AAAAAA;
+	border: 1px solid #aaa;
 	margin-top: 2ex;
 }
 div#mw-search-interwiki li {
@@ -152,7 +152,7 @@ div#mw-search-interwiki-caption {
 	text-align: left;
 	padding: 0.15em 0.15em 0.2em 0.2em;
 	background-color: #ececec;
-	border-top: 1px solid #BBBBBB;
+	border-top: 1px solid #bbb;
 }
 span.searchalttitle {
 	font-size: 95%;

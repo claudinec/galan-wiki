@@ -34,8 +34,7 @@ class ExifBitmapHandler extends BitmapHandler {
 
 	function convertMetadataVersion( $metadata, $version = 1 ) {
 		// basically flattens arrays.
-		$version = explode( ';', $version, 2 );
-		$version = intval( $version[0] );
+		$version = intval( explode( ';', $version, 2 )[0] );
 		if ( $version < 1 || $version >= 2 ) {
 			return $metadata;
 		}
@@ -146,12 +145,12 @@ class ExifBitmapHandler extends BitmapHandler {
 		) {
 			// So we don't try and display metadata from PagedTiffHandler
 			// for example when using InstantCommons.
-			return array();
+			return [];
 		}
 
 		$exif = unserialize( $metadata );
 		if ( !$exif ) {
-			return array();
+			return [];
 		}
 		unset( $exif['MEDIAWIKI_EXIF_VERSION'] );
 

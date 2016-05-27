@@ -33,11 +33,11 @@ class RecentChangeTest extends MediaWikiTestCase {
 
 		$rc = RecentChange::newFromRow( $row );
 
-		$expected = array(
+		$expected = [
 			'rc_foo' => 'AAA',
 			'rc_timestamp' => '20150921134808',
 			'rc_deleted' => 'bar',
-		);
+		];
 		$this->assertEquals( $expected, $rc->getAttributes() );
 	}
 
@@ -45,12 +45,12 @@ class RecentChangeTest extends MediaWikiTestCase {
 	 * @covers RecentChange::parseParams
 	 */
 	public function testParseParams() {
-		$params = array(
-			'root' => array(
+		$params = [
+			'root' => [
 				'A' => 1,
 				'B' => 'two'
-			)
-		);
+			]
+		];
 
 		$this->assertParseParams(
 			$params,
@@ -79,7 +79,7 @@ class RecentChangeTest extends MediaWikiTestCase {
 	 */
 	protected function assertParseParams( $expectedParseParams, $rawRcParams ) {
 		$rc = new RecentChange;
-		$rc->setAttribs( array( 'rc_params' => $rawRcParams ) );
+		$rc->setAttribs( [ 'rc_params' => $rawRcParams ] );
 
 		$actualParseParams = $rc->parseParams();
 
@@ -91,12 +91,12 @@ class RecentChangeTest extends MediaWikiTestCase {
 	 * @return array
 	 */
 	public function provideIsInRCLifespan() {
-		return array(
-			array( 6000, time() - 3000, 0, true ),
-			array( 3000, time() - 6000, 0, false ),
-			array( 6000, time() - 3000, 6000, true ),
-			array( 3000, time() - 6000, 6000, true ),
-		);
+		return [
+			[ 6000, time() - 3000, 0, true ],
+			[ 3000, time() - 6000, 0, false ],
+			[ 6000, time() - 3000, 6000, true ],
+			[ 3000, time() - 6000, 6000, true ],
+		];
 	}
 
 	/**
@@ -109,13 +109,13 @@ class RecentChangeTest extends MediaWikiTestCase {
 	}
 
 	public function provideRCTypes() {
-		return array(
-			array( RC_EDIT, 'edit' ),
-			array( RC_NEW, 'new' ),
-			array( RC_LOG, 'log' ),
-			array( RC_EXTERNAL, 'external' ),
-			array( RC_CATEGORIZE, 'categorize' ),
-		);
+		return [
+			[ RC_EDIT, 'edit' ],
+			[ RC_NEW, 'new' ],
+			[ RC_LOG, 'log' ],
+			[ RC_EXTERNAL, 'external' ],
+			[ RC_CATEGORIZE, 'categorize' ],
+		];
 	}
 
 	/**
@@ -134,4 +134,51 @@ class RecentChangeTest extends MediaWikiTestCase {
 		$this->assertEquals( $rcType, RecentChange::parseToRCType( $type ) );
 	}
 
+	/**
+	 * @return PHPUnit_Framework_MockObject_MockObject|PageProps
+	 */
+	private function getMockPageProps() {
+		return $this->getMockBuilder( PageProps::class )
+			->disableOriginalConstructor()
+			->getMock();
+	}
+
+	public function provideCategoryContent() {
+		return [
+			[ true ],
+			[ false ],
+		];
+	}
+
+	/**
+	 * @dataProvider provideCategoryContent
+	 * @covers RecentChange::newForCategorization
+	 */
+	public function testHiddenCategoryChange( $isHidden ) {
+		$categoryTitle = Title::newFromText( 'CategoryPage', NS_CATEGORY );
+
+		$pageProps = $this->getMockPageProps();
+		$pageProps->expects( $this->once() )
+			->method( 'getProperties' )
+			->with( $categoryTitle, 'hiddencat' )
+			->will( $this->returnValue( $isHidden ? [ $categoryTitle->getArticleID() => '' ] : [] ) );
+
+		$scopedOverride = PageProps::overrideInstance( $pageProps );
+
+		$rc = RecentChange::newForCategorization(
+			'0',
+			$categoryTitle,
+			$this->user,
+			$this->user_comment,
+			$this->title,
+			$categoryTitle->getLatestRevID(),
+			$categoryTitle->getLatestRevID(),
+			'0',
+			false
+		);
+
+		$this->assertEquals( $isHidden, $rc->getParam( 'hidden-cat' ) );
+
+		ScopedCallback::consume( $scopedOverride );
+	}
 }

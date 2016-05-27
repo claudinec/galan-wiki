@@ -62,7 +62,7 @@ abstract class Action {
 	 * the action is disabled, or null if it's not recognised
 	 * @param string $action
 	 * @param array $overrides
-	 * @return bool|null|string|callable
+	 * @return bool|null|string|callable|Action
 	 */
 	final private static function getClass( $action, array $overrides ) {
 		global $wgActions;
@@ -96,12 +96,15 @@ abstract class Action {
 		$classOrCallable = self::getClass( $action, $page->getActionOverrides() );
 
 		if ( is_string( $classOrCallable ) ) {
+			if ( !class_exists( $classOrCallable ) ) {
+				return false;
+			}
 			$obj = new $classOrCallable( $page, $context );
 			return $obj;
 		}
 
 		if ( is_callable( $classOrCallable ) ) {
-			return call_user_func_array( $classOrCallable, array( $page, $context ) );
+			return call_user_func_array( $classOrCallable, [ $page, $context ] );
 		}
 
 		return $classOrCallable;
@@ -164,7 +167,7 @@ abstract class Action {
 	 * @return bool
 	 */
 	final public static function exists( $name ) {
-		return self::getClass( $name, array() ) !== null;
+		return self::getClass( $name, [] ) !== null;
 	}
 
 	/**
@@ -252,7 +255,7 @@ abstract class Action {
 	 */
 	final public function msg() {
 		$params = func_get_args();
-		return call_user_func_array( array( $this->getContext(), 'msg' ), $params );
+		return call_user_func_array( [ $this->getContext(), 'msg' ], $params );
 	}
 
 	/**
@@ -416,5 +419,14 @@ abstract class Action {
 		if ( $this->getRequest()->wasPosted() ) {
 			wfTransactionalTimeLimit();
 		}
+	}
+
+	/**
+	 * Indicates whether this action may perform database writes
+	 * @return bool
+	 * @since 1.27
+	 */
+	public function doesWrites() {
+		return false;
 	}
 }

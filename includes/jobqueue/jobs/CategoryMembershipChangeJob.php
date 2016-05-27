@@ -49,21 +49,22 @@ class CategoryMembershipChangeJob extends Job {
 		}
 
 		$dbw = wfGetDB( DB_MASTER );
-
 		// Use a named lock so that jobs for this page see each others' changes
-		$fname = __METHOD__;
 		$lockKey = "CategoryMembershipUpdates:{$page->getId()}";
-		if ( !$dbw->lock( $lockKey, $fname, 10 ) ) {
+		$scopedLock = $dbw->getScopedLockAndFlush( $lockKey, __METHOD__, 10 );
+		if ( !$scopedLock ) {
 			$this->setLastError( "Could not acquire lock '$lockKey'" );
 			return false;
 		}
 
-		$unlocker = new ScopedCallback( function () use ( $dbw, $lockKey, $fname ) {
-			$dbw->unlock( $lockKey, $fname );
-		} );
-
-		// Sanity: clear any DB transaction snapshot
-		$dbw->commit( __METHOD__, 'flush' );
+		$dbr = wfGetDB( DB_SLAVE, [ 'recentchanges' ] );
+		// Wait till the slave is caught up so that jobs for this page see each others' changes
+		if ( !wfGetLB()->safeWaitForMasterPos( $dbr ) ) {
+			$this->setLastError( "Timed out while waiting for slave to catch up" );
+			return false;
+		}
+		// Clear any stale REPEATABLE-READ snapshot
+		$dbr->commit( __METHOD__, 'flush' );
 
 		$cutoffUnix = wfTimestamp( TS_UNIX, $this->params['revTimestamp'] );
 		// Using ENQUEUE_FUDGE_SEC handles jobs inserted out of revision order due to the delay
@@ -71,27 +72,27 @@ class CategoryMembershipChangeJob extends Job {
 		$cutoffUnix -= self::ENQUEUE_FUDGE_SEC;
 
 		// Get the newest revision that has a SRC_CATEGORIZE row...
-		$row = $dbw->selectRow(
-			array( 'revision', 'recentchanges' ),
-			array( 'rev_timestamp', 'rev_id' ),
-			array(
+		$row = $dbr->selectRow(
+			[ 'revision', 'recentchanges' ],
+			[ 'rev_timestamp', 'rev_id' ],
+			[
 				'rev_page' => $page->getId(),
-				'rev_timestamp >= ' . $dbw->addQuotes( $dbw->timestamp( $cutoffUnix ) )
-			),
+				'rev_timestamp >= ' . $dbr->addQuotes( $dbr->timestamp( $cutoffUnix ) )
+			],
 			__METHOD__,
-			array( 'ORDER BY' => 'rev_timestamp DESC, rev_id DESC' ),
-			array(
-				'recentchanges' => array(
+			[ 'ORDER BY' => 'rev_timestamp DESC, rev_id DESC' ],
+			[
+				'recentchanges' => [
 					'INNER JOIN',
-					array(
+					[
 						'rc_this_oldid = rev_id',
 						'rc_source' => RecentChange::SRC_CATEGORIZE,
 						// Allow rc_cur_id or rc_timestamp index usage
 						'rc_cur_id = rev_page',
 						'rc_timestamp >= rev_timestamp'
-					)
-				)
-			)
+					]
+				]
+			]
 		);
 		// Only consider revisions newer than any such revision
 		if ( $row ) {
@@ -103,25 +104,23 @@ class CategoryMembershipChangeJob extends Job {
 
 		// Find revisions to this page made around and after this revision which lack category
 		// notifications in recent changes. This lets jobs pick up were the last one left off.
-		$encCutoff = $dbw->addQuotes( $dbw->timestamp( $cutoffUnix ) );
-		$res = $dbw->select(
+		$encCutoff = $dbr->addQuotes( $dbr->timestamp( $cutoffUnix ) );
+		$res = $dbr->select(
 			'revision',
 			Revision::selectFields(),
-			array(
+			[
 				'rev_page' => $page->getId(),
 				"rev_timestamp > $encCutoff" .
 					" OR (rev_timestamp = $encCutoff AND rev_id > $lastRevId)"
-			),
+			],
 			__METHOD__,
-			array( 'ORDER BY' => 'rev_timestamp ASC, rev_id ASC' )
+			[ 'ORDER BY' => 'rev_timestamp ASC, rev_id ASC' ]
 		);
 
 		// Apply all category updates in revision timestamp order
 		foreach ( $res as $row ) {
 			$this->notifyUpdatesForRevision( $page, Revision::newFromRow( $row ) );
 		}
-
-		ScopedCallback::consume( $unlocker );
 
 		return true;
 	}
@@ -169,7 +168,7 @@ class CategoryMembershipChangeJob extends Job {
 			$catMembChange->triggerCategoryAddedNotification( $categoryTitle );
 			if ( $insertCount++ && ( $insertCount % $batchSize ) == 0 ) {
 				$dbw->commit( __METHOD__, 'flush' );
-				wfWaitForSlaves();
+				wfGetLBFactory()->waitForReplication();
 			}
 		}
 
@@ -178,7 +177,7 @@ class CategoryMembershipChangeJob extends Job {
 			$catMembChange->triggerCategoryRemovedNotification( $categoryTitle );
 			if ( $insertCount++ && ( $insertCount++ % $batchSize ) == 0 ) {
 				$dbw->commit( __METHOD__, 'flush' );
-				wfWaitForSlaves();
+				wfGetLBFactory()->waitForReplication();
 			}
 		}
 	}
@@ -195,14 +194,14 @@ class CategoryMembershipChangeJob extends Job {
 		// up to date, neither of which are true.
 		$oldCategories = $oldRev
 			? $this->getCategoriesAtRev( $title, $oldRev, $parseTimestamp )
-			: array();
+			: [];
 		// Parse the new revision and get the categories
 		$newCategories = $this->getCategoriesAtRev( $title, $newRev, $parseTimestamp );
 
 		$categoryInserts = array_values( array_diff( $newCategories, $oldCategories ) );
 		$categoryDeletes = array_values( array_diff( $oldCategories, $newCategories ) );
 
-		return array( $categoryInserts, $categoryDeletes );
+		return [ $categoryInserts, $categoryDeletes ];
 	}
 
 	/**

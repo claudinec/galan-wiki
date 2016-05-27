@@ -53,7 +53,7 @@ class DeprecatedInterfaceFinder extends FileAwareNodeVisitor {
 
 	private $currentClass = null;
 
-	private $foundNodes = array();
+	private $foundNodes = [];
 
 	public function getFoundNodes() {
 		// Sort results by version, then by filename, then by name.
@@ -105,18 +105,17 @@ class DeprecatedInterfaceFinder extends FileAwareNodeVisitor {
 				$name = $node->name;
 			}
 
-			$this->foundNodes[ $version ][] = array(
+			$this->foundNodes[ $version ][] = [
 				'filename' => $node->filename,
 				'line'     => $node->getLine(),
 				'name'     => $name,
 				'hard'     => $this->isHardDeprecated( $node ),
-			);
+			];
 		}
 
 		return $retVal;
 	}
 }
-
 
 /**
  * Maintenance task that recursively scans MediaWiki PHP files for deprecated
@@ -125,7 +124,7 @@ class DeprecatedInterfaceFinder extends FileAwareNodeVisitor {
 class FindDeprecated extends Maintenance {
 	public function __construct() {
 		parent::__construct();
-		$this->mDescription = 'Find deprecated interfaces';
+		$this->addDescription( 'Find deprecated interfaces' );
 	}
 
 	public function getFiles() {
@@ -159,7 +158,7 @@ class FindDeprecated extends Maintenance {
 			}
 
 			$finder->setCurrentFile( substr( $file->getPathname(), strlen( $IP ) + 1 ) );
-			$nodes = $parser->parse( $code, array( 'throwOnError' => false ) );
+			$nodes = $parser->parse( $code, [ 'throwOnError' => false ] );
 			$traverser->traverse( $nodes );
 
 			if ( $i % $chunkSize === 0 ) {

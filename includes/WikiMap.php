@@ -55,16 +55,16 @@ class WikiMap {
 			return null;
 		}
 		$server = $wgConf->get( 'wgServer', $wikiID, $major,
-			array( 'lang' => $minor, 'site' => $major ) );
+			[ 'lang' => $minor, 'site' => $major ] );
 
 		$canonicalServer = $wgConf->get( 'wgCanonicalServer', $wikiID, $major,
-			array( 'lang' => $minor, 'site' => $major ) );
+			[ 'lang' => $minor, 'site' => $major ] );
 		if ( $canonicalServer === false || $canonicalServer === null ) {
 			$canonicalServer = $server;
 		}
 
 		$path = $wgConf->get( 'wgArticlePath', $wikiID, $major,
-			array( 'lang' => $minor, 'site' => $major ) );
+			[ 'lang' => $minor, 'site' => $major ] );
 		return new WikiReference( $canonicalServer, $path, $server );
 	}
 
@@ -73,13 +73,8 @@ class WikiMap {
 	 * @return WikiReference|null WikiReference object or null if the wiki was not found
 	 */
 	private static function getWikiWikiReferenceFromSites( $wikiID ) {
-		static $siteStore = null;
-		if ( !$siteStore ) {
-			// Replace once T114471 got fixed and don't do the caching here.
-			$siteStore = SiteSQLStore::newInstance();
-		}
-
-		$site = $siteStore->getSite( $wikiID );
+		$siteLookup = \MediaWiki\MediaWikiServices::getInstance()->getSiteLookup();
+		$site = $siteLookup->getSite( $wikiID );
 
 		if ( !$site instanceof MediaWikiSite ) {
 			// Abort if not a MediaWikiSite, as this is about Wikis
@@ -221,10 +216,10 @@ class WikiReference {
 	 * @return string relative URL, without the server part.
 	 */
 	private function getLocalUrl( $page, $fragmentId = null ) {
-		$page = wfUrlEncode( str_replace( ' ', '_', $page ) );
+		$page = wfUrlencode( str_replace( ' ', '_', $page ) );
 
 		if ( is_string( $fragmentId ) && $fragmentId !== '' ) {
-			$page .= '#' . wfUrlEncode( $fragmentId );
+			$page .= '#' . wfUrlencode( $fragmentId );
 		}
 
 		return str_replace( '$1', $page, $this->mPath );

@@ -174,7 +174,7 @@ interface IDatabase {
 	public function writesOrCallbacksPending();
 
 	/**
-	 * Get the time spend running write queries for this
+	 * Get the time spend running write queries for this transaction
 	 *
 	 * High times could be due to scanning, updates, locking, and such
 	 *
@@ -182,6 +182,14 @@ interface IDatabase {
 	 * @since 1.26
 	 */
 	public function pendingWriteQueryDuration();
+
+	/**
+	 * Get the list of method names that did write queries for this transaction
+	 *
+	 * @return array
+	 * @since 1.27
+	 */
+	public function pendingWriteCallers();
 
 	/**
 	 * Is a connection to the database open?
@@ -464,7 +472,7 @@ interface IDatabase {
 	 * @return bool|mixed The value from the field, or false on failure.
 	 */
 	public function selectField(
-		$table, $var, $cond = '', $fname = __METHOD__, $options = array()
+		$table, $var, $cond = '', $fname = __METHOD__, $options = []
 	);
 
 	/**
@@ -486,7 +494,7 @@ interface IDatabase {
 	 * @since 1.25
 	 */
 	public function selectFieldValues(
-		$table, $var, $cond = '', $fname = __METHOD__, $options = array()
+		$table, $var, $cond = '', $fname = __METHOD__, $options = []
 	);
 
 	/**
@@ -512,9 +520,11 @@ interface IDatabase {
 	 * for use in field names (e.g. a.user_name).
 	 *
 	 * All of the table names given here are automatically run through
-	 * IDatabase::tableName(), which causes the table prefix (if any) to be
+	 * DatabaseBase::tableName(), which causes the table prefix (if any) to be
 	 * added, and various other table name mappings to be performed.
 	 *
+	 * Do not use untrusted user input as a table name. Alias names should
+	 * not have characters outside of the Basic multilingual plane.
 	 *
 	 * @param string|array $vars
 	 *
@@ -529,6 +539,7 @@ interface IDatabase {
 	 * If an expression is given, care must be taken to ensure that it is
 	 * DBMS-independent.
 	 *
+	 * Untrusted user input must not be passed to this parameter.
 	 *
 	 * @param string|array $conds
 	 *
@@ -555,6 +566,10 @@ interface IDatabase {
 	 *    - IDatabase::buildLike()
 	 *    - IDatabase::conditional()
 	 *
+	 * Untrusted user input is safe in the values of string keys, however untrusted
+	 * input must not be used in the array key names or in the values of numeric keys.
+	 * Escaping of untrusted input used in values of numeric keys should be done via
+	 * IDatabase::addQuotes()
 	 *
 	 * @param string|array $options
 	 *
@@ -620,8 +635,9 @@ interface IDatabase {
 	 *
 	 * The key of the array contains the table name or alias. The value is an
 	 * array with two elements, numbered 0 and 1. The first gives the type of
-	 * join, the second is an SQL fragment giving the join condition for that
-	 * table. For example:
+	 * join, the second is the same as the $conds parameter. Thus it can be
+	 * an SQL fragment, or an array where the string keys are equality and the
+	 * numeric keys are SQL fragments all AND'd together. For example:
 	 *
 	 *    array( 'page' => array( 'LEFT JOIN', 'page_latest=rev_id' ) )
 	 *
@@ -632,7 +648,7 @@ interface IDatabase {
 	 */
 	public function select(
 		$table, $vars, $conds = '', $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	);
 
 	/**
@@ -653,7 +669,7 @@ interface IDatabase {
 	 */
 	public function selectSQLText(
 		$table, $vars, $conds = '', $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	);
 
 	/**
@@ -671,7 +687,7 @@ interface IDatabase {
 	 * @return stdClass|bool
 	 */
 	public function selectRow( $table, $vars, $conds, $fname = __METHOD__,
-		$options = array(), $join_conds = array()
+		$options = [], $join_conds = []
 	);
 
 	/**
@@ -695,7 +711,7 @@ interface IDatabase {
 	 * @return int Row count
 	 */
 	public function estimateRowCount(
-		$table, $vars = '*', $conds = '', $fname = __METHOD__, $options = array()
+		$table, $vars = '*', $conds = '', $fname = __METHOD__, $options = []
 	);
 
 	/**
@@ -716,7 +732,7 @@ interface IDatabase {
 	 * @return int Row count
 	 */
 	public function selectRowCount(
-		$tables, $vars = '*', $conds = '', $fname = __METHOD__, $options = array(), $join_conds = array()
+		$tables, $vars = '*', $conds = '', $fname = __METHOD__, $options = [], $join_conds = []
 	);
 
 	/**
@@ -786,20 +802,20 @@ interface IDatabase {
 	 *     IDatabase::affectedRows().
 	 *
 	 * @param string $table Table name. This will be passed through
-	 *   IDatabase::tableName().
+	 *   DatabaseBase::tableName().
 	 * @param array $a Array of rows to insert
 	 * @param string $fname Calling function name (use __METHOD__) for logs/profiling
 	 * @param array $options Array of options
 	 *
 	 * @return bool
 	 */
-	public function insert( $table, $a, $fname = __METHOD__, $options = array() );
+	public function insert( $table, $a, $fname = __METHOD__, $options = [] );
 
 	/**
 	 * UPDATE wrapper. Takes a condition array and a SET array.
 	 *
 	 * @param string $table Name of the table to UPDATE. This will be passed through
-	 *   IDatabase::tableName().
+	 *   DatabaseBase::tableName().
 	 * @param array $values An array of values to SET. For each array element,
 	 *   the key gives the field name, and the value gives the data to set
 	 *   that field to. The data will be quoted by IDatabase::addQuotes().
@@ -813,7 +829,7 @@ interface IDatabase {
 	 *   - LOW_PRIORITY: MySQL-specific, see MySQL manual.
 	 * @return bool
 	 */
-	public function update( $table, $values, $conds, $fname = __METHOD__, $options = array() );
+	public function update( $table, $values, $conds, $fname = __METHOD__, $options = [] );
 
 	/**
 	 * Makes an encoded list of strings from an array
@@ -888,7 +904,7 @@ interface IDatabase {
 	 * @since 1.23
 	 */
 	public function buildGroupConcatField(
-		$delim, $table, $field, $conds = '', $join_conds = array()
+		$delim, $table, $field, $conds = '', $join_conds = []
 	);
 
 	/**
@@ -1012,7 +1028,7 @@ interface IDatabase {
 	 *
 	 * @since 1.22
 	 *
-	 * @param string $table Table name. This will be passed through IDatabase::tableName().
+	 * @param string $table Table name. This will be passed through DatabaseBase::tableName().
 	 * @param array $rows A single row or list of rows to insert
 	 * @param array $uniqueIndexes List of single field names or field name tuples
 	 * @param array $set An array of values to SET. For each array element, the
@@ -1090,7 +1106,7 @@ interface IDatabase {
 	 */
 	public function insertSelect( $destTable, $srcTable, $varMap, $conds,
 		$fname = __METHOD__,
-		$insertOptions = array(), $selectOptions = array()
+		$insertOptions = [], $selectOptions = []
 	);
 
 	/**
@@ -1175,14 +1191,13 @@ interface IDatabase {
 	public function wasReadOnlyError();
 
 	/**
-	 * Wait for the slave to catch up to a given master position.
+	 * Wait for the slave to catch up to a given master position
 	 *
 	 * @param DBMasterPos $pos
-	 * @param int $timeout The maximum number of seconds to wait for
-	 *   synchronisation
-	 * @return int Zero if the slave was past that position already,
+	 * @param int $timeout The maximum number of seconds to wait for synchronisation
+	 * @return int|null Zero if the slave was past that position already,
 	 *   greater than zero if we waited for some period of time, less than
-	 *   zero if we timed out.
+	 *   zero if it timed out, and null on error
 	 */
 	public function masterPosWait( DBMasterPos $pos, $timeout );
 
@@ -1211,6 +1226,8 @@ interface IDatabase {
 	 * after the database is updated so that the jobs will see the data when they actually run.
 	 * It can also be used for updates that easily cause deadlocks if locks are held too long.
 	 *
+	 * Updates will execute in the order they were enqueued.
+	 *
 	 * @param callable $callback
 	 * @since 1.20
 	 */
@@ -1223,6 +1240,8 @@ interface IDatabase {
 	 *
 	 * This is useful for updates that easily cause deadlocks if locks are held too long
 	 * but where atomicity is strongly desired for these updates and some related updates.
+	 *
+	 * Updates will execute in the order they were enqueued.
 	 *
 	 * @param callable $callback
 	 * @since 1.22
@@ -1269,6 +1288,34 @@ interface IDatabase {
 	public function endAtomic( $fname = __METHOD__ );
 
 	/**
+	 * Run a callback to do an atomic set of updates for this database
+	 *
+	 * The $callback takes the following arguments:
+	 *   - This database object
+	 *   - The value of $fname
+	 *
+	 * If any exception occurs in the callback, then rollback() will be called and the error will
+	 * be re-thrown. It may also be that the rollback itself fails with an exception before then.
+	 * In any case, such errors are expected to terminate the request, without any outside caller
+	 * attempting to catch errors and commit anyway. Note that any rollback undoes all prior
+	 * atomic section and uncommitted updates, which trashes the current request, requiring an
+	 * error to be displayed.
+	 *
+	 * This can be an alternative to explicit startAtomic()/endAtomic() calls.
+	 *
+	 * @see DatabaseBase::startAtomic
+	 * @see DatabaseBase::endAtomic
+	 *
+	 * @param string $fname Caller name (usually __METHOD__)
+	 * @param callable $callback Callback that issues DB updates
+	 * @throws DBError
+	 * @throws RuntimeException
+	 * @throws UnexpectedValueException
+	 * @since 1.27
+	 */
+	public function doAtomicSection( $fname, $callback );
+
+	/**
 	 * Begin a transaction. If a transaction is already in progress,
 	 * that transaction will be committed before the new transaction is started.
 	 *
@@ -1294,9 +1341,13 @@ interface IDatabase {
 	 * @param string $fname
 	 * @param string $flush Flush flag, set to 'flush' to disable warnings about
 	 *   explicitly committing implicit transactions, or calling commit when no
-	 *   transaction is in progress. This will silently break any ongoing
-	 *   explicit transaction. Only set the flush flag if you are sure that it
-	 *   is safe to ignore these warnings in your context.
+	 *   transaction is in progress.
+	 *
+	 *   This will trigger an exception if there is an ongoing explicit transaction.
+	 *
+	 *   Only set the flush flag if you are sure that these warnings are not applicable,
+	 *   and no explicit transactions are open.
+	 *
 	 * @throws DBUnexpectedError
 	 */
 	public function commit( $fname = __METHOD__, $flush = '' );
@@ -1453,8 +1504,8 @@ interface IDatabase {
 	 * Named locks are not related to transactions
 	 *
 	 * @param string $lockName Name of lock to aquire
-	 * @param string $method Name of method calling us
-	 * @param int $timeout
+	 * @param string $method Name of the calling method
+	 * @param int $timeout Acquisition timeout in seconds
 	 * @return bool
 	 */
 	public function lock( $lockName, $method, $timeout = 5 );
@@ -1465,13 +1516,32 @@ interface IDatabase {
 	 * Named locks are not related to transactions
 	 *
 	 * @param string $lockName Name of lock to release
-	 * @param string $method Name of method calling us
+	 * @param string $method Name of the calling method
 	 *
 	 * @return int Returns 1 if the lock was released, 0 if the lock was not established
 	 * by this thread (in which case the lock is not released), and NULL if the named
 	 * lock did not exist
 	 */
 	public function unlock( $lockName, $method );
+
+	/**
+	 * Acquire a named lock, flush any transaction, and return an RAII style unlocker object
+	 *
+	 * This is suitiable for transactions that need to be serialized using cooperative locks,
+	 * where each transaction can see each others' changes. Any transaction is flushed to clear
+	 * out stale REPEATABLE-READ snapshot data. Once the returned object falls out of PHP scope,
+	 * any transaction will be committed and the lock will be released.
+	 *
+	 * If the lock acquisition failed, then no transaction flush happens, and null is returned.
+	 *
+	 * @param string $lockKey Name of lock to release
+	 * @param string $fname Name of the calling method
+	 * @param int $timeout Acquisition timeout in seconds
+	 * @return ScopedCallback|null
+	 * @throws DBUnexpectedError
+	 * @since 1.27
+	 */
+	public function getScopedLockAndFlush( $lockKey, $fname, $timeout );
 
 	/**
 	 * Check to see if a named lock used by lock() use blocking queues

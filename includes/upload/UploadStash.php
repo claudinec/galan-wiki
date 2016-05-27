@@ -65,13 +65,13 @@ class UploadStash {
 	public $repo;
 
 	// array of initialized repo objects
-	protected $files = array();
+	protected $files = [];
 
 	// cache of the file metadata that's stored in the database
-	protected $fileMetadata = array();
+	protected $fileMetadata = [];
 
 	// fileprops cache
-	protected $fileProps = array();
+	protected $fileProps = [];
 
 	// current user
 	protected $user, $userId, $isLoggedIn;
@@ -257,7 +257,7 @@ class UploadStash {
 				$error = $storeStatus->getWarningsArray();
 				$error = reset( $error );
 				if ( !count( $error ) ) {
-					$error = array( 'unknown', 'no error recorded' );
+					$error = [ 'unknown', 'no error recorded' ];
 				}
 			}
 			// At this point, $error should contain the single "most important"
@@ -276,7 +276,7 @@ class UploadStash {
 
 		// insert the file metadata into the db.
 		wfDebug( __METHOD__ . " inserting $stashPath under $key\n" );
-		$dbw = $this->repo->getMasterDb();
+		$dbw = $this->repo->getMasterDB();
 
 		$serializedFileProps = serialize( $fileProps );
 		if ( strlen( $serializedFileProps ) > self::MAX_US_PROPS_SIZE ) {
@@ -287,7 +287,7 @@ class UploadStash {
 			$serializedFileProps = serialize( $fileProps );
 		}
 
-		$this->fileMetadata[$key] = array(
+		$this->fileMetadata[$key] = [
 			'us_id' => $dbw->nextSequenceValue( 'uploadstash_us_id_seq' ),
 			'us_user' => $this->userId,
 			'us_key' => $key,
@@ -304,7 +304,7 @@ class UploadStash {
 			'us_source_type' => $sourceType,
 			'us_timestamp' => $dbw->timestamp(),
 			'us_status' => 'finished'
-		);
+		];
 
 		$dbw->insert(
 			'uploadstash',
@@ -336,16 +336,16 @@ class UploadStash {
 		}
 
 		wfDebug( __METHOD__ . ' clearing all rows for user ' . $this->userId . "\n" );
-		$dbw = $this->repo->getMasterDb();
+		$dbw = $this->repo->getMasterDB();
 		$dbw->delete(
 			'uploadstash',
-			array( 'us_user' => $this->userId ),
+			[ 'us_user' => $this->userId ],
 			__METHOD__
 		);
 
 		# destroy objects.
-		$this->files = array();
-		$this->fileMetadata = array();
+		$this->files = [];
+		$this->fileMetadata = [];
 
 		return true;
 	}
@@ -364,14 +364,14 @@ class UploadStash {
 				. ' No user is logged in, files must belong to users' );
 		}
 
-		$dbw = $this->repo->getMasterDb();
+		$dbw = $this->repo->getMasterDB();
 
 		// this is a cheap query. it runs on the master so that this function
 		// still works when there's lag. It won't be called all that often.
 		$row = $dbw->selectRow(
 			'uploadstash',
 			'us_user',
-			array( 'us_key' => $key ),
+			[ 'us_key' => $key ],
 			__METHOD__
 		);
 
@@ -399,11 +399,11 @@ class UploadStash {
 		// Ensure we have the UploadStashFile loaded for this key
 		$this->getFile( $key, true );
 
-		$dbw = $this->repo->getMasterDb();
+		$dbw = $this->repo->getMasterDB();
 
 		$dbw->delete(
 			'uploadstash',
-			array( 'us_key' => $key ),
+			[ 'us_key' => $key ],
 			__METHOD__
 		);
 
@@ -430,11 +430,11 @@ class UploadStash {
 				. ' No user is logged in, files must belong to users' );
 		}
 
-		$dbr = $this->repo->getSlaveDb();
+		$dbr = $this->repo->getSlaveDB();
 		$res = $dbr->select(
 			'uploadstash',
 			'us_key',
-			array( 'us_user' => $this->userId ),
+			[ 'us_user' => $this->userId ],
 			__METHOD__
 		);
 
@@ -444,7 +444,7 @@ class UploadStash {
 		}
 
 		// finish the read before starting writes.
-		$keys = array();
+		$keys = [];
 		foreach ( $res as $row ) {
 			array_push( $keys, $row->us_key );
 		}
@@ -507,15 +507,15 @@ class UploadStash {
 		$dbr = null;
 		if ( $readFromDB === DB_MASTER ) {
 			// sometimes reading from the master is necessary, if there's replication lag.
-			$dbr = $this->repo->getMasterDb();
+			$dbr = $this->repo->getMasterDB();
 		} else {
-			$dbr = $this->repo->getSlaveDb();
+			$dbr = $this->repo->getSlaveDB();
 		}
 
 		$row = $dbr->selectRow(
 			'uploadstash',
 			'*',
-			array( 'us_key' => $key ),
+			[ 'us_key' => $key ],
 			__METHOD__
 		);
 

@@ -14,7 +14,7 @@ class EnhancedChangesListTest extends MediaWikiLangTestCase {
 	 */
 	private $testRecentChangesHelper;
 
-	public function __construct( $name = null, array $data = array(), $dataName = '' ) {
+	public function __construct( $name = null, array $data = [], $dataName = '' ) {
 		parent::__construct( $name, $data, $dataName );
 
 		$this->testRecentChangesHelper = new TestRecentChangesHelper();
@@ -121,7 +121,7 @@ class EnhancedChangesListTest extends MediaWikiLangTestCase {
 	 * @return RecentChange
 	 */
 	private function getEditChange( $timestamp ) {
-		$user = $this->getTestUser();
+		$user = $this->getMutableTestUser()->getUser();
 		$recentChange = $this->testRecentChangesHelper->makeEditRecentChange(
 			$user, 'Cat', $timestamp, 5, 191, 190, 0, 0
 		);
@@ -139,25 +139,12 @@ class EnhancedChangesListTest extends MediaWikiLangTestCase {
 		$wikiPage = new WikiPage( Title::newFromText( 'Category:Foo' ) );
 		$wikiPage->doEditContent( new WikitextContent( 'Some random text' ), 'category page created' );
 
-		$user = $this->getTestUser();
+		$user = $this->getMutableTestUser()->getUser();
 		$recentChange = $this->testRecentChangesHelper->makeCategorizationRecentChange(
 			$user, 'Category:Foo', $wikiPage->getId(), $thisId, $lastId, $timestamp
 		);
 
 		return $recentChange;
-	}
-
-	/**
-	 * @return User
-	 */
-	private function getTestUser() {
-		$user = User::newFromName( 'TestRecentChangesUser' );
-
-		if ( !$user->getId() ) {
-			$user->addToDatabase();
-		}
-
-		return $user;
 	}
 
 	private function createCategorizationLine( $recentChange ) {
@@ -168,7 +155,7 @@ class EnhancedChangesListTest extends MediaWikiLangTestCase {
 		$method = $reflection->getMethod( 'recentChangesBlockLine' );
 		$method->setAccessible( true );
 
-		return $method->invokeArgs( $enhancedChangesList, array( $cacheEntry ) );
+		return $method->invokeArgs( $enhancedChangesList, [ $cacheEntry ] );
 	}
 
 }

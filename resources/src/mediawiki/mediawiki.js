@@ -554,7 +554,7 @@
 		/**
 		 * Get a message object.
 		 *
-		 * Shorcut for `new mw.Message( mw.messages, key, parameters )`.
+		 * Shortcut for `new mw.Message( mw.messages, key, parameters )`.
 		 *
 		 * @see mw.Message
 		 * @param {string} key Key of message to get
@@ -597,7 +597,7 @@
 			 */
 
 			/**
-			 * Write a message the console's warning channel.
+			 * Write a message to the console's warning channel.
 			 * Actions not supported by the browser console are silently ignored.
 			 *
 			 * @param {...string} msg Messages to output to console
@@ -607,7 +607,7 @@
 				$.noop;
 
 			/**
-			 * Write a message the console's error channel.
+			 * Write a message to the console's error channel.
 			 *
 			 * Most browsers provide a stacktrace by default if the argument
 			 * is a caught Error object.
@@ -632,27 +632,21 @@
 				obj[ key ] = val;
 			} : function ( obj, key, val, msg ) {
 				msg = 'Use of "' + key + '" is deprecated.' + ( msg ? ( ' ' + msg ) : '' );
-				// Support: IE8
-				// Can throw on Object.defineProperty.
-				try {
-					Object.defineProperty( obj, key, {
-						configurable: true,
-						enumerable: true,
-						get: function () {
-							mw.track( 'mw.deprecate', key );
-							mw.log.warn( msg );
-							return val;
-						},
-						set: function ( newVal ) {
-							mw.track( 'mw.deprecate', key );
-							mw.log.warn( msg );
-							val = newVal;
-						}
-					} );
-				} catch ( err ) {
-					// Fallback to creating a copy of the value to the object.
-					obj[ key ] = val;
-				}
+				Object.defineProperty( obj, key, {
+					configurable: true,
+					enumerable: true,
+					get: function () {
+						mw.track( 'mw.deprecate', key );
+						mw.log.warn( msg );
+						return val;
+					},
+					set: function ( newVal ) {
+						mw.track( 'mw.deprecate', key );
+						mw.log.warn( msg );
+						val = newVal;
+					}
+				} );
+
 			};
 
 			return log;
@@ -720,6 +714,7 @@
 			 *             'group': 'somegroup', (or) null
 			 *             'source': 'local', (or) 'anotherwiki'
 			 *             'skip': 'return !!window.Example', (or) null
+			 *             'module': export Object
 			 *
 			 *             // Set from execute() or mw.loader.state()
 			 *             'state': 'registered', 'loaded', 'loading', 'ready', 'error', or 'missing'
@@ -773,6 +768,10 @@
 				// List of modules which will be loaded as when ready
 				batch = [],
 
+				// Pending queueModuleScript() requests
+				handlingPendingRequests = false,
+				pendingRequests = [],
+
 				// List of modules to be loaded
 				queue = [],
 
@@ -797,24 +796,26 @@
 				 */
 				jobs = [],
 
-				// Selector cache for the marker element. Use getMarker() to get/use the marker!
-				$marker = null,
+				// For getMarker()
+				marker = null,
 
-				// For #addEmbeddedCSS
+				// For addEmbeddedCSS()
 				cssBuffer = '',
 				cssBufferTimer = null,
-				cssCallbacks = $.Callbacks();
+				cssCallbacks = $.Callbacks(),
+				isIEto9 = 'documentMode' in document && document.documentMode <= 9,
+				isIE9 = document.documentMode === 9;
 
 			function getMarker() {
-				if ( !$marker ) {
+				if ( !marker ) {
 					// Cache
-					$marker = $( 'meta[name="ResourceLoaderDynamicStyles"]' );
-					if ( !$marker.length ) {
-						mw.log( 'No <meta name="ResourceLoaderDynamicStyles"> found, inserting dynamically' );
-						$marker = $( '<meta>' ).attr( 'name', 'ResourceLoaderDynamicStyles' ).appendTo( 'head' );
+					marker = document.querySelector( 'meta[name="ResourceLoaderDynamicStyles"]' );
+					if ( !marker ) {
+						mw.log( 'Create <meta name="ResourceLoaderDynamicStyles"> dynamically' );
+						marker = $( '<meta>' ).attr( 'name', 'ResourceLoaderDynamicStyles' ).appendTo( 'head' )[ 0 ];
 					}
 				}
-				return $marker;
+				return marker;
 			}
 
 			/**
@@ -822,16 +823,16 @@
 			 *
 			 * @private
 			 * @param {string} text CSS text
-			 * @param {HTMLElement|jQuery} [nextnode=document.head] The element where the style tag
+			 * @param {Node} [nextNode] The element where the style tag
 			 *  should be inserted before
 			 * @return {HTMLElement} Reference to the created style element
 			 */
-			function newStyleTag( text, nextnode ) {
+			function newStyleTag( text, nextNode ) {
 				var s = document.createElement( 'style' );
 				// Support: IE
-				// Must attach to document before setting cssText (bug 33305)
-				if ( nextnode ) {
-					$( nextnode ).before( s );
+				// Must attach style element to the document before setting cssText (T35305)
+				if ( nextNode && nextNode.parentNode ) {
+					nextNode.parentNode.insertBefore( s, nextNode );
 				} else {
 					document.getElementsByTagName( 'head' )[ 0 ].appendChild( s );
 				}
@@ -902,29 +903,25 @@
 					cssBuffer = '';
 				}
 
-				// By default, always create a new <style>. Appending text to a <style>
-				// tag is bad as it means the contents have to be re-parsed (bug 45810).
+				// By default, always create a new <style>. Appending text to a <style> tag is
+				// is a performance anti-pattern as it requires CSS to be reparsed (T47810).
 				//
-				// Except, of course, in IE 9 and below. In there we default to re-using and
-				// appending to a <style> tag due to the IE stylesheet limit (bug 31676).
-				if ( 'documentMode' in document && document.documentMode <= 9 ) {
-
-					$style = getMarker().prev();
-					// Verify that the element before the marker actually is a
-					// <style> tag and one that came from ResourceLoader
-					// (not some other style tag or even a `<meta>` or `<script>`).
+				// Support: IE 6-9
+				// Try to re-use existing <style> tags due to the IE stylesheet limit (T33676).
+				if ( isIEto9 ) {
+					$style = $( getMarker() ).prev();
+					// Verify that the element before the marker actually is a <style> tag created
+					// by mw.loader (not some other style tag, or e.g. a <meta> tag).
 					if ( $style.data( 'ResourceLoaderDynamicStyleTag' ) ) {
-						// There's already a dynamic <style> tag present and
-						// we are able to append more to it.
-						styleEl = $style.get( 0 );
-						// Support: IE6-10
+						styleEl = $style[ 0 ];
+						// Support: IE 6-10
 						if ( styleEl.styleSheet ) {
 							try {
-								// Support: IE9
-								// We can't do styleSheet.cssText += cssText, since IE9 mangles this property on
-								// write, dropping @media queries from the CSS text. If we read it and used its
-								// value, we would accidentally apply @media-specific styles to all media. (T108727)
-								if ( document.documentMode === 9 ) {
+								// Support: IE 9
+								// We can't do styleSheet.cssText += cssText in IE9 because it mangles cssText on
+								// write (removes @media queries). If we read it and used its value, we'd
+								// accidentally apply @media-specific styles to all media. (T108727)
+								if ( isIE9 ) {
 									newCssText = $style.data( 'ResourceLoaderDynamicStyleTag' ) + cssText;
 									styleEl.styleSheet.cssText = newCssText;
 									$style.data( 'ResourceLoaderDynamicStyleTag', newCssText );
@@ -940,16 +937,17 @@
 						fireCallbacks();
 						return;
 					}
+					// Else: No existing tag to reuse. Continue below and create the first one.
 				}
 
 				$style = $( newStyleTag( cssText, getMarker() ) );
 
-				if ( document.documentMode === 9 ) {
-					// Support: IE9
-					// Preserve original CSS text because IE9 mangles it on write
-					$style.data( 'ResourceLoaderDynamicStyleTag', cssText );
-				} else {
-					$style.data( 'ResourceLoaderDynamicStyleTag', true );
+				if ( isIEto9 ) {
+					if ( isIE9 ) {
+						$style.data( 'ResourceLoaderDynamicStyleTag', cssText );
+					} else {
+						$style.data( 'ResourceLoaderDynamicStyleTag', true );
+					}
 				}
 
 				fireCallbacks();
@@ -1010,7 +1008,7 @@
 			/**
 			 * A module has entered state 'ready', 'error', or 'missing'. Automatically update
 			 * pending jobs and modules that depend upon this module. If the given module failed,
-			 * propagate the 'error' state up the dependency tree. Otherwise, go ahead an execute
+			 * propagate the 'error' state up the dependency tree. Otherwise, go ahead and execute
 			 * all jobs/modules now having their dependencies satisfied.
 			 *
 			 * Jobs that depend on a failed module, will have their error callback ran (if any).
@@ -1183,6 +1181,43 @@
 			}
 
 			/**
+			 * Queue the loading and execution of a script for a particular module.
+			 *
+			 * @private
+			 * @param {string} src URL of the script
+			 * @param {string} [moduleName] Name of currently executing module
+			 * @return {jQuery.Promise}
+			 */
+			function queueModuleScript( src, moduleName ) {
+				var r = $.Deferred();
+
+				pendingRequests.push( function () {
+					if ( moduleName && hasOwn.call( registry, moduleName ) ) {
+						window.require = mw.loader.require;
+						window.module = registry[ moduleName ].module;
+					}
+					addScript( src ).always( function () {
+						// Clear environment
+						delete window.require;
+						delete window.module;
+						r.resolve();
+
+						// Start the next one (if any)
+						if ( pendingRequests[ 0 ] ) {
+							pendingRequests.shift()();
+						} else {
+							handlingPendingRequests = false;
+						}
+					} );
+				} );
+				if ( !handlingPendingRequests && pendingRequests[ 0 ] ) {
+					handlingPendingRequests = true;
+					pendingRequests.shift()();
+				}
+				return r.promise();
+			}
+
+			/**
 			 * Utility function for execute()
 			 *
 			 * @ignore
@@ -1191,7 +1226,7 @@
 				var el = document.createElement( 'link' );
 				// Support: IE
 				// Insert in document *before* setting href
-				getMarker().before( el );
+				$( getMarker() ).before( el );
 				el.rel = 'stylesheet';
 				if ( media && media !== 'all' ) {
 					el.media = media;
@@ -1232,7 +1267,7 @@
 							handlePending( module );
 						};
 						nestedAddScript = function ( arr, callback, i ) {
-							// Recursively call addScript() in its own callback
+							// Recursively call queueModuleScript() in its own callback
 							// for each element of arr.
 							if ( i >= arr.length ) {
 								// We're at the end of the array
@@ -1240,7 +1275,7 @@
 								return;
 							}
 
-							addScript( arr[ i ] ).always( function () {
+							queueModuleScript( arr[ i ], module ).always( function () {
 								nestedAddScript( arr, callback, i + 1 );
 							} );
 						};
@@ -1255,10 +1290,11 @@
 							} else if ( $.isFunction( script ) ) {
 								// Pass jQuery twice so that the signature of the closure which wraps
 								// the script can bind both '$' and 'jQuery'.
-								script( $, $ );
+								script( $, $, mw.loader.require, registry[ module ].module );
 								markModuleReady();
+
 							} else if ( typeof script === 'string' ) {
-								// Site and user modules are a legacy scripts that run in the global scope.
+								// Site and user modules are legacy scripts that run in the global scope.
 								// This is transported as a string instead of a function to avoid needing
 								// to use string manipulation to undo the function wrapper.
 								if ( module === 'user' ) {
@@ -1378,7 +1414,7 @@
 			}
 
 			/**
-			 * Adds a dependencies to the queue with optional callbacks to be run
+			 * Adds all dependencies to the queue with optional callbacks to be run
 			 * when the dependencies are ready or fail
 			 *
 			 * @private
@@ -1748,6 +1784,11 @@
 					}
 					// List the module as registered
 					registry[ module ] = {
+						// Exposed to execute() for mw.loader.implement() closures.
+						// Import happens via require().
+						module: {
+							exports: {}
+						},
 						version: version !== undefined ? String( version ) : '',
 						dependencies: [],
 						group: typeof group === 'string' ? group : null,
@@ -1771,10 +1812,8 @@
 				 * When #load or #using requests one or more modules, the server
 				 * response contain calls to this function.
 				 *
-				 * All arguments are required.
-				 *
 				 * @param {string} module Name of module
-				 * @param {Function|Array} script Function with module code or Array of URLs to
+				 * @param {Function|Array} [script] Function with module code or Array of URLs to
 				 *  be used as the src attribute of a new `<script>` tag.
 				 * @param {Object} [style] Should follow one of the following patterns:
 				 *
@@ -2018,6 +2057,26 @@
 				},
 
 				/**
+				 * Get the exported value of a module.
+				 *
+				 * Module provide this value via their local `module.exports`.
+				 *
+				 * @since 1.27
+				 * @return {Array}
+				 */
+				require: function ( moduleName ) {
+					var state = mw.loader.getState( moduleName );
+
+					// Only ready mudules can be required
+					if ( state !== 'ready' ) {
+						// Module may've forgotten to declare a dependency
+						throw new Error( 'Module "' + moduleName + '" is not loaded.' );
+					}
+
+					return registry[ moduleName ].module.exports;
+				},
+
+				/**
 				 * @inheritdoc mw.inspect#runReports
 				 * @method
 				 */
@@ -2042,9 +2101,7 @@
 					// Whether the store is in use on this page.
 					enabled: null,
 
-					// Modules whose string representation exceeds 100 kB are ineligible
-					// for storage due to bug T66721.
-					MODULE_SIZE_MAX: 100000,
+					MODULE_SIZE_MAX: 100 * 1000,
 
 					// The contents of the store, mapping '[module name]@[version]' keys
 					// to module implementations.
@@ -2115,8 +2172,15 @@
 							return;
 						}
 
-						if ( !mw.config.get( 'wgResourceLoaderStorageEnabled' ) ) {
+						if (
+							// Disabled because localStorage quotas are tight and (in Firefox's case)
+							// shared by multiple origins.
+							// See T66721, and <https://bugzilla.mozilla.org/show_bug.cgi?id=1064466>.
+							/Firefox|Opera/.test( navigator.userAgent ) ||
+
 							// Disabled by configuration.
+							!mw.config.get( 'wgResourceLoaderStorageEnabled' )
+						) {
 							// Clear any previous store to free up space. (T66721)
 							mw.loader.store.clear();
 							mw.loader.store.enabled = false;
@@ -2258,7 +2322,9 @@
 					 */
 					clear: function () {
 						mw.loader.store.items = {};
-						localStorage.removeItem( mw.loader.store.getStoreKey() );
+						try {
+							localStorage.removeItem( mw.loader.store.getStoreKey() );
+						} catch ( ignored ) {}
 					},
 
 					/**
@@ -2558,7 +2624,7 @@
 	/**
 	 * Log a message to window.console, if possible.
 	 *
-	 * Useful to force logging of some  errors that are otherwise hard to detect (i.e., this logs
+	 * Useful to force logging of some errors that are otherwise hard to detect (i.e., this logs
 	 * also in production mode). Gets console references in each invocation instead of caching the
 	 * reference, so that debugging tools loaded later are supported (e.g. Firebug Lite in IE).
 	 *
@@ -2585,9 +2651,9 @@
 			msg += ( e ? ':' : '.' );
 			console.log( msg );
 
-			// If we have an exception object, log it to the error channel to trigger a
-			// proper stacktraces in browsers that support it. No fallback as we have no browsers
-			// that don't support error(), but do support log().
+			// If we have an exception object, log it to the error channel to trigger
+			// proper stacktraces in browsers that support it. No fallback as we have
+			// no browsers that don't support error(), but do support log().
 			if ( e && console.error ) {
 				console.error( String( e ), e );
 			}

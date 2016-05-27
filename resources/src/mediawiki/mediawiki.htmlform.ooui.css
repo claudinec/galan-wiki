@@ -1,18 +1,7 @@
 /* OOUIHTMLForm styles */
 
 .mw-htmlform-ooui-wrapper {
-	width: 50em;
 	margin: 1em 0;
-}
-
-.oo-ui-fieldLayout.mw-htmlform-ooui-header-empty,
-.oo-ui-fieldLayout.mw-htmlform-ooui-header-empty .oo-ui-fieldLayout-body {
-	display: none;
-}
-
-.oo-ui-fieldLayout.mw-htmlform-ooui-header-errors {
-	/* Override 'display: none' from above */
-	display: block;
 }
 
 .mw-htmlform-ooui .mw-htmlform-submit-buttons {
@@ -28,4 +17,8 @@
 .mw-htmlform-ooui .mw-htmlform-matrix tr td.first {
 	margin-right: 5%;
 	width: 39%;
+}
+
+.oo-ui-fieldLayout .oo-ui-fieldLayout.oo-ui-fieldLayout-align-inline {
+  margin-bottom: 0;
 }

@@ -38,6 +38,10 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 		parent::__construct( 'Emailuser' );
 	}
 
+	public function doesWrites() {
+		return true;
+	}
+
 	public function getDescription() {
 		$target = self::getTarget( $this->mTarget );
 		if ( !$target instanceof User ) {
@@ -48,8 +52,8 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 	}
 
 	protected function getFormFields() {
-		return array(
-			'From' => array(
+		return [
+			'From' => [
 				'type' => 'info',
 				'raw' => 1,
 				'default' => Linker::link(
@@ -58,8 +62,8 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 				),
 				'label-message' => 'emailfrom',
 				'id' => 'mw-emailuser-sender',
-			),
-			'To' => array(
+			],
+			'To' => [
 				'type' => 'info',
 				'raw' => 1,
 				'default' => Linker::link(
@@ -68,12 +72,12 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 				),
 				'label-message' => 'emailto',
 				'id' => 'mw-emailuser-recipient',
-			),
-			'Target' => array(
+			],
+			'Target' => [
 				'type' => 'hidden',
 				'default' => $this->mTargetObj->getName(),
-			),
-			'Subject' => array(
+			],
+			'Subject' => [
 				'type' => 'text',
 				'default' => $this->msg( 'defemailsubject',
 					$this->getUser()->getName() )->inContentLanguage()->text(),
@@ -81,20 +85,20 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 				'maxlength' => 200,
 				'size' => 60,
 				'required' => true,
-			),
-			'Text' => array(
+			],
+			'Text' => [
 				'type' => 'textarea',
 				'rows' => 20,
 				'cols' => 80,
 				'label-message' => 'emailmessage',
 				'required' => true,
-			),
-			'CCMe' => array(
+			],
+			'CCMe' => [
 				'type' => 'check',
 				'label-message' => 'emailccme',
 				'default' => $this->getUser()->getBoolOption( 'ccmeonemails' ),
-			),
-		);
+			],
+		];
 	}
 
 	public function execute( $par ) {
@@ -150,17 +154,21 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 
 		$this->mTargetObj = $ret;
 
+		// Set the 'relevant user' in the skin, so it displays links like Contributions,
+		// User logs, UserRights, etc.
+		$this->getSkin()->setRelevantUser( $this->mTargetObj );
+
 		$context = new DerivativeContext( $this->getContext() );
 		$context->setTitle( $this->getPageTitle() ); // Remove subpage
 		$form = new HTMLForm( $this->getFormFields(), $context );
 		// By now we are supposed to be sure that $this->mTarget is a user name
 		$form->addPreText( $this->msg( 'emailpagetext', $this->mTarget )->parse() );
 		$form->setSubmitTextMsg( 'emailsend' );
-		$form->setSubmitCallback( array( __CLASS__, 'uiSubmit' ) );
+		$form->setSubmitCallback( [ __CLASS__, 'uiSubmit' ] );
 		$form->setWrapperLegendMsg( 'email-legend' );
 		$form->loadData();
 
-		if ( !Hooks::run( 'EmailUserForm', array( &$form ) ) ) {
+		if ( !Hooks::run( 'EmailUserForm', [ &$form ] ) ) {
 			return;
 		}
 
@@ -243,8 +251,8 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 
 		$hookErr = false;
 
-		Hooks::run( 'UserCanSendEmail', array( &$user, &$hookErr ) );
-		Hooks::run( 'EmailUserPermissionsErrors', array( $user, $editToken, &$hookErr ) );
+		Hooks::run( 'UserCanSendEmail', [ &$user, &$hookErr ] );
+		Hooks::run( 'EmailUserPermissionsErrors', [ $user, $editToken, &$hookErr ] );
 
 		if ( $hookErr ) {
 			return $hookErr;
@@ -261,28 +269,32 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 	 */
 	protected function userForm( $name ) {
 		$this->getOutput()->addModules( 'mediawiki.userSuggest' );
-		$string = Xml::openElement(
-			'form',
-			array( 'method' => 'get', 'action' => wfScript(), 'id' => 'askusername' )
-		) .
+		$string = Html::openElement(
+				'form',
+				[ 'method' => 'get', 'action' => wfScript(), 'id' => 'askusername' ]
+			) .
 			Html::hidden( 'title', $this->getPageTitle()->getPrefixedText() ) .
-			Xml::openElement( 'fieldset' ) .
+			Html::openElement( 'fieldset' ) .
 			Html::rawElement( 'legend', null, $this->msg( 'emailtarget' )->parse() ) .
-			Xml::inputLabel(
+			Html::label(
 				$this->msg( 'emailusername' )->text(),
+				'emailusertarget'
+			) . '&#160;' .
+			Html::input(
 				'target',
-				'emailusertarget',
-				30,
 				$name,
-				array(
+				'text',
+				[
+					'id' => 'emailusertarget',
 					'class' => 'mw-autocomplete-user',  // used by mediawiki.userSuggest
 					'autofocus' => true,
-				)
+					'size' => 30,
+				]
 			) .
 			' ' .
-			Xml::submitButton( $this->msg( 'emailusernamesubmit' )->text() ) .
-			Xml::closeElement( 'fieldset' ) .
-			Xml::closeElement( 'form' ) . "\n";
+			Html::submitButton( $this->msg( 'emailusernamesubmit' )->text(), [] ) .
+			Html::closeElement( 'fieldset' ) .
+			Html::closeElement( 'form' ) . "\n";
 
 		return $string;
 	}
@@ -329,7 +341,7 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 			$from->name, $to->name )->inContentLanguage()->text();
 
 		$error = '';
-		if ( !Hooks::run( 'EmailUser', array( &$to, &$from, &$subject, &$text, &$error ) ) ) {
+		if ( !Hooks::run( 'EmailUser', [ &$to, &$from, &$subject, &$text, &$error ] ) ) {
 			return $error;
 		}
 
@@ -365,9 +377,9 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 			$replyTo = null;
 		}
 
-		$status = UserMailer::send( $to, $mailFrom, $subject, $text, array(
+		$status = UserMailer::send( $to, $mailFrom, $subject, $text, [
 			'replyTo' => $replyTo,
-		) );
+		] );
 
 		if ( !$status->isGood() ) {
 			return $status;
@@ -380,16 +392,34 @@ class SpecialEmailUser extends UnlistedSpecialPage {
 					$target->getName(), $subject )->text();
 
 				// target and sender are equal, because this is the CC for the sender
-				Hooks::run( 'EmailUserCC', array( &$from, &$from, &$cc_subject, &$text ) );
+				Hooks::run( 'EmailUserCC', [ &$from, &$from, &$cc_subject, &$text ] );
 
 				$ccStatus = UserMailer::send( $from, $from, $cc_subject, $text );
 				$status->merge( $ccStatus );
 			}
 
-			Hooks::run( 'EmailUserComplete', array( $to, $from, $subject, $text ) );
+			Hooks::run( 'EmailUserComplete', [ $to, $from, $subject, $text ] );
 
 			return $status;
 		}
+	}
+
+	/**
+	 * Return an array of subpages beginning with $search that this special page will accept.
+	 *
+	 * @param string $search Prefix to search for
+	 * @param int $limit Maximum number of results to return (usually 10)
+	 * @param int $offset Number of results to skip (usually 0)
+	 * @return string[] Matching subpages
+	 */
+	public function prefixSearchSubpages( $search, $limit, $offset ) {
+		$user = User::newFromName( $search );
+		if ( !$user ) {
+			// No prefix suggestion for invalid user
+			return [];
+		}
+		// Autocomplete subpage as user list - public to allow caching
+		return UserNamePrefixSearch::search( 'public', $search, $limit, $offset );
 	}
 
 	protected function getGroupName() {

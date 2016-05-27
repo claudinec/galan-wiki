@@ -35,8 +35,10 @@ class LBFactorySingle extends LBFactory {
 	public function __construct( array $conf ) {
 		parent::__construct( $conf );
 
-		$conf['readOnlyReason'] = $this->readOnlyReason;
-		$this->lb = new LoadBalancerSingle( $conf );
+		$this->lb = new LoadBalancerSingle( [
+			'readOnlyReason' => $this->readOnlyReason,
+			'trxProfiler' => $this->trxProfiler
+		] + $conf );
 	}
 
 	/**
@@ -77,8 +79,8 @@ class LBFactorySingle extends LBFactory {
 	 * @param string|callable $callback
 	 * @param array $params
 	 */
-	public function forEachLB( $callback, array $params = array() ) {
-		call_user_func_array( $callback, array_merge( array( $this->lb ), $params ) );
+	public function forEachLB( $callback, array $params = [] ) {
+		call_user_func_array( $callback, array_merge( [ $this->lb ], $params ) );
 	}
 }
 
@@ -95,16 +97,17 @@ class LoadBalancerSingle extends LoadBalancer {
 	public function __construct( array $params ) {
 		$this->db = $params['connection'];
 
-		parent::__construct( array(
-			'servers' => array(
-				array(
+		parent::__construct( [
+			'servers' => [
+				[
 					'type' => $this->db->getType(),
 					'host' => $this->db->getServer(),
 					'dbname' => $this->db->getDBname(),
 					'load' => 1,
-				)
-			)
-		) );
+				]
+			],
+			'trxProfiler' => $this->trxProfiler
+		] );
 
 		if ( isset( $params['readOnlyReason'] ) ) {
 			$this->db->setLBInfo( 'readOnlyReason', $params['readOnlyReason'] );

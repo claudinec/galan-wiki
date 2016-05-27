@@ -41,7 +41,7 @@ class SearchExactMatchRescorer {
 	 */
 	public function rescore( $search, $namespaces, $srchres, $limit ) {
 		// Pick namespace (based on PrefixSearch::defaultSearchBackend)
-		$ns = in_array( NS_MAIN, $namespaces ) ? NS_MAIN : $namespaces[0];
+		$ns = in_array( NS_MAIN, $namespaces ) ? NS_MAIN : reset( $namespaces );
 		$t = Title::newFromText( $search, $ns );
 		if ( !$t || !$t->exists() ) {
 			// No exact match so just return the search results
@@ -101,7 +101,7 @@ class SearchExactMatchRescorer {
 	 *   that is a redirect to it.
 	 */
 	private function redirectTargetsToRedirect( $titles ) {
-		$result = array();
+		$result = [];
 		foreach ( $titles as $key => $titleText ) {
 			$title = Title::newFromText( $titleText );
 			if ( !$title || !$title->isRedirect() ) {

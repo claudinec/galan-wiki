@@ -49,7 +49,8 @@ class BackupReader extends Maintenance {
 			? 'ok'
 			: '(disabled; requires PHP bzip2 module)';
 
-		$this->mDescription = <<<TEXT
+		$this->addDescription(
+			<<<TEXT
 This script reads pages from an XML file as produced from Special:Export or
 dumpBackup.php, and saves them into the current wiki.
 
@@ -61,13 +62,16 @@ Compressed XML files may be read directly:
 Note that for very large data sets, importDump.php may be slow; there are
 alternate methods which can be much faster for full site restoration:
 <https://www.mediawiki.org/wiki/Manual:Importing_XML_dumps>
-TEXT;
+TEXT
+		);
 		$this->stderr = fopen( "php://stderr", "wt" );
 		$this->addOption( 'report',
 			'Report position and speed after every n pages processed', false, true );
 		$this->addOption( 'namespaces',
 			'Import only the pages from namespaces belonging to the list of ' .
 			'pipe-separated namespace names or namespace indexes', false, true );
+		$this->addOption( 'rootpage', 'Pages will be imported as subpages of the specified page',
+			false, true );
 		$this->addOption( 'dry-run', 'Parse dump without actually importing pages' );
 		$this->addOption( 'debug', 'Output extra verbose debug information' );
 		$this->addOption( 'uploads', 'Process file upload data if included (experimental)' );
@@ -114,7 +118,7 @@ TEXT;
 
 			return;
 		}
-		$this->nsFilter = array_unique( array_map( array( $this, 'getNsIndex' ), $namespaces ) );
+		$this->nsFilter = array_unique( array_map( [ $this, 'getNsIndex' ], $namespaces ) );
 	}
 
 	private function getNsIndex( $namespace ) {
@@ -199,9 +203,9 @@ TEXT;
 			if ( !$this->dryRun ) {
 				// bluuuh hack
 				// call_user_func( $this->uploadCallback, $revision );
-				$dbw = wfGetDB( DB_MASTER );
+				$dbw = $this->getDB( DB_MASTER );
 
-				return $dbw->deadlockLoop( array( $revision, 'importUpload' ) );
+				return $dbw->deadlockLoop( [ $revision, 'importUpload' ] );
 			}
 		}
 
@@ -285,13 +289,21 @@ TEXT;
 		if ( $this->hasOption( 'no-updates' ) ) {
 			$importer->setNoUpdates( true );
 		}
-		$importer->setPageCallback( array( &$this, 'reportPage' ) );
+		if ( $this->hasOption( 'rootpage' ) ) {
+			$statusRootPage = $importer->setTargetRootPage( $this->getOption( 'rootpage' ) );
+			if ( !$statusRootPage->isGood() ) {
+				// Die here so that it doesn't print "Done!"
+				$this->error( $statusRootPage->getMessage()->text(), 1 );
+				return false;
+			}
+		}
+		$importer->setPageCallback( [ $this, 'reportPage' ] );
 		$this->importCallback = $importer->setRevisionCallback(
-			array( &$this, 'handleRevision' ) );
+			[ $this, 'handleRevision' ] );
 		$this->uploadCallback = $importer->setUploadCallback(
-			array( &$this, 'handleUpload' ) );
+			[ $this, 'handleUpload' ] );
 		$this->logItemCallback = $importer->setLogItemCallback(
-			array( &$this, 'handleLogItem' ) );
+			[ $this, 'handleLogItem' ] );
 		if ( $this->uploads ) {
 			$importer->setImportUploads( true );
 		}

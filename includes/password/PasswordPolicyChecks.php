@@ -98,18 +98,22 @@ class PasswordPolicyChecks {
 	 * @return Status error if username and password match, and policy is true
 	 */
 	public static function checkPasswordCannotMatchBlacklist( $policyVal, User $user, $password ) {
-		static $blockedLogins = array(
+		static $blockedLogins = [
 			'Useruser' => 'Passpass', 'Useruser1' => 'Passpass1', # r75589
 			'Apitestsysop' => 'testpass', 'Apitestuser' => 'testpass' # r75605
-		);
+		];
 
 		$status = Status::newGood();
 		$username = $user->getName();
-		if ( $policyVal
-			&& isset( $blockedLogins[$username] )
-			&& $password == $blockedLogins[$username]
-		) {
-			$status->error( 'password-login-forbidden' );
+		if ( $policyVal ) {
+			if ( isset( $blockedLogins[$username] ) && $password == $blockedLogins[$username] ) {
+				$status->error( 'password-login-forbidden' );
+			}
+
+			// Example from ApiChangeAuthenticationRequest
+			if ( $password === 'ExamplePassword' ) {
+				$status->error( 'password-login-forbidden' );
+			}
 		}
 		return $status;
 	}
@@ -117,11 +121,11 @@ class PasswordPolicyChecks {
 	/**
 	 * Ensure that password isn't in top X most popular passwords
 	 *
-	 * @param $policyVal int Cut off to use. Will automatically shrink to the max
+	 * @param int $policyVal Cut off to use. Will automatically shrink to the max
 	 *   supported for error messages if set to more than max number of passwords on file,
 	 *   so you can use the PHP_INT_MAX constant here safely.
-	 * @param $user User
-	 * @param $password String
+	 * @param User $user
+	 * @param string $password
 	 * @since 1.27
 	 * @return Status
 	 */
@@ -136,7 +140,7 @@ class PasswordPolicyChecks {
 			// in the common password file. Also check '' for people who use
 			// just whitespace.
 			$sitename = $langEn->lc( trim( $wgSitename ) );
-			$hardcodedCommonPasswords = array( '', 'wiki', 'mediawiki', $sitename );
+			$hardcodedCommonPasswords = [ '', 'wiki', 'mediawiki', $sitename ];
 			if ( in_array( $passwordKey, $hardcodedCommonPasswords ) ) {
 				$status->error( 'passwordtoopopular' );
 				return $status;

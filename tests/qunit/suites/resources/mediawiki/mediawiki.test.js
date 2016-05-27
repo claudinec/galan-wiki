@@ -760,6 +760,11 @@
 		} );
 	} );
 
+	QUnit.test( 'mw.loader.implement( empty )', 1, function ( assert ) {
+		mw.loader.implement( 'test.empty' );
+		assert.strictEqual( mw.loader.getState( 'test.empty' ), 'ready' );
+	} );
+
 	QUnit.test( 'mw.loader with broken indirect dependency', 4, function ( assert ) {
 		// don't emit an error event
 		this.sandbox.stub( mw, 'track' );
@@ -1078,6 +1083,68 @@
 				'"remove" removes all equal by reference. ' +
 				'"remove" is silent if the function is not found'
 		);
+	} );
+
+	QUnit.test( 'mw.loader.require', 6, function ( assert ) {
+		var module1, module2, module3, module4;
+
+		mw.loader.register( [
+			[ 'test.module.require1', '0' ],
+			[ 'test.module.require2', '0' ],
+			[ 'test.module.require3', '0' ],
+			[ 'test.module.require4', '0', [ 'test.module.require3' ] ]
+		] );
+		mw.loader.implement( 'test.module.require1', function () {} );
+		mw.loader.implement( 'test.module.require2', function ( $, jQuery, require, module ) {
+			module.exports = 1;
+		} );
+		mw.loader.implement( 'test.module.require3', function ( $, jQuery, require, module ) {
+			module.exports = function () {
+				return 'hello world';
+			};
+		} );
+		mw.loader.implement( 'test.module.require4', function ( $, jQuery, require, module ) {
+			var other = require( 'test.module.require3' );
+			module.exports = {
+				pizza: function () {
+					return other();
+				}
+			};
+		} );
+		module1 = mw.loader.require( 'test.module.require1' );
+		module2 = mw.loader.require( 'test.module.require2' );
+		module3 = mw.loader.require( 'test.module.require3' );
+		module4 = mw.loader.require( 'test.module.require4' );
+
+		assert.strictEqual( typeof module1, 'object', 'export of module with no export' );
+		assert.strictEqual( module2, 1, 'export a number' );
+		assert.strictEqual( module3(), 'hello world', 'export a function' );
+		assert.strictEqual( typeof module4.pizza, 'function', 'export an object' );
+		assert.strictEqual( module4.pizza(), 'hello world', 'module can require other modules' );
+
+		assert.throws( function () {
+			mw.loader.require( '_badmodule' );
+		}, /is not loaded/, 'Requesting non-existent modules throws error.' );
+	} );
+
+	QUnit.asyncTest( 'mw.loader require in debug mode', 1, function ( assert ) {
+		var path = mw.config.get( 'wgScriptPath' );
+		mw.loader.register( [
+			[ 'test.require.define', '0' ],
+			[ 'test.require.callback', '0', [ 'test.require.define' ] ]
+		] );
+		mw.loader.implement( 'test.require.callback', [ QUnit.fixurl( path + '/tests/qunit/data/requireCallMwLoaderTestCallback.js' ) ] );
+		mw.loader.implement( 'test.require.define', [ QUnit.fixurl( path + '/tests/qunit/data/defineCallMwLoaderTestCallback.js' ) ] );
+
+		mw.loader.using( 'test.require.callback', function () {
+			QUnit.start();
+			var exported = mw.loader.require( 'test.require.callback' );
+			assert.strictEqual( exported, 'Require worked.Define worked.',
+				'module.exports worked in debug mode' );
+		}, function () {
+			QUnit.start();
+			assert.ok( false, 'Error callback fired while loader.using "test.require.callback" module' );
+		} );
 	} );
 
 }( mediaWiki, jQuery ) );

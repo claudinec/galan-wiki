@@ -64,7 +64,7 @@ class ResourceLoaderContext {
 
 		// List of modules
 		$modules = $request->getVal( 'modules' );
-		$this->modules = $modules ? self::expandModuleNames( $modules ) : array();
+		$this->modules = $modules ? self::expandModuleNames( $modules ) : [];
 
 		// Various parameters
 		$this->user = $request->getVal( 'user' );
@@ -97,7 +97,7 @@ class ResourceLoaderContext {
 	 * @return array Array of module names
 	 */
 	public static function expandModuleNames( $modules ) {
-		$retval = array();
+		$retval = [];
 		$exploded = explode( '|', $modules );
 		foreach ( $exploded as $group ) {
 			if ( strpos( $group, ',' ) === false ) {
@@ -132,7 +132,7 @@ class ResourceLoaderContext {
 		return new self( new ResourceLoader(
 			ConfigFactory::getDefaultInstance()->makeConfig( 'main' ),
 			LoggerFactory::getInstance( 'resourceloader' )
-		), new FauxRequest( array() ) );
+		), new FauxRequest( [] ) );
 	}
 
 	/**
@@ -212,24 +212,32 @@ class ResourceLoaderContext {
 	}
 
 	/**
+	 * Get a Message object with context set.  See wfMessage for parameters.
+	 *
+	 * @since 1.27
+	 * @param mixed ...
+	 * @return Message
+	 */
+	public function msg() {
+		return call_user_func_array( 'wfMessage', func_get_args() )
+			->inLanguage( $this->getLanguage() );
+	}
+
+	/**
 	 * Get the possibly-cached User object for the specified username
 	 *
 	 * @since 1.25
-	 * @return User|bool false if a valid object cannot be created
+	 * @return User
 	 */
 	public function getUserObj() {
 		if ( $this->userObj === null ) {
 			$username = $this->getUser();
 			if ( $username ) {
-				// Optimize: Avoid loading a new User object if possible
-				global $wgUser;
-				if ( is_object( $wgUser ) && $wgUser->getName() === $username ) {
-					$this->userObj = $wgUser;
-				} else {
-					$this->userObj = User::newFromName( $username );
-				}
+				// Use provided username if valid, fallback to anonymous user
+				$this->userObj = User::newFromName( $username ) ?: new User;
 			} else {
-				$this->userObj = new User; // Anonymous user
+				// Anonymous user
+				$this->userObj = new User;
 			}
 		}
 
@@ -356,7 +364,7 @@ class ResourceLoaderContext {
 	 */
 	public function getHash() {
 		if ( !isset( $this->hash ) ) {
-			$this->hash = implode( '|', array(
+			$this->hash = implode( '|', [
 				// Module content vary
 				$this->getLanguage(),
 				$this->getSkin(),
@@ -369,7 +377,7 @@ class ResourceLoaderContext {
 				$this->getImage(),
 				$this->getVariant(),
 				$this->getFormat(),
-			) );
+			] );
 		}
 		return $this->hash;
 	}

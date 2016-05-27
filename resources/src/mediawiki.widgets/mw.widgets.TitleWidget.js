@@ -6,6 +6,16 @@
  */
 ( function ( $, mw ) {
 
+	var interwikiPrefixesPromise = new mw.Api().get( {
+			action: 'query',
+			meta: 'siteinfo',
+			siprop: 'interwikimap'
+		} ).then( function ( data ) {
+			return $.map( data.query.interwikimap, function ( interwiki ) {
+				return interwiki.prefix;
+			} );
+		} );
+
 	/**
 	 * Mixin for title widgets
 	 *
@@ -23,12 +33,11 @@
 	 * @cfg {boolean} [showRedlink] Show red link to exact match if it doesn't exist
 	 * @cfg {boolean} [showImages] Show page images
 	 * @cfg {boolean} [showDescriptions] Show page descriptions
-	 * @cfg {boolean} [validateTitle=true] Whether the input must be a valid title
+	 * @cfg {boolean} [validateTitle=true] Whether the input must be a valid title (if set to true,
+	 *  the widget will marks itself red for invalid inputs, including an empty query).
 	 * @cfg {Object} [cache] Result cache which implements a 'set' method, taking keyed values as an argument
 	 */
 	mw.widgets.TitleWidget = function MwWidgetsTitleWidget( config ) {
-		var widget = this;
-
 		// Config initialization
 		config = $.extend( {
 			maxLength: 255,
@@ -50,16 +59,6 @@
 
 		// Initialization
 		this.$element.addClass( 'mw-widget-titleWidget' );
-		this.interwikiPrefixes = [];
-		this.interwikiPrefixesPromise = new mw.Api().get( {
-			action: 'query',
-			meta: 'siteinfo',
-			siprop: 'interwikimap'
-		} ).done( function ( data ) {
-			$.each( data.query.interwikimap, function ( index, interwiki ) {
-				widget.interwikiPrefixes.push( interwiki.prefix );
-			} );
-		} );
 	};
 
 	/* Setup */
@@ -107,12 +106,12 @@
 			} };
 
 		if ( mw.Title.newFromText( query ) ) {
-			return this.interwikiPrefixesPromise.then( function () {
+			return interwikiPrefixesPromise.then( function ( interwikiPrefixes ) {
 				var params,
 					interwiki = query.substring( 0, query.indexOf( ':' ) );
 				if (
 					interwiki && interwiki !== '' &&
-					widget.interwikiPrefixes.indexOf( interwiki ) !== -1
+					interwikiPrefixes.indexOf( interwiki ) !== -1
 				) {
 					return $.Deferred().resolve( { query: {
 						pages: [ {
@@ -183,7 +182,7 @@
 				disambiguation: OO.getProp( suggestionPage, 'pageprops', 'disambiguation' ) !== undefined,
 				imageUrl: OO.getProp( suggestionPage, 'thumbnail', 'source' ),
 				description: OO.getProp( suggestionPage, 'terms', 'description' ),
-				// sort index
+				// Sort index
 				index: suggestionPage.index
 			};
 
@@ -199,7 +198,9 @@
 					missing: false,
 					redirect: true,
 					disambiguation: false,
-					description: mw.msg( 'mw-widgets-titleinput-description-redirect', suggestionPage.title )
+					description: mw.msg( 'mw-widgets-titleinput-description-redirect', suggestionPage.title ),
+					// Sort index, just below its target
+					index: suggestionPage.index + 0.5
 				};
 				titles.push( redirects[ i ] );
 			}

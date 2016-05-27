@@ -46,7 +46,7 @@ class LoadMonitorMySQL implements LoadMonitor {
 	public function getLagTimes( $serverIndexes, $wiki ) {
 		if ( count( $serverIndexes ) == 1 && reset( $serverIndexes ) == 0 ) {
 			# Single server only, just return zero without caching
-			return array( 0 => 0 );
+			return [ 0 => 0 ];
 		}
 
 		$key = $this->getLagTimeCacheKey();
@@ -86,20 +86,35 @@ class LoadMonitorMySQL implements LoadMonitor {
 			return $staleValue['lagTimes'];
 		}
 
-		$lagTimes = array();
+		$lagTimes = [];
 		foreach ( $serverIndexes as $i ) {
-			if ( $i == 0 ) { # Master
-				$lagTimes[$i] = 0;
+			if ( $i == $this->parent->getWriterIndex() ) {
+				$lagTimes[$i] = 0; // master always has no lag
 				continue;
 			}
+
 			$conn = $this->parent->getAnyOpenConnection( $i );
-			if ( $conn !== false ) {
-				$lagTimes[$i] = $conn->getLag();
+			if ( $conn ) {
+				$close = false; // already open
+			} else {
+				$conn = $this->parent->openConnection( $i, $wiki );
+				$close = true; // new connection
+			}
+
+			if ( !$conn ) {
+				$lagTimes[$i] = false;
+				$host = $this->parent->getServerName( $i );
+				wfDebugLog( 'replication', __METHOD__ . ": host $host (#$i) is unreachable" );
 				continue;
 			}
-			$conn = $this->parent->openConnection( $i, $wiki );
-			if ( $conn !== false ) {
-				$lagTimes[$i] = $conn->getLag();
+
+			$lagTimes[$i] = $conn->getLag();
+			if ( $lagTimes[$i] === false ) {
+				$host = $this->parent->getServerName( $i );
+				wfDebugLog( 'replication', __METHOD__ . ": host $host (#$i) is not replicating?" );
+			}
+
+			if ( $close ) {
 				# Close the connection to avoid sleeper connections piling up.
 				# Note that the caller will pick one of these DBs and reconnect,
 				# which is slightly inefficient, but this only matters for the lag
@@ -109,7 +124,7 @@ class LoadMonitorMySQL implements LoadMonitor {
 		}
 
 		# Add a timestamp key so we know when it was cached
-		$value = array( 'lagTimes' => $lagTimes, 'timestamp' => microtime( true ) );
+		$value = [ 'lagTimes' => $lagTimes, 'timestamp' => microtime( true ) ];
 		$this->mainCache->set( $key, $value, $staleTTL );
 		$this->srvCache->set( $key, $value, $staleTTL );
 		wfDebugLog( 'replication', __METHOD__ . ": re-calculated lag times ($key)" );
@@ -124,7 +139,10 @@ class LoadMonitorMySQL implements LoadMonitor {
 	}
 
 	private function getLagTimeCacheKey() {
+		$writerIndex = $this->parent->getWriterIndex();
 		// Lag is per-server, not per-DB, so key on the master DB name
-		return $this->srvCache->makeGlobalKey( 'lag-times', $this->parent->getServerName( 0 ) );
+		return $this->srvCache->makeGlobalKey(
+			'lag-times', $this->parent->getServerName( $writerIndex )
+		);
 	}
 }

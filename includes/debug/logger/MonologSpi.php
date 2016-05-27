@@ -126,15 +126,13 @@ class MonologSpi implements Spi {
 	 */
 	protected $config;
 
-
 	/**
 	 * @param array $config Configuration data.
 	 */
 	public function __construct( array $config ) {
-		$this->config = array();
+		$this->config = [];
 		$this->mergeConfig( $config );
 	}
-
 
 	/**
 	 * Merge additional configuration data into the configuration.
@@ -153,7 +151,6 @@ class MonologSpi implements Spi {
 		$this->reset();
 	}
 
-
 	/**
 	 * Reset internal caches.
 	 *
@@ -161,14 +158,13 @@ class MonologSpi implements Spi {
 	 * be no need to flush the caches.
 	 */
 	public function reset() {
-		$this->singletons = array(
-			'loggers'    => array(),
-			'handlers'   => array(),
-			'formatters' => array(),
-			'processors' => array(),
-		);
+		$this->singletons = [
+			'loggers'    => [],
+			'handlers'   => [],
+			'formatters' => [],
+			'processors' => [],
+		];
 	}
-
 
 	/**
 	 * Get a logger instance.
@@ -195,7 +191,6 @@ class MonologSpi implements Spi {
 		return $this->singletons['loggers'][$channel];
 	}
 
-
 	/**
 	 * Create a logger.
 	 * @param string $channel Logger channel
@@ -207,7 +202,7 @@ class MonologSpi implements Spi {
 
 		if ( isset( $spec['calls'] ) ) {
 			foreach ( $spec['calls'] as $method => $margs ) {
-				call_user_func_array( array( $obj, $method ), $margs );
+				call_user_func_array( [ $obj, $method ], $margs );
 			}
 		}
 
@@ -225,7 +220,6 @@ class MonologSpi implements Spi {
 		return $obj;
 	}
 
-
 	/**
 	 * Create or return cached processor.
 	 * @param string $name Processor name
@@ -239,7 +233,6 @@ class MonologSpi implements Spi {
 		}
 		return $this->singletons['processors'][$name];
 	}
-
 
 	/**
 	 * Create or return cached handler.
@@ -262,7 +255,6 @@ class MonologSpi implements Spi {
 		}
 		return $this->singletons['handlers'][$name];
 	}
-
 
 	/**
 	 * Create or return cached formatter.

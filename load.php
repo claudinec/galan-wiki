@@ -24,22 +24,26 @@
 
 use MediaWiki\Logger\LoggerFactory;
 
-require __DIR__ . '/includes/WebStart.php';
+// This endpoint is supposed to be independent of request cookies and other
+// details of the session. Enforce this constraint with respect to session use.
+define( 'MW_NO_SESSION', 1 );
 
+require __DIR__ . '/includes/WebStart.php';
 
 // URL safety checks
 if ( !$wgRequest->checkUrlExtension() ) {
 	return;
 }
 
-// Respond to resource loading request.
-// foo()->bar() syntax is not supported in PHP4, and this file needs to *parse* in PHP4.
-$configFactory = ConfigFactory::getDefaultInstance();
+// Set up ResourceLoader
 $resourceLoader = new ResourceLoader(
-	$configFactory->makeConfig( 'main' ),
+	ConfigFactory::getDefaultInstance()->makeConfig( 'main' ),
 	LoggerFactory::getInstance( 'resourceloader' )
 );
-$resourceLoader->respond( new ResourceLoaderContext( $resourceLoader, $wgRequest ) );
+$context = new ResourceLoaderContext( $resourceLoader, $wgRequest );
+
+// Respond to ResourceLoader request
+$resourceLoader->respond( $context );
 
 Profiler::instance()->setTemplated( true );
 

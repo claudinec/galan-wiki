@@ -73,7 +73,6 @@ class LanguageFi extends Language {
 				break;
 			case 'illative':
 				# Double the last letter and add 'n'
-				# mb_substr has a compatibility function in GlobalFunctions.php
 				$word = $word . mb_substr( $word, -1 ) . 'n';
 				break;
 			case 'inessive':
@@ -85,10 +84,10 @@ class LanguageFi extends Language {
 
 	/**
 	 * @param string $str
-	 * @param bool $forContent
+	 * @param User $user User object to use timezone from or null for $wgUser
 	 * @return string
 	 */
-	function translateBlockExpiry( $str, $forContent = false ) {
+	function translateBlockExpiry( $str, User $user = null ) {
 		/*
 			'ago', 'now', 'today', 'this', 'next',
 			'first', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth',
@@ -102,7 +101,7 @@ class LanguageFi extends Language {
 				'jul:heinäkuu,aug:elokuu,sep:syyskuu,oct:lokakuu,nov:marraskuu,' .
 				dec:joulukuu,sept:syyskuu';
 		*/
-		$weekds = array(
+		$weekds = [
 			'monday' => 'maanantai',
 			'tuesday' => 'tiistai',
 			'wednesday' => 'keskiviikko',
@@ -146,7 +145,7 @@ class LanguageFi extends Language {
 			'year' => 'vuosi',
 			'infinite' => 'ikuisesti',
 			'indefinite' => 'ikuisesti'
-		);
+		];
 
 		$final = '';
 		$tokens = explode( ' ', $str );
