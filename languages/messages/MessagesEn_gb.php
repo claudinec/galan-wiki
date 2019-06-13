@@ -8,10 +8,11 @@
  *
  */
 
+$fallback = 'en';
+
 $specialPageAliases = [
 	'Uncategorizedcategories'   => [ 'UncategorisedCategories' ],
 	'Uncategorizedimages'       => [ 'UncategorisedFiles', 'UncategorisedImages' ],
 	'Uncategorizedpages'        => [ 'UncategorisedPages' ],
 	'Uncategorizedtemplates'    => [ 'UncategorisedTemplates' ],
 ];
-

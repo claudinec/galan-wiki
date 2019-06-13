@@ -12,7 +12,7 @@
 $fallback = 'ru';
 
 $separatorTransformTable = [
-	',' => "\xc2\xa0", # nbsp
+	',' => "\u{00A0}", # nbsp
 	'.' => ','
 ];
 
@@ -42,4 +42,3 @@ $namespaceNames = [
 $namespaceGenderAliases = [];
 
 $linkTrail = '/^([a-zабвгдеёжзийклмнопрстуфхцчшщъыьэюяӀ1“»]+)(.*)$/sDu';
-

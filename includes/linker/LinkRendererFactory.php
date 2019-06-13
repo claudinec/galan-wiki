@@ -16,11 +16,12 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @license GPL-2.0+
  * @author Kunal Mehta <legoktm@member.fsf.org>
  */
 namespace MediaWiki\Linker;
 
+use LinkCache;
+use NamespaceInfo;
 use TitleFormatter;
 use User;
 
@@ -36,17 +37,33 @@ class LinkRendererFactory {
 	private $titleFormatter;
 
 	/**
-	 * @param TitleFormatter $titleFormatter
+	 * @var LinkCache
 	 */
-	public function __construct( TitleFormatter $titleFormatter ) {
+	private $linkCache;
+
+	/**
+	 * @var NamespaceInfo
+	 */
+	private $nsInfo;
+
+	/**
+	 * @param TitleFormatter $titleFormatter
+	 * @param LinkCache $linkCache
+	 * @param NamespaceInfo $nsInfo
+	 */
+	public function __construct(
+		TitleFormatter $titleFormatter, LinkCache $linkCache, NamespaceInfo $nsInfo
+	) {
 		$this->titleFormatter = $titleFormatter;
+		$this->linkCache = $linkCache;
+		$this->nsInfo = $nsInfo;
 	}
 
 	/**
 	 * @return LinkRenderer
 	 */
 	public function create() {
-		return new LinkRenderer( $this->titleFormatter );
+		return new LinkRenderer( $this->titleFormatter, $this->linkCache, $this->nsInfo );
 	}
 
 	/**

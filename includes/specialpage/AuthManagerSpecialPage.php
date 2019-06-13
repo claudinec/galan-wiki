@@ -4,7 +4,6 @@ use MediaWiki\Auth\AuthenticationRequest;
 use MediaWiki\Auth\AuthenticationResponse;
 use MediaWiki\Auth\AuthManager;
 use MediaWiki\Logger\LoggerFactory;
-use MediaWiki\Session\SessionManager;
 use MediaWiki\Session\Token;
 
 /**
@@ -44,9 +43,9 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Change the form descriptor that determines how a field will look in the authentication form.
 	 * Called from fieldInfoToFormDescriptor().
 	 * @param AuthenticationRequest[] $requests
-	 * @param string $fieldInfo Field information array (union of all
+	 * @param array $fieldInfo Field information array (union of all
 	 *    AuthenticationRequest::getFieldInfo() responses).
-	 * @param array $formDescriptor HTMLForm descriptor. The special key 'weight' can be set to
+	 * @param array &$formDescriptor HTMLForm descriptor. The special key 'weight' can be set to
 	 *    change the order of the fields.
 	 * @param string $action Authentication type (one of the AuthManager::ACTION_* constants)
 	 * @return bool
@@ -71,7 +70,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Used to preserve POST data over a HTTP redirect.
 	 *
 	 * @param array $data
-	 * @param bool $wasPosted
+	 * @param bool|null $wasPosted
 	 */
 	protected function setRequest( array $data, $wasPosted = null ) {
 		$request = $this->getContext()->getRequest();
@@ -158,7 +157,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 				if ( $request->wasPosted() ) {
 					// unique ID in case the same special page is open in multiple browser tabs
 					$uniqueId = MWCryptRand::generateHex( 6 );
-					$key = $key . ':' . $uniqueId;
+					$key .= ':' . $uniqueId;
 
 					$queryParams = [ 'authUniqueId' => $uniqueId ] + $queryParams;
 					$authData = array_diff_key( $request->getValues(),
@@ -182,7 +181,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 
 		$uniqueId = $request->getVal( 'authUniqueId' );
 		if ( $uniqueId ) {
-			$key = $key . ':' . $uniqueId;
+			$key .= ':' . $uniqueId;
 			$authData = $authManager->getAuthenticationSessionData( $key );
 			if ( $authData ) {
 				$authManager->removeAuthenticationSessionData( $key );
@@ -199,13 +198,12 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * @param string $subPage Subpage of the special page.
 	 * @return string an AuthManager::ACTION_* constant.
 	 */
-	protected function getDefaultAction( $subPage ) {
-		throw new BadMethodCallException( 'Subclass did not implement getDefaultAction' );
-	}
+	abstract protected function getDefaultAction( $subPage );
 
 	/**
 	 * Return custom message key.
 	 * Allows subclasses to customize messages.
+	 * @param string $defaultKey
 	 * @return string
 	 */
 	protected function messageKey( $defaultKey ) {
@@ -225,7 +223,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Load or initialize $authAction, $authRequests and $subPage.
 	 * Subclasses should call this from execute() or otherwise ensure the variables are initialized.
 	 * @param string $subPage Subpage of the special page.
-	 * @param string $authAction Override auth action specified in request (this is useful
+	 * @param string|null $authAction Override auth action specified in request (this is useful
 	 *    when the form needs to be changed from <action> to <action>_CONTINUE after a successful
 	 *    authentication step)
 	 * @param bool $reset Regenerate the requests even if a cached version is available
@@ -256,7 +254,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 
 		$allReqs = AuthManager::singleton()->getAuthenticationRequests(
 			$this->authAction, $this->getUser() );
-		$this->authRequests = array_filter( $allReqs, function ( $req ) use ( $subPage ) {
+		$this->authRequests = array_filter( $allReqs, function ( $req ) {
 			return !in_array( get_class( $req ), $this->getRequestBlacklist(), true );
 		} );
 	}
@@ -375,7 +373,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 				$req = reset( $requests );
 				$status = $authManager->allowsAuthenticationDataChange( $req );
 				Hooks::run( 'ChangeAuthenticationDataAudit', [ $req, $status ] );
-				if ( !$status->isOK() ) {
+				if ( !$status->isGood() ) {
 					return AuthenticationResponse::newFail( $status->getMessage() );
 				}
 				$authManager->changeAuthenticationData( $req );
@@ -434,11 +432,11 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 				$status = Status::newFatal( new RawMessage( '$1', $status ) );
 			} elseif ( is_array( $status ) ) {
 				if ( is_string( reset( $status ) ) ) {
-					$status = call_user_func_array( 'Status::newFatal', $status );
+					$status = Status::newFatal( ...$status );
 				} elseif ( is_array( reset( $status ) ) ) {
 					$status = Status::newGood();
 					foreach ( $status as $message ) {
-						call_user_func_array( [ $status, 'fatal' ], $message );
+						$status->fatal( ...$message );
 					}
 				} else {
 					throw new UnexpectedValueException( 'invalid HTMLForm::trySubmit() return value: '
@@ -456,9 +454,9 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 				// passed to AuthManager. Normally we would display the form with an error message,
 				// but for the data we received via the redirect flow that would not be helpful at all.
 				// Let's just submit the data to AuthManager directly instead.
-				LoggerFactory::getInstance( 'authmanager' )
+				LoggerFactory::getInstance( 'authentication' )
 					->warning( 'Validation error on return', [ 'data' => $form->mFieldData,
-						'status' => $status->getWikiText() ] );
+						'status' => $status->getWikiText( false, false, 'en' ) ] );
 				$status = $this->handleFormSubmit( $form->mFieldData );
 			}
 		}
@@ -476,7 +474,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	/**
 	 * Submit handler callback for HTMLForm
 	 * @private
-	 * @param $data array Submitted data
+	 * @param array $data Submitted data
 	 * @return Status
 	 */
 	public function handleFormSubmit( $data ) {
@@ -537,7 +535,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 		$form->setAction( $this->getFullTitle()->getFullURL( $this->getPreservedParams() ) );
 		$form->addHiddenField( $this->getTokenName(), $this->getToken()->toString() );
 		$form->addHiddenField( 'authAction', $this->authAction );
-		$form->suppressDefaultSubmit( !$this->needsSubmitButton( $formDescriptor ) );
+		$form->suppressDefaultSubmit( !$this->needsSubmitButton( $requests ) );
 
 		return $form;
 	}
@@ -555,29 +553,52 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	}
 
 	/**
-	 * Returns true if the form has fields which take values. If all available providers use the
-	 * redirect flow, the form might contain nothing but submit buttons, in which case we should
-	 * not add an extra submit button which does nothing.
+	 * Returns true if the form built from the given AuthenticationRequests needs a submit button.
+	 * Providers using redirect flow (e.g. Google login) need their own submit buttons; if using
+	 * one of those custom buttons is the only way to proceed, there is no point in displaying the
+	 * default button which won't do anything useful.
 	 *
-	 * @param array $formDescriptor A HTMLForm descriptor
+	 * @param AuthenticationRequest[] $requests An array of AuthenticationRequests from which the
+	 *  form will be built
 	 * @return bool
 	 */
-	protected function needsSubmitButton( $formDescriptor ) {
-		return (bool)array_filter( $formDescriptor, function ( $item ) {
-			$class = false;
-			if ( array_key_exists( 'class', $item ) ) {
-				$class = $item['class'];
-			} elseif ( array_key_exists( 'type', $item ) ) {
-				$class = HTMLForm::$typeMappings[$item['type']];
+	protected function needsSubmitButton( array $requests ) {
+		$customSubmitButtonPresent = false;
+
+		// Secondary and preauth providers always need their data; they will not care what button
+		// is used, so they can be ignored. So can OPTIONAL buttons createdby primary providers;
+		// that's the point in being optional. Se we need to check whether all primary providers
+		// have their own buttons and whether there is at least one button present.
+		foreach ( $requests as $req ) {
+			if ( $req->required === AuthenticationRequest::PRIMARY_REQUIRED ) {
+				if ( $this->hasOwnSubmitButton( $req ) ) {
+					$customSubmitButtonPresent = true;
+				} else {
+					return true;
+				}
 			}
-			return !in_array( $class, [ 'HTMLInfoField', 'HTMLSubmitField' ], true );
-		} );
+		}
+		return !$customSubmitButtonPresent;
+	}
+
+	/**
+	 * Checks whether the given AuthenticationRequest has its own submit button.
+	 * @param AuthenticationRequest $req
+	 * @return bool
+	 */
+	protected function hasOwnSubmitButton( AuthenticationRequest $req ) {
+		foreach ( $req->getFieldInfo() as $field => $info ) {
+			if ( $info['type'] === 'button' ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
 	 * Adds a sequential tabindex starting from 1 to all form elements. This way the user can
 	 * use the tab key to traverse the form without having to step through all links and such.
-	 * @param $formDescriptor
+	 * @param array &$formDescriptor
 	 */
 	protected function addTabIndex( &$formDescriptor ) {
 		$i = 1;
@@ -588,7 +609,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 			} elseif ( array_key_exists( 'type', $definition ) ) {
 				$class = HTMLForm::$typeMappings[$definition['type']];
 			}
-			if ( $class !== 'HTMLInfoField' ) {
+			if ( $class !== HTMLInfoField::class ) {
 				$definition['tabindex'] = $i;
 				$i++;
 			}
@@ -646,6 +667,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Maps an authentication field configuration for a single field (as returned by
 	 * AuthenticationRequest::getFieldInfo()) to a HTMLForm field descriptor.
 	 * @param array $singleFieldInfo
+	 * @param string $fieldName
 	 * @return array
 	 */
 	protected static function mapSingleFieldInfo( $singleFieldInfo, $fieldName ) {
@@ -657,7 +679,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 		];
 
 		if ( $type === 'submit' && isset( $singleFieldInfo['label'] ) ) {
-			$descriptor['default'] = wfMessage( $singleFieldInfo['label'] )->plain();
+			$descriptor['default'] = $singleFieldInfo['label']->plain();
 		} elseif ( $type !== 'submit' ) {
 			$descriptor += array_filter( [
 				// help-message is omitted as it is usually not really useful for a web interface
@@ -666,7 +688,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 
 			if ( isset( $singleFieldInfo['options'] ) ) {
 				$descriptor['options'] = array_flip( array_map( function ( $message ) {
-					/** @var $message Message */
+					/** @var Message $message */
 					return $message->parse();
 				}, $singleFieldInfo['options'] ) );
 			}
@@ -687,8 +709,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Sort the fields of a form descriptor by their 'weight' property. (Fields with higher weight
 	 * are shown closer to the bottom; weight defaults to 0. Negative weight is allowed.)
 	 * Keep order if weights are equal.
-	 * @param array $formDescriptor
-	 * @return array
+	 * @param array &$formDescriptor
 	 */
 	protected static function sortFormDescriptorFields( array &$formDescriptor ) {
 		$i = 0;
@@ -696,8 +717,8 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 			$field['__index'] = $i++;
 		}
 		uasort( $formDescriptor, function ( $first, $second ) {
-			return self::getField( $first, 'weight', 0 ) - self::getField( $second, 'weight', 0 )
-				?: $first['__index'] - $second['__index'];
+			return self::getField( $first, 'weight', 0 ) <=> self::getField( $second, 'weight', 0 )
+				?: $first['__index'] <=> $second['__index'];
 		} );
 		foreach ( $formDescriptor as &$field ) {
 			unset( $field['__index'] );
@@ -708,7 +729,7 @@ abstract class AuthManagerSpecialPage extends SpecialPage {
 	 * Get an array value, or a default if it does not exist.
 	 * @param array $array
 	 * @param string $fieldName
-	 * @param mixed $default
+	 * @param mixed|null $default
 	 * @return mixed
 	 */
 	protected static function getField( array $array, $fieldName, $default = null ) {

@@ -1,3 +1,5 @@
+/* stylelint-disable selector-class-pattern */
+
 .env-check {
 	font-size: 90%;
 	margin: 1em 0 1em 2.5em;
@@ -10,18 +12,18 @@
 .config-block {
 	margin-top: 2em;
 	display: block;
-
 }
 
 .config-block-label {
 	display: block;
-	margin-bottom: .2em;
+	margin-bottom: 0.2em;
 }
 
-.config-block-label label, .config-label {
+.config-block-label label,
+.config-label {
 	font-weight: bold;
-	padding-right: .5em;
-	padding-top: .2em;
+	padding-right: 0.5em;
+	padding-top: 0.2em;
 }
 
 .config-block-elements {
@@ -131,7 +133,7 @@
 .btn-install {
 	font-weight: bold;
 	font-size: 110%;
-	padding: .2em .3em;
+	padding: 0.2em 0.3em;
 }
 
 .success-message {
@@ -151,8 +153,8 @@
 }
 
 .config-plainlink a {
-	background: none !important;
-	padding: 0 !important;
+	background: none !important; /* stylelint-disable-line declaration-no-important */
+	padding: 0 !important; /* stylelint-disable-line declaration-no-important */
 }
 
 .config-download-link {
@@ -173,6 +175,11 @@
 	min-width: 20em;
 }
 
+/* Hide empty live-log textarea */
+#config-live-log textarea:empty {
+	display: none;
+}
+
 /* tooltip styles */
 .config-help-field-hint {
 	display: none;
@@ -184,7 +191,7 @@
 	background-position: left center;
 	background-repeat: no-repeat;
 	cursor: pointer;
-	font-size: .8em;
+	font-size: 0.8em;
 	text-decoration: underline;
 	color: #0645ad;
 }

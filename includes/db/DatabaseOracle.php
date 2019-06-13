@@ -21,166 +21,15 @@
  * @ingroup Database
  */
 
-/**
- * The oci8 extension is fairly weak and doesn't support oci_num_rows, among
- * other things. We use a wrapper class to handle that and other
- * Oracle-specific bits, like converting column names back to lowercase.
- * @ingroup Database
- */
-class ORAResult {
-	private $rows;
-	private $cursor;
-	private $nrows;
-
-	private $columns = [];
-
-	private function array_unique_md( $array_in ) {
-		$array_out = [];
-		$array_hashes = [];
-
-		foreach ( $array_in as $item ) {
-			$hash = md5( serialize( $item ) );
-			if ( !isset( $array_hashes[$hash] ) ) {
-				$array_hashes[$hash] = $hash;
-				$array_out[] = $item;
-			}
-		}
-
-		return $array_out;
-	}
-
-	/**
-	 * @param DatabaseBase $db
-	 * @param resource $stmt A valid OCI statement identifier
-	 * @param bool $unique
-	 */
-	function __construct( &$db, $stmt, $unique = false ) {
-		$this->db =& $db;
-
-		$this->nrows = oci_fetch_all( $stmt, $this->rows, 0, -1, OCI_FETCHSTATEMENT_BY_ROW | OCI_NUM );
-		if ( $this->nrows === false ) {
-			$e = oci_error( $stmt );
-			$db->reportQueryError( $e['message'], $e['code'], '', __METHOD__ );
-			$this->free();
-
-			return;
-		}
-
-		if ( $unique ) {
-			$this->rows = $this->array_unique_md( $this->rows );
-			$this->nrows = count( $this->rows );
-		}
-
-		if ( $this->nrows > 0 ) {
-			foreach ( $this->rows[0] as $k => $v ) {
-				$this->columns[$k] = strtolower( oci_field_name( $stmt, $k + 1 ) );
-			}
-		}
-
-		$this->cursor = 0;
-		oci_free_statement( $stmt );
-	}
-
-	public function free() {
-		unset( $this->db );
-	}
-
-	public function seek( $row ) {
-		$this->cursor = min( $row, $this->nrows );
-	}
-
-	public function numRows() {
-		return $this->nrows;
-	}
-
-	public function numFields() {
-		return count( $this->columns );
-	}
-
-	public function fetchObject() {
-		if ( $this->cursor >= $this->nrows ) {
-			return false;
-		}
-		$row = $this->rows[$this->cursor++];
-		$ret = new stdClass();
-		foreach ( $row as $k => $v ) {
-			$lc = $this->columns[$k];
-			$ret->$lc = $v;
-		}
-
-		return $ret;
-	}
-
-	public function fetchRow() {
-		if ( $this->cursor >= $this->nrows ) {
-			return false;
-		}
-
-		$row = $this->rows[$this->cursor++];
-		$ret = [];
-		foreach ( $row as $k => $v ) {
-			$lc = $this->columns[$k];
-			$ret[$lc] = $v;
-			$ret[$k] = $v;
-		}
-
-		return $ret;
-	}
-}
-
-/**
- * Utility class.
- * @ingroup Database
- */
-class ORAField implements Field {
-	private $name, $tablename, $default, $max_length, $nullable,
-		$is_pk, $is_unique, $is_multiple, $is_key, $type;
-
-	function __construct( $info ) {
-		$this->name = $info['column_name'];
-		$this->tablename = $info['table_name'];
-		$this->default = $info['data_default'];
-		$this->max_length = $info['data_length'];
-		$this->nullable = $info['not_null'];
-		$this->is_pk = isset( $info['prim'] ) && $info['prim'] == 1 ? 1 : 0;
-		$this->is_unique = isset( $info['uniq'] ) && $info['uniq'] == 1 ? 1 : 0;
-		$this->is_multiple = isset( $info['nonuniq'] ) && $info['nonuniq'] == 1 ? 1 : 0;
-		$this->is_key = ( $this->is_pk || $this->is_unique || $this->is_multiple );
-		$this->type = $info['data_type'];
-	}
-
-	function name() {
-		return $this->name;
-	}
-
-	function tableName() {
-		return $this->tablename;
-	}
-
-	function defaultValue() {
-		return $this->default;
-	}
-
-	function maxLength() {
-		return $this->max_length;
-	}
-
-	function isNullable() {
-		return $this->nullable;
-	}
-
-	function isKey() {
-		return $this->is_key;
-	}
-
-	function isMultipleKey() {
-		return $this->is_multiple;
-	}
-
-	function type() {
-		return $this->type;
-	}
-}
+use Wikimedia\Timestamp\ConvertibleTimestamp;
+use Wikimedia\Rdbms\Database;
+use Wikimedia\Rdbms\DatabaseDomain;
+use Wikimedia\Rdbms\Blob;
+use Wikimedia\Rdbms\ResultWrapper;
+use Wikimedia\Rdbms\IResultWrapper;
+use Wikimedia\Rdbms\DBConnectionError;
+use Wikimedia\Rdbms\DBUnexpectedError;
+use Wikimedia\Rdbms\DBExpectedError;
 
 /**
  * @ingroup Database
@@ -191,9 +40,6 @@ class DatabaseOracle extends Database {
 
 	/** @var int The number of rows affected as an integer */
 	protected $mAffectedRows;
-
-	/** @var int */
-	private $mInsertId = null;
 
 	/** @var bool */
 	private $ignoreDupValOnIndex = false;
@@ -207,43 +53,30 @@ class DatabaseOracle extends Database {
 	/** @var array */
 	private $mFieldInfoCache = [];
 
-	function __construct( array $p ) {
-		global $wgDBprefix;
+	/** @var string[] Map of (reserved table name => alternate table name) */
+	private $keywordTableMap = [];
 
-		if ( $p['tablePrefix'] == 'get from global' ) {
-			$p['tablePrefix'] = $wgDBprefix;
-		}
-		$p['tablePrefix'] = strtoupper( $p['tablePrefix'] );
-		parent::__construct( $p );
-		Hooks::run( 'DatabaseOraclePostInit', [ $this ] );
+	/**
+	 * @see Database::__construct()
+	 * @param array $params Additional parameters include:
+	 *   - keywordTableMap : Map of reserved table names to alternative table names to use
+	 */
+	function __construct( array $params ) {
+		$this->keywordTableMap = $params['keywordTableMap'] ?? [];
+		$params['tablePrefix'] = strtoupper( $params['tablePrefix'] );
+		parent::__construct( $params );
 	}
 
 	function __destruct() {
-		if ( $this->mOpened ) {
-			MediaWiki\suppressWarnings();
+		if ( $this->opened ) {
+			Wikimedia\suppressWarnings();
 			$this->close();
-			MediaWiki\restoreWarnings();
+			Wikimedia\restoreWarnings();
 		}
 	}
 
 	function getType() {
 		return 'oracle';
-	}
-
-	function cascadingDeletes() {
-		return true;
-	}
-
-	function cleanupTriggers() {
-		return true;
-	}
-
-	function strictIPs() {
-		return true;
-	}
-
-	function realTimestamps() {
-		return true;
 	}
 
 	function implicitGroupby() {
@@ -254,21 +87,7 @@ class DatabaseOracle extends Database {
 		return false;
 	}
 
-	function searchableIPs() {
-		return true;
-	}
-
-	/**
-	 * Usually aborts on failure
-	 * @param string $server
-	 * @param string $user
-	 * @param string $password
-	 * @param string $dbName
-	 * @throws DBConnectionError
-	 * @return DatabaseBase|null
-	 */
-	function open( $server, $user, $password, $dbName ) {
-		global $wgDBOracleDRCP;
+	protected function open( $server, $user, $password, $dbName, $schema, $tablePrefix ) {
 		if ( !function_exists( 'oci_connect' ) ) {
 			throw new DBConnectionError(
 				$this,
@@ -278,79 +97,76 @@ class DatabaseOracle extends Database {
 		}
 
 		$this->close();
-		$this->mUser = $user;
-		$this->mPassword = $password;
-		// changed internal variables functions
-		// mServer now holds the TNS endpoint
-		// mDBname is schema name if different from username
+		$this->user = $user;
+		$this->password = $password;
 		if ( !$server ) {
-			// backward compatibillity (server used to be null and TNS was supplied in dbname)
-			$this->mServer = $dbName;
-			$this->mDBname = $user;
+			// Backward compatibility (server used to be null and TNS was supplied in dbname)
+			$this->server = $dbName;
+			$realDatabase = $user;
 		} else {
-			$this->mServer = $server;
-			if ( !$dbName ) {
-				$this->mDBname = $user;
-			} else {
-				$this->mDBname = $dbName;
-			}
+			// $server now holds the TNS endpoint
+			$this->server = $server;
+			// $dbName is schema name if different from username
+			$realDatabase = $dbName ?: $user;
 		}
 
 		if ( !strlen( $user ) ) { # e.g. the class is being loaded
 			return null;
 		}
 
-		if ( $wgDBOracleDRCP ) {
-			$this->setFlag( DBO_PERSISTENT );
-		}
+		$session_mode = ( $this->flags & DBO_SYSDBA ) ? OCI_SYSDBA : OCI_DEFAULT;
 
-		$session_mode = $this->mFlags & DBO_SYSDBA ? OCI_SYSDBA : OCI_DEFAULT;
-
-		MediaWiki\suppressWarnings();
-		if ( $this->mFlags & DBO_PERSISTENT ) {
-			$this->mConn = oci_pconnect(
-				$this->mUser,
-				$this->mPassword,
-				$this->mServer,
+		Wikimedia\suppressWarnings();
+		if ( $this->flags & DBO_PERSISTENT ) {
+			$this->conn = oci_pconnect(
+				$this->user,
+				$this->password,
+				$this->server,
 				$this->defaultCharset,
 				$session_mode
 			);
-		} elseif ( $this->mFlags & DBO_DEFAULT ) {
-			$this->mConn = oci_new_connect(
-				$this->mUser,
-				$this->mPassword,
-				$this->mServer,
+		} elseif ( $this->flags & DBO_DEFAULT ) {
+			$this->conn = oci_new_connect(
+				$this->user,
+				$this->password,
+				$this->server,
 				$this->defaultCharset,
 				$session_mode
 			);
 		} else {
-			$this->mConn = oci_connect(
-				$this->mUser,
-				$this->mPassword,
-				$this->mServer,
+			$this->conn = oci_connect(
+				$this->user,
+				$this->password,
+				$this->server,
 				$this->defaultCharset,
 				$session_mode
 			);
 		}
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
-		if ( $this->mUser != $this->mDBname ) {
+		if ( $this->user != $realDatabase ) {
 			// change current schema in session
-			$this->selectDB( $this->mDBname );
+			$this->selectDB( $realDatabase );
+		} else {
+			$this->currentDomain = new DatabaseDomain(
+				$realDatabase,
+				null,
+				$tablePrefix
+			);
 		}
 
-		if ( !$this->mConn ) {
+		if ( !$this->conn ) {
 			throw new DBConnectionError( $this, $this->lastError() );
 		}
 
-		$this->mOpened = true;
+		$this->opened = true;
 
 		# removed putenv calls because they interfere with the system globaly
 		$this->doQuery( 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=\'DD-MM-YYYY HH24:MI:SS.FF6\'' );
 		$this->doQuery( 'ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT=\'DD-MM-YYYY HH24:MI:SS.FF6\'' );
 		$this->doQuery( 'ALTER SESSION SET NLS_NUMERIC_CHARACTERS=\'.,\'' );
 
-		return $this->mConn;
+		return (bool)$this->conn;
 	}
 
 	/**
@@ -359,17 +175,20 @@ class DatabaseOracle extends Database {
 	 * @return bool
 	 */
 	protected function closeConnection() {
-		return oci_close( $this->mConn );
+		return oci_close( $this->conn );
 	}
 
 	function execFlags() {
-		return $this->mTrxLevel ? OCI_NO_AUTO_COMMIT : OCI_COMMIT_ON_SUCCESS;
+		return $this->trxLevel ? OCI_NO_AUTO_COMMIT : OCI_COMMIT_ON_SUCCESS;
 	}
 
+	/**
+	 * @param string $sql
+	 * @return bool|mixed|ORAResult
+	 */
 	protected function doQuery( $sql ) {
-		wfDebug( "SQL: [$sql]\n" );
-		if ( !StringUtils::isUtf8( $sql ) ) {
-			throw new MWException( "SQL encoding is invalid\n$sql" );
+		if ( !mb_check_encoding( (string)$sql, 'UTF-8' ) ) {
+			throw new DBUnexpectedError( $this, "SQL encoding is invalid\n$sql" );
 		}
 
 		// handle some oracle specifics
@@ -393,11 +212,11 @@ class DatabaseOracle extends Database {
 			$explain_count
 		);
 
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 
-		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		$this->mLastResult = $stmt = oci_parse( $this->conn, $sql );
 		if ( $stmt === false ) {
-			$e = oci_error( $this->mConn );
+			$e = oci_error( $this->conn );
 			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 
 			return false;
@@ -412,7 +231,7 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
 		if ( $explain_count > 0 ) {
 			return $this->doQuery( 'SELECT id, cardinality "ROWS" FROM plan_table ' .
@@ -432,7 +251,7 @@ class DatabaseOracle extends Database {
 
 	/**
 	 * Frees resources associated with the LOB descriptor
-	 * @param ResultWrapper|resource $res
+	 * @param IResultWrapper|ORAResult $res
 	 */
 	function freeResult( $res ) {
 		if ( $res instanceof ResultWrapper ) {
@@ -443,8 +262,8 @@ class DatabaseOracle extends Database {
 	}
 
 	/**
-	 * @param ResultWrapper|stdClass $res
-	 * @return mixed
+	 * @param IResultWrapper|ORAResult $res
+	 * @return stdClass|bool
 	 */
 	function fetchObject( $res ) {
 		if ( $res instanceof ResultWrapper ) {
@@ -454,6 +273,10 @@ class DatabaseOracle extends Database {
 		return $res->fetchObject();
 	}
 
+	/**
+	 * @param IResultWrapper|ORAResult $res
+	 * @return stdClass|bool
+	 */
 	function fetchRow( $res ) {
 		if ( $res instanceof ResultWrapper ) {
 			$res = $res->result;
@@ -462,6 +285,10 @@ class DatabaseOracle extends Database {
 		return $res->fetchRow();
 	}
 
+	/**
+	 * @param IResultWrapper|ORAResult $res
+	 * @return int
+	 */
 	function numRows( $res ) {
 		if ( $res instanceof ResultWrapper ) {
 			$res = $res->result;
@@ -470,6 +297,10 @@ class DatabaseOracle extends Database {
 		return $res->numRows();
 	}
 
+	/**
+	 * @param IResultWrapper|ORAResult $res
+	 * @return int
+	 */
 	function numFields( $res ) {
 		if ( $res instanceof ResultWrapper ) {
 			$res = $res->result;
@@ -482,12 +313,10 @@ class DatabaseOracle extends Database {
 		return oci_field_name( $stmt, $n );
 	}
 
-	/**
-	 * This must be called after nextSequenceVal
-	 * @return null|int
-	 */
 	function insertId() {
-		return $this->mInsertId;
+		$res = $this->query( "SELECT lastval_pkg.getLastval FROM dual" );
+		$row = $this->fetchRow( $res );
+		return is_null( $row[0] ) ? null : (int)$row[0];
 	}
 
 	/**
@@ -503,26 +332,26 @@ class DatabaseOracle extends Database {
 	}
 
 	function lastError() {
-		if ( $this->mConn === false ) {
+		if ( $this->conn === false ) {
 			$e = oci_error();
 		} else {
-			$e = oci_error( $this->mConn );
+			$e = oci_error( $this->conn );
 		}
 
 		return $e['message'];
 	}
 
 	function lastErrno() {
-		if ( $this->mConn === false ) {
+		if ( $this->conn === false ) {
 			$e = oci_error();
 		} else {
-			$e = oci_error( $this->mConn );
+			$e = oci_error( $this->conn );
 		}
 
 		return $e['code'];
 	}
 
-	function affectedRows() {
+	protected function fetchAffectedRowCount() {
 		return $this->mAffectedRows;
 	}
 
@@ -562,13 +391,12 @@ class DatabaseOracle extends Database {
 		foreach ( $a as &$row ) {
 			$this->insertOneRow( $table, $row, $fname );
 		}
-		$retVal = true;
 
 		if ( in_array( 'IGNORE', $options ) ) {
 			$this->ignoreDupValOnIndex = false;
 		}
 
-		return $retVal;
+		return true;
 	}
 
 	private function fieldBindStatement( $table, $col, &$val, $includeCol = false ) {
@@ -594,7 +422,11 @@ class DatabaseOracle extends Database {
 		}
 
 		if ( $val === null ) {
-			if ( $col_info != false && $col_info->isNullable() == 0 && $col_info->defaultValue() != null ) {
+			if (
+				$col_info != false &&
+				$col_info->isNullable() == 0 &&
+				$col_info->defaultValue() != null
+			) {
 				$bind .= 'DEFAULT';
 			} else {
 				$bind .= 'NULL';
@@ -614,8 +446,6 @@ class DatabaseOracle extends Database {
 	 * @throws DBUnexpectedError
 	 */
 	private function insertOneRow( $table, $row, $fname ) {
-		global $wgContLang;
-
 		$table = $this->tableName( $table );
 		// "INSERT INTO tables (a, b, c)"
 		$sql = "INSERT INTO " . $table . " (" . implode( ',', array_keys( $row ) ) . ')';
@@ -638,10 +468,10 @@ class DatabaseOracle extends Database {
 		}
 		$sql .= ')';
 
-		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		$this->mLastResult = $stmt = oci_parse( $this->conn, $sql );
 		if ( $stmt === false ) {
-			$e = oci_error( $this->mConn );
-			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
+			$e = oci_error( $this->conn );
+			$this->reportQueryError( $e['message'], $e['code'], $sql, $fname );
 
 			return false;
 		}
@@ -657,23 +487,29 @@ class DatabaseOracle extends Database {
 				}
 
 				// backward compatibility
-				if ( preg_match( '/^timestamp.*/i', $col_type ) == 1 && strtolower( $val ) == 'infinity' ) {
+				if (
+					preg_match( '/^timestamp.*/i', $col_type ) == 1 &&
+					strtolower( $val ) == 'infinity'
+				) {
 					$val = $this->getInfinity();
 				}
 
-				$val = ( $wgContLang != null ) ? $wgContLang->checkTitleEncoding( $val ) : $val;
+				$val = $this->getVerifiedUTF8( $val );
 				if ( oci_bind_by_name( $stmt, ":$col", $val, -1, SQLT_CHR ) === false ) {
 					$e = oci_error( $stmt );
-					$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
+					$this->reportQueryError( $e['message'], $e['code'], $sql, $fname );
 
 					return false;
 				}
 			} else {
 				/** @var OCI_Lob[] $lob */
-				$lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB );
+				$lob[$col] = oci_new_descriptor( $this->conn, OCI_D_LOB );
 				if ( $lob[$col] === false ) {
 					$e = oci_error( $stmt );
-					throw new DBUnexpectedError( $this, "Cannot create LOB descriptor: " . $e['message'] );
+					throw new DBUnexpectedError(
+						$this,
+						"Cannot create LOB descriptor: " . $e['message']
+					);
 				}
 
 				if ( is_object( $val ) ) {
@@ -690,12 +526,12 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 
 		if ( oci_execute( $stmt, $this->execFlags() ) === false ) {
 			$e = oci_error( $stmt );
 			if ( !$this->ignoreDupValOnIndex || $e['code'] != '1' ) {
-				$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
+				$this->reportQueryError( $e['message'], $e['code'], $sql, $fname );
 
 				return false;
 			} else {
@@ -705,7 +541,7 @@ class DatabaseOracle extends Database {
 			$this->mAffectedRows = oci_num_rows( $stmt );
 		}
 
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
 		if ( isset( $lob ) ) {
 			foreach ( $lob as $lob_v ) {
@@ -713,65 +549,60 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		if ( !$this->mTrxLevel ) {
-			oci_commit( $this->mConn );
+		if ( !$this->trxLevel ) {
+			oci_commit( $this->conn );
 		}
 
 		return oci_free_statement( $stmt );
 	}
 
-	function insertSelect( $destTable, $srcTable, $varMap, $conds, $fname = __METHOD__,
-		$insertOptions = [], $selectOptions = []
+	function nativeInsertSelect( $destTable, $srcTable, $varMap, $conds, $fname = __METHOD__,
+		$insertOptions = [], $selectOptions = [], $selectJoinConds = []
 	) {
 		$destTable = $this->tableName( $destTable );
-		if ( !is_array( $selectOptions ) ) {
-			$selectOptions = [ $selectOptions ];
-		}
-		list( $startOpts, $useIndex, $tailOpts ) = $this->makeSelectOptions( $selectOptions );
-		if ( is_array( $srcTable ) ) {
-			$srcTable = implode( ',', array_map( [ &$this, 'tableName' ], $srcTable ) );
-		} else {
-			$srcTable = $this->tableName( $srcTable );
-		}
 
 		$sequenceData = $this->getSequenceData( $destTable );
 		if ( $sequenceData !== false &&
 			!isset( $varMap[$sequenceData['column']] )
 		) {
-			$varMap[$sequenceData['column']] = 'GET_SEQUENCE_VALUE(\'' . $sequenceData['sequence'] . '\')';
+			$varMap[$sequenceData['column']] =
+				'GET_SEQUENCE_VALUE(\'' . $sequenceData['sequence'] . '\')';
 		}
 
 		// count-alias subselect fields to avoid abigious definition errors
 		$i = 0;
 		foreach ( $varMap as &$val ) {
-			$val = $val . ' field' . ( $i++ );
+			$val .= ' field' . $i;
+			$i++;
 		}
 
-		$sql = "INSERT INTO $destTable (" . implode( ',', array_keys( $varMap ) ) . ')' .
-			" SELECT $startOpts " . implode( ',', $varMap ) .
-			" FROM $srcTable $useIndex ";
-		if ( $conds != '*' ) {
-			$sql .= ' WHERE ' . $this->makeList( $conds, LIST_AND );
-		}
-		$sql .= " $tailOpts";
+		$selectSql = $this->selectSQLText(
+			$srcTable,
+			array_values( $varMap ),
+			$conds,
+			$fname,
+			$selectOptions,
+			$selectJoinConds
+		);
+
+		$sql = "INSERT INTO $destTable (" .
+			implode( ',', array_keys( $varMap ) ) . ') ' . $selectSql;
 
 		if ( in_array( 'IGNORE', $insertOptions ) ) {
 			$this->ignoreDupValOnIndex = true;
 		}
 
-		$retval = $this->query( $sql, $fname );
+		$this->query( $sql, $fname );
 
 		if ( in_array( 'IGNORE', $insertOptions ) ) {
 			$this->ignoreDupValOnIndex = false;
 		}
-
-		return $retval;
 	}
 
-	public function upsert( $table, array $rows, array $uniqueIndexes, array $set,
+	public function upsert( $table, array $rows, $uniqueIndexes, array $set,
 		$fname = __METHOD__
 	) {
-		if ( !count( $rows ) ) {
+		if ( $rows === [] ) {
 			return true; // nothing to do
 		}
 
@@ -794,22 +625,19 @@ class DatabaseOracle extends Database {
 		return parent::upsert( $table, $rows, $uniqueIndexes, $set, $fname );
 	}
 
-	function tableName( $name, $format = 'quoted' ) {
-		/*
-		Replace reserved words with better ones
-		Using uppercase because that's the only way Oracle can handle
-		quoted tablenames
-		*/
-		switch ( $name ) {
-			case 'user':
-				$name = 'MWUSER';
-				break;
-			case 'text':
-				$name = 'PAGECONTENT';
-				break;
-		}
+	public function tableName( $name, $format = 'quoted' ) {
+		// Replace reserved words with better ones
+		$name = $this->remappedTableName( $name );
 
 		return strtoupper( parent::tableName( $name, $format ) );
+	}
+
+	/**
+	 * @param string $name
+	 * @return string Value of $name or remapped name if $name is a reserved keyword
+	 */
+	public function remappedTableName( $name ) {
+		return $this->keywordTableMap[$name] ?? $name;
 	}
 
 	function tableNameInternal( $name ) {
@@ -819,40 +647,34 @@ class DatabaseOracle extends Database {
 	}
 
 	/**
-	 * Return the next in a sequence, save the value for retrieval via insertId()
-	 *
-	 * @param string $seqName
-	 * @return null|int
-	 */
-	function nextSequenceValue( $seqName ) {
-		$res = $this->query( "SELECT $seqName.nextval FROM dual" );
-		$row = $this->fetchRow( $res );
-		$this->mInsertId = $row[0];
-
-		return $this->mInsertId;
-	}
-
-	/**
 	 * Return sequence_name if table has a sequence
 	 *
 	 * @param string $table
-	 * @return bool
+	 * @return string[]|bool
 	 */
 	private function getSequenceData( $table ) {
 		if ( $this->sequenceData == null ) {
-			$result = $this->doQuery( "SELECT lower(asq.sequence_name),
-				lower(atc.table_name),
-				lower(atc.column_name)
-			FROM all_sequences asq, all_tab_columns atc
-			WHERE decode(
-					atc.table_name,
-					'{$this->mTablePrefix}MWUSER',
-					'{$this->mTablePrefix}USER',
-					atc.table_name
-				) || '_' ||
-				atc.column_name || '_SEQ' = '{$this->mTablePrefix}' || asq.sequence_name
-				AND asq.sequence_owner = upper('{$this->mDBname}')
-				AND atc.owner = upper('{$this->mDBname}')" );
+			$dbname = $this->currentDomain->getDatabase();
+			$prefix = $this->currentDomain->getTablePrefix();
+			// See https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions040.htm
+			$decodeArgs = [ 'atc.table_name' ]; // the switch
+			foreach ( $this->keywordTableMap as $reserved => $alternative ) {
+				$search = strtoupper( $prefix . $alternative ); // case
+				$replace = strtoupper( $prefix . $reserved ); // result
+				$decodeArgs[] = $this->addQuotes( $search );
+				$decodeArgs[] = $this->addQuotes( $replace );
+			}
+			$decodeArgs[] = [ 'atc.table_name' ]; // default
+			$decodeArgs = implode( ', ', $decodeArgs );
+
+			$result = $this->doQuery(
+				"SELECT lower(asq.sequence_name), lower(atc.table_name), lower(atc.column_name)
+				FROM all_sequences asq, all_tab_columns atc
+				WHERE decode({$decodeArgs}) || '_' ||
+				atc.column_name || '_SEQ' = '{$prefix}' || asq.sequence_name
+				AND asq.sequence_owner = upper('{$dbname}')
+				AND atc.owner = upper('{$dbname}')"
+			);
 
 			while ( ( $row = $result->fetchRow() ) !== false ) {
 				$this->sequenceData[$row[1]] = [
@@ -863,7 +685,7 @@ class DatabaseOracle extends Database {
 		}
 		$table = strtolower( $this->removeIdentifierQuotes( $this->tableName( $table ) ) );
 
-		return ( isset( $this->sequenceData[$table] ) ) ? $this->sequenceData[$table] : false;
+		return $this->sequenceData[$table] ?? false;
 	}
 
 	/**
@@ -891,14 +713,6 @@ class DatabaseOracle extends Database {
 		return new Blob( $b );
 	}
 
-	function decodeBlob( $b ) {
-		if ( $b instanceof Blob ) {
-			$b = $b->fetch();
-		}
-
-		return $b;
-	}
-
 	function unionQueries( $sqls, $all ) {
 		$glue = ' UNION ALL ';
 
@@ -914,13 +728,14 @@ class DatabaseOracle extends Database {
 		$fname = __METHOD__
 	) {
 		$temporary = $temporary ? 'TRUE' : 'FALSE';
+		$tablePrefix = $this->currentDomain->getTablePrefix();
 
 		$newName = strtoupper( $newName );
 		$oldName = strtoupper( $oldName );
 
-		$tabName = substr( $newName, strlen( $this->mTablePrefix ) );
+		$tabName = substr( $newName, strlen( $tablePrefix ) );
 		$oldPrefix = substr( $oldName, 0, strlen( $oldName ) - strlen( $tabName ) );
-		$newPrefix = strtoupper( $this->mTablePrefix );
+		$newPrefix = strtoupper( $tablePrefix );
 
 		return $this->doQuery( "BEGIN DUPLICATE_TABLE( '$tabName', " .
 			"'$oldPrefix', '$newPrefix', $temporary ); END;" );
@@ -932,7 +747,7 @@ class DatabaseOracle extends Database {
 			$listWhere = ' AND table_name LIKE \'' . strtoupper( $prefix ) . '%\'';
 		}
 
-		$owner = strtoupper( $this->mDBname );
+		$owner = strtoupper( $this->getDBname() );
 		$result = $this->doQuery( "SELECT table_name FROM all_tables " .
 			"WHERE owner='$owner' AND table_name NOT LIKE '%!_IDX\$_' ESCAPE '!' $listWhere" );
 
@@ -960,8 +775,10 @@ class DatabaseOracle extends Database {
 		return $this->doQuery( "DROP TABLE $tableName CASCADE CONSTRAINTS PURGE" );
 	}
 
-	function timestamp( $ts = 0 ) {
-		return wfTimestamp( TS_ORACLE, $ts );
+	public function timestamp( $ts = 0 ) {
+		$t = new ConvertibleTimestamp( $ts );
+		// Let errors bubble up to avoid putting garbage in the DB
+		return $t->getTimestamp( TS_ORACLE );
 	}
 
 	/**
@@ -993,7 +810,7 @@ class DatabaseOracle extends Database {
 		);
 		$row = $rset->fetchRow();
 		if ( !$row ) {
-			return oci_server_version( $this->mConn );
+			return oci_server_version( $this->conn );
 		}
 
 		return $row['version'];
@@ -1010,7 +827,7 @@ class DatabaseOracle extends Database {
 		$table = $this->tableName( $table );
 		$table = strtoupper( $this->removeIdentifierQuotes( $table ) );
 		$index = strtoupper( $index );
-		$owner = strtoupper( $this->mDBname );
+		$owner = strtoupper( $this->getDBname() );
 		$sql = "SELECT 1 FROM all_indexes WHERE owner='$owner' AND index_name='{$table}_{$index}'";
 		$res = $this->doQuery( $sql );
 		if ( $res ) {
@@ -1032,7 +849,7 @@ class DatabaseOracle extends Database {
 	function tableExists( $table, $fname = __METHOD__ ) {
 		$table = $this->tableName( $table );
 		$table = $this->addQuotes( strtoupper( $this->removeIdentifierQuotes( $table ) ) );
-		$owner = $this->addQuotes( strtoupper( $this->mDBname ) );
+		$owner = $this->addQuotes( strtoupper( $this->getDBname() ) );
 		$sql = "SELECT 1 FROM all_tables WHERE owner=$owner AND table_name=$table";
 		$res = $this->doQuery( $sql );
 		if ( $res && $res->numRows() > 0 ) {
@@ -1054,12 +871,12 @@ class DatabaseOracle extends Database {
 	 *
 	 * @param array|string $table
 	 * @param string $field
-	 * @return ORAField|ORAResult
+	 * @return ORAField|ORAResult|false
 	 */
 	private function fieldInfoMulti( $table, $field ) {
 		$field = strtoupper( $field );
 		if ( is_array( $table ) ) {
-			$table = array_map( [ &$this, 'tableNameInternal' ], $table );
+			$table = array_map( [ $this, 'tableNameInternal' ], $table );
 			$tableWhere = 'IN (';
 			foreach ( $table as &$singleTable ) {
 				$singleTable = $this->removeIdentifierQuotes( $singleTable );
@@ -1078,7 +895,7 @@ class DatabaseOracle extends Database {
 		}
 
 		$fieldInfoStmt = oci_parse(
-			$this->mConn,
+			$this->conn,
 			'SELECT * FROM wiki_field_info_full WHERE table_name ' .
 				$tableWhere . ' and column_name = \'' . $field . '\''
 		);
@@ -1116,57 +933,54 @@ class DatabaseOracle extends Database {
 	 */
 	function fieldInfo( $table, $field ) {
 		if ( is_array( $table ) ) {
-			throw new DBUnexpectedError( $this, 'DatabaseOracle::fieldInfo called with table array!' );
+			throw new DBUnexpectedError(
+				$this,
+				'DatabaseOracle::fieldInfo called with table array!'
+			);
 		}
 
 		return $this->fieldInfoMulti( $table, $field );
 	}
 
 	protected function doBegin( $fname = __METHOD__ ) {
-		$this->mTrxLevel = 1;
+		$this->trxLevel = 1;
 		$this->doQuery( 'SET CONSTRAINTS ALL DEFERRED' );
 	}
 
 	protected function doCommit( $fname = __METHOD__ ) {
-		if ( $this->mTrxLevel ) {
-			$ret = oci_commit( $this->mConn );
+		if ( $this->trxLevel ) {
+			$ret = oci_commit( $this->conn );
 			if ( !$ret ) {
 				throw new DBUnexpectedError( $this, $this->lastError() );
 			}
-			$this->mTrxLevel = 0;
+			$this->trxLevel = 0;
 			$this->doQuery( 'SET CONSTRAINTS ALL IMMEDIATE' );
 		}
 	}
 
 	protected function doRollback( $fname = __METHOD__ ) {
-		if ( $this->mTrxLevel ) {
-			oci_rollback( $this->mConn );
-			$this->mTrxLevel = 0;
+		if ( $this->trxLevel ) {
+			oci_rollback( $this->conn );
+			$this->trxLevel = 0;
 			$this->doQuery( 'SET CONSTRAINTS ALL IMMEDIATE' );
 		}
 	}
 
-	/**
-	 * defines must comply with ^define\s*([^\s=]*)\s*=\s?'\{\$([^\}]*)\}';
-	 *
-	 * @param resource $fp
-	 * @param bool|string $lineCallback
-	 * @param bool|callable $resultCallback
-	 * @param string $fname
-	 * @param bool|callable $inputCallback
-	 * @return bool|string
-	 */
-	function sourceStream( $fp, $lineCallback = false, $resultCallback = false,
-		$fname = __METHOD__, $inputCallback = false ) {
+	function sourceStream(
+		$fp,
+		callable $lineCallback = null,
+		callable $resultCallback = null,
+		$fname = __METHOD__, callable $inputCallback = null
+	) {
 		$cmd = '';
 		$done = false;
 		$dollarquote = false;
 
 		$replacements = [];
-
+		// Defines must comply with ^define\s*([^\s=]*)\s*=\s?'\{\$([^\}]*)\}';
 		while ( !feof( $fp ) ) {
 			if ( $lineCallback ) {
-				call_user_func( $lineCallback );
+				$lineCallback();
 			}
 			$line = trim( fgets( $fp, 1024 ) );
 			$sl = strlen( $line ) - 1;
@@ -1174,7 +988,7 @@ class DatabaseOracle extends Database {
 			if ( $sl < 0 ) {
 				continue;
 			}
-			if ( '-' == $line[0] && '-' == $line[1] ) {
+			if ( $line[0] == '-' && $line[1] == '-' ) {
 				continue;
 			}
 
@@ -1188,7 +1002,7 @@ class DatabaseOracle extends Database {
 					$dollarquote = true;
 				}
 			} elseif ( !$dollarquote ) {
-				if ( ';' == $line[$sl] && ( $sl < 2 || ';' != $line[$sl - 1] ) ) {
+				if ( $line[$sl] == ';' && ( $sl < 2 || $line[$sl - 1] != ';' ) ) {
 					$done = true;
 					$line = substr( $line, 0, $sl );
 				}
@@ -1212,14 +1026,14 @@ class DatabaseOracle extends Database {
 
 					$cmd = $this->replaceVars( $cmd );
 					if ( $inputCallback ) {
-						call_user_func( $inputCallback, $cmd );
+						$inputCallback( $cmd );
 					}
 					$res = $this->doQuery( $cmd );
 					if ( $resultCallback ) {
 						call_user_func( $resultCallback, $res, $this );
 					}
 
-					if ( false === $res ) {
+					if ( $res === false ) {
 						$err = $this->lastError();
 
 						return "Query \"{$cmd}\" failed with error code \"$err\".\n";
@@ -1234,23 +1048,33 @@ class DatabaseOracle extends Database {
 		return true;
 	}
 
-	function selectDB( $db ) {
-		$this->mDBname = $db;
-		if ( $db == null || $db == $this->mUser ) {
+	protected function doSelectDomain( DatabaseDomain $domain ) {
+		if ( $domain->getSchema() !== null ) {
+			// We use the *database* aspect of $domain for schema, not the domain schema
+			throw new DBExpectedError( $this, __CLASS__ . ": domain schemas are not supported." );
+		}
+
+		$database = $domain->getDatabase();
+		if ( $database === null || $database === $this->user ) {
+			// Backward compatibility
+			$this->currentDomain = $domain;
+
 			return true;
 		}
-		$sql = 'ALTER SESSION SET CURRENT_SCHEMA=' . strtoupper( $db );
-		$stmt = oci_parse( $this->mConn, $sql );
-		MediaWiki\suppressWarnings();
-		$success = oci_execute( $stmt );
-		MediaWiki\restoreWarnings();
-		if ( !$success ) {
-			$e = oci_error( $stmt );
-			if ( $e['code'] != '1435' ) {
-				$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
-			}
 
-			return false;
+		// https://docs.oracle.com/javadb/10.8.3.0/ref/rrefsqlj32268.html
+		$encDatabase = $this->addIdentifierQuotes( strtoupper( $database ) );
+		$sql = "ALTER SESSION SET CURRENT_SCHEMA=$encDatabase";
+		$stmt = oci_parse( $this->conn, $sql );
+		Wikimedia\suppressWarnings();
+		$success = oci_execute( $stmt );
+		Wikimedia\restoreWarnings();
+		if ( $success ) {
+			// Update that domain fields on success (no exception thrown)
+			$this->currentDomain = $domain;
+		} else {
+			$e = oci_error( $stmt );
+			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 		}
 
 		return true;
@@ -1261,12 +1085,7 @@ class DatabaseOracle extends Database {
 	}
 
 	function addQuotes( $s ) {
-		global $wgContLang;
-		if ( isset( $wgContLang->mLoaded ) && $wgContLang->mLoaded ) {
-			$s = $wgContLang->checkTitleEncoding( $s );
-		}
-
-		return "'" . $this->strencode( $s ) . "'";
+		return "'" . $this->strencode( $this->getVerifiedUTF8( $s ) ) . "'";
 	}
 
 	public function addIdentifierQuotes( $s ) {
@@ -1286,15 +1105,13 @@ class DatabaseOracle extends Database {
 	}
 
 	private function wrapFieldForWhere( $table, &$col, &$val ) {
-		global $wgContLang;
-
 		$col_info = $this->fieldInfoMulti( $table, $col );
 		$col_type = $col_info != false ? $col_info->type() : 'CONSTANT';
 		if ( $col_type == 'CLOB' ) {
 			$col = 'TO_CHAR(' . $col . ')';
-			$val = $wgContLang->checkTitleEncoding( $val );
+			$val = $this->getVerifiedUTF8( $val );
 		} elseif ( $col_type == 'VARCHAR2' ) {
-			$val = $wgContLang->checkTitleEncoding( $val );
+			$val = $this->getVerifiedUTF8( $val );
 		}
 	}
 
@@ -1363,17 +1180,28 @@ class DatabaseOracle extends Database {
 			$useIndex = '';
 		}
 
-		return [ $startOpts, $useIndex, $preLimitTail, $postLimitTail ];
+		if ( isset( $options['IGNORE INDEX'] ) && !is_array( $options['IGNORE INDEX'] ) ) {
+			$ignoreIndex = $this->ignoreIndexClause( $options['IGNORE INDEX'] );
+		} else {
+			$ignoreIndex = '';
+		}
+
+		return [ $startOpts, $useIndex, $preLimitTail, $postLimitTail, $ignoreIndex ];
 	}
 
 	public function delete( $table, $conds, $fname = __METHOD__ ) {
+		global $wgActorTableSchemaMigrationStage;
+
 		if ( is_array( $conds ) ) {
 			$conds = $this->wrapConditionsForWhere( $table, $conds );
 		}
 		// a hack for deleting pages, users and images (which have non-nullable FKs)
 		// all deletions on these tables have transactions so final failure rollbacks these updates
+		// @todo: Normalize the schema to match MySQL, no special FKs and such
 		$table = $this->tableName( $table );
-		if ( $table == $this->tableName( 'user' ) ) {
+		if ( $table == $this->tableName( 'user' ) &&
+			( $wgActorTableSchemaMigrationStage & SCHEMA_COMPAT_WRITE_OLD )
+		) {
 			$this->update( 'archive', [ 'ar_user' => 0 ],
 				[ 'ar_user' => $conds['user_id'] ], $fname );
 			$this->update( 'ipblocks', [ 'ipb_user' => 0 ],
@@ -1410,8 +1238,6 @@ class DatabaseOracle extends Database {
 	 * @throws DBUnexpectedError
 	 */
 	function update( $table, $values, $conds, $fname = __METHOD__, $options = [] ) {
-		global $wgContLang;
-
 		$table = $this->tableName( $table );
 		$opts = $this->makeUpdateOptions( $options );
 		$sql = "UPDATE $opts $table SET ";
@@ -1433,9 +1259,9 @@ class DatabaseOracle extends Database {
 			$sql .= ' WHERE ' . $this->makeList( $conds, LIST_AND );
 		}
 
-		$this->mLastResult = $stmt = oci_parse( $this->mConn, $sql );
+		$this->mLastResult = $stmt = oci_parse( $this->conn, $sql );
 		if ( $stmt === false ) {
-			$e = oci_error( $this->mConn );
+			$e = oci_error( $this->conn );
 			$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
 
 			return false;
@@ -1451,11 +1277,14 @@ class DatabaseOracle extends Database {
 					$val = $val->getData();
 				}
 
-				if ( preg_match( '/^timestamp.*/i', $col_type ) == 1 && strtolower( $val ) == 'infinity' ) {
+				if (
+					preg_match( '/^timestamp.*/i', $col_type ) == 1 &&
+					strtolower( $val ) == 'infinity'
+				) {
 					$val = '31-12-2030 12:00:00.000000';
 				}
 
-				$val = ( $wgContLang != null ) ? $wgContLang->checkTitleEncoding( $val ) : $val;
+				$val = $this->getVerifiedUTF8( $val );
 				if ( oci_bind_by_name( $stmt, ":$col", $val ) === false ) {
 					$e = oci_error( $stmt );
 					$this->reportQueryError( $e['message'], $e['code'], $sql, __METHOD__ );
@@ -1464,10 +1293,13 @@ class DatabaseOracle extends Database {
 				}
 			} else {
 				/** @var OCI_Lob[] $lob */
-				$lob[$col] = oci_new_descriptor( $this->mConn, OCI_D_LOB );
+				$lob[$col] = oci_new_descriptor( $this->conn, OCI_D_LOB );
 				if ( $lob[$col] === false ) {
 					$e = oci_error( $stmt );
-					throw new DBUnexpectedError( $this, "Cannot create LOB descriptor: " . $e['message'] );
+					throw new DBUnexpectedError(
+						$this,
+						"Cannot create LOB descriptor: " . $e['message']
+					);
 				}
 
 				if ( is_object( $val ) ) {
@@ -1484,7 +1316,7 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 
 		if ( oci_execute( $stmt, $this->execFlags() ) === false ) {
 			$e = oci_error( $stmt );
@@ -1499,7 +1331,7 @@ class DatabaseOracle extends Database {
 			$this->mAffectedRows = oci_num_rows( $stmt );
 		}
 
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
 		if ( isset( $lob ) ) {
 			foreach ( $lob as $lob_v ) {
@@ -1507,8 +1339,8 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		if ( !$this->mTrxLevel ) {
-			oci_commit( $this->mConn );
+		if ( !$this->trxLevel ) {
+			oci_commit( $this->conn );
 		}
 
 		return oci_free_statement( $stmt );
@@ -1527,14 +1359,6 @@ class DatabaseOracle extends Database {
 		return 'BITOR(' . $fieldLeft . ', ' . $fieldRight . ')';
 	}
 
-	function getDBname() {
-		return $this->mDBname;
-	}
-
-	function getServer() {
-		return $this->mServer;
-	}
-
 	public function buildGroupConcatField(
 		$delim, $table, $field, $conds = '', $join_conds = []
 	) {
@@ -1543,11 +1367,37 @@ class DatabaseOracle extends Database {
 		return '(' . $this->selectSQLText( $table, $fld, $conds, null, [], $join_conds ) . ')';
 	}
 
-	public function getSearchEngine() {
-		return 'SearchOracle';
+	public function buildSubstring( $input, $startPosition, $length = null ) {
+		$this->assertBuildSubstringParams( $startPosition, $length );
+		$params = [ $input, $startPosition ];
+		if ( $length !== null ) {
+			$params[] = $length;
+		}
+		return 'SUBSTR(' . implode( ',', $params ) . ')';
+	}
+
+	/**
+	 * @param string $field Field or column to cast
+	 * @return string
+	 * @since 1.28
+	 */
+	public function buildStringCast( $field ) {
+		return 'CAST ( ' . $field . ' AS VARCHAR2 )';
 	}
 
 	public function getInfinity() {
 		return '31-12-2030 12:00:00.000000';
+	}
+
+	/**
+	 * @param string $s
+	 * @return string
+	 */
+	private function getVerifiedUTF8( $s ) {
+		if ( mb_check_encoding( (string)$s, 'UTF-8' ) ) {
+			return $s; // valid
+		}
+
+		throw new DBUnexpectedError( $this, "Non BLOB/CLOB field must be UTF-8." );
 	}
 }

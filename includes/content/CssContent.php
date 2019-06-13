@@ -25,6 +25,8 @@
  * @author Daniel Kinzler
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Content object for CSS pages.
  *
@@ -58,11 +60,11 @@ class CssContent extends TextContent {
 	 * @see TextContent::preSaveTransform
 	 */
 	public function preSaveTransform( Title $title, User $user, ParserOptions $popts ) {
-		global $wgParser;
 		// @todo Make pre-save transformation optional for script pages
 
-		$text = $this->getNativeData();
-		$pst = $wgParser->preSaveTransform( $text, $title, $user, $popts );
+		$text = $this->getText();
+		$pst = MediaWikiServices::getInstance()->getParser()
+			->preSaveTransform( $text, $title, $user, $popts );
 
 		return new static( $pst );
 	}
@@ -73,7 +75,7 @@ class CssContent extends TextContent {
 	protected function getHtml() {
 		$html = "";
 		$html .= "<pre class=\"mw-code mw-css\" dir=\"ltr\">\n";
-		$html .= htmlspecialchars( $this->getNativeData() );
+		$html .= htmlspecialchars( $this->getText() );
 		$html .= "\n</pre>\n";
 
 		return $html;
@@ -99,12 +101,12 @@ class CssContent extends TextContent {
 			return $this->redirectTarget;
 		}
 		$this->redirectTarget = null;
-		$text = $this->getNativeData();
+		$text = $this->getText();
 		if ( strpos( $text, '/* #REDIRECT */' ) === 0 ) {
 			// Extract the title from the url
 			preg_match( '/title=(.*?)&action=raw/', $text, $matches );
 			if ( isset( $matches[1] ) ) {
-				$title = Title::newFromText( $matches[1] );
+				$title = Title::newFromText( urldecode( $matches[1] ) );
 				if ( $title ) {
 					// Have a title, check that the current content equals what
 					// the redirect content should be

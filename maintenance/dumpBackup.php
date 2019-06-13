@@ -22,10 +22,11 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @ingroup Dump Maintenance
+ * @ingroup Dump
+ * @ingroup Maintenance
  */
 
-require_once __DIR__ . '/backup.inc';
+require_once __DIR__ . '/includes/BackupDumper.php';
 
 class DumpBackup extends BackupDumper {
 	function __construct( $args = null ) {
@@ -50,6 +51,8 @@ TEXT
 		$this->addOption( 'stable', 'Dump stable versions of pages' );
 		$this->addOption( 'revrange', 'Dump range of revisions specified by revstart and ' .
 			'revend parameters' );
+		$this->addOption( 'orderrevs', 'Dump revisions in ascending revision order ' .
+			'(implies dump of a range of pages)' );
 		$this->addOption( 'pagelist',
 			'Dump only pages included in the file', false, true );
 		// Options
@@ -62,6 +65,7 @@ TEXT
 		$this->addOption( 'stub', 'Don\'t perform old_text lookups; for 2-pass dump' );
 		$this->addOption( 'uploads', 'Include upload records without files' );
 		$this->addOption( 'include-files', 'Include files within the XML stream' );
+		$this->addOption( 'namespaces', 'Limit to this comma-separated list of namespace numbers' );
 
 		if ( $args ) {
 			$this->loadWithArgv( $args );
@@ -85,7 +89,7 @@ TEXT
 		} elseif ( $this->hasOption( 'revrange' ) ) {
 			$this->dump( WikiExporter::RANGE, $textMode );
 		} else {
-			$this->error( 'No valid action specified.', 1 );
+			$this->fatalError( 'No valid action specified.' );
 		}
 	}
 
@@ -127,8 +131,14 @@ TEXT
 		$this->skipFooter = $this->hasOption( 'skip-footer' );
 		$this->dumpUploads = $this->hasOption( 'uploads' );
 		$this->dumpUploadFileContents = $this->hasOption( 'include-files' );
+		$this->orderRevs = $this->hasOption( 'orderrevs' );
+		if ( $this->hasOption( 'namespaces' ) ) {
+			$this->limitNamespaces = explode( ',', $this->getOption( 'namespaces' ) );
+		} else {
+			$this->limitNamespaces = null;
+		}
 	}
 }
 
-$maintClass = 'DumpBackup';
+$maintClass = DumpBackup::class;
 require_once RUN_MAINTENANCE_IF_MAIN;

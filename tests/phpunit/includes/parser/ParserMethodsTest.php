@@ -1,9 +1,16 @@
 <?php
 
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\MutableRevisionRecord;
+use MediaWiki\Revision\RevisionStore;
+use MediaWiki\Revision\SlotRecord;
+use MediaWiki\User\UserIdentityValue;
+
 /**
  * @group Database
+ * @covers Parser
+ * @covers BlockLevelPass
  */
-
 class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	public static function providePreSaveTransform() {
@@ -19,16 +26,14 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	/**
 	 * @dataProvider providePreSaveTransform
-	 * @covers Parser::preSaveTransform
 	 */
 	public function testPreSaveTransform( $text, $expected ) {
-		global $wgParser;
-
 		$title = Title::newFromText( str_replace( '::', '__', __METHOD__ ) );
 		$user = new User();
 		$user->setName( "127.0.0.1" );
 		$popts = ParserOptions::newFromUser( $user );
-		$text = $wgParser->preSaveTransform( $text, $title, $user, $popts );
+		$text = MediaWikiServices::getInstance()->getParser()
+			->preSaveTransform( $text, $title, $user, $popts );
 
 		$this->assertEquals( $expected, $text );
 	}
@@ -63,7 +68,6 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	/**
 	 * @dataProvider provideStripOuterParagraph
-	 * @covers Parser::stripOuterParagraph
 	 */
 	public function testStripOuterParagraph( $text, $expected ) {
 		$this->assertEquals( $expected, Parser::stripOuterParagraph( $text ) );
@@ -73,14 +77,13 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 	 * @expectedException MWException
 	 * @expectedExceptionMessage Parser state cleared while parsing.
 	 *  Did you call Parser::parse recursively?
-	 * @covers Parser::lock
 	 */
 	public function testRecursiveParse() {
-		global $wgParser;
 		$title = Title::newFromText( 'foo' );
+		$parser = MediaWikiServices::getInstance()->getParser();
 		$po = new ParserOptions;
-		$wgParser->setHook( 'recursivecallparser', [ $this, 'helperParserFunc' ] );
-		$wgParser->parse( '<recursivecallparser>baz</recursivecallparser>', $title, $po );
+		$parser->setHook( 'recursivecallparser', [ $this, 'helperParserFunc' ] );
+		$parser->parse( '<recursivecallparser>baz</recursivecallparser>', $title, $po );
 	}
 
 	public function helperParserFunc( $input, $args, $parser ) {
@@ -90,20 +93,16 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 		return 'bar';
 	}
 
-	/**
-	 * @covers Parser::callParserFunction
-	 */
 	public function testCallParserFunction() {
-		global $wgParser;
-
 		// Normal parses test passing PPNodes. Test passing an array.
 		$title = Title::newFromText( str_replace( '::', '__', __METHOD__ ) );
-		$wgParser->startExternalParse( $title, new ParserOptions(), Parser::OT_HTML );
-		$frame = $wgParser->getPreprocessor()->newFrame();
-		$ret = $wgParser->callParserFunction( $frame, '#tag',
+		$parser = MediaWikiServices::getInstance()->getParser();
+		$parser->startExternalParse( $title, new ParserOptions(), Parser::OT_HTML );
+		$frame = $parser->getPreprocessor()->newFrame();
+		$ret = $parser->callParserFunction( $frame, '#tag',
 			[ 'pre', 'foo', 'style' => 'margin-left: 1.6em' ]
 		);
-		$ret['text'] = $wgParser->mStripState->unstripBoth( $ret['text'] );
+		$ret['text'] = $parser->mStripState->unstripBoth( $ret['text'] );
 		$this->assertSame( [
 			'found' => true,
 			'text' => '<pre style="margin-left: 1.6em">foo</pre>',
@@ -111,14 +110,13 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 	}
 
 	/**
-	 * @covers Parser::parse
+	 * @covers Parser
 	 * @covers ParserOutput::getSections
 	 */
 	public function testGetSections() {
-		global $wgParser;
-
 		$title = Title::newFromText( str_replace( '::', '__', __METHOD__ ) );
-		$out = $wgParser->parse( "==foo==\n<h2>bar</h2>\n==baz==\n", $title, new ParserOptions() );
+		$out = MediaWikiServices::getInstance()->getParser()
+			->parse( "==foo==\n<h2>bar</h2>\n==baz==\n", $title, new ParserOptions() );
 		$this->assertSame( [
 			[
 				'toclevel' => 1,
@@ -155,8 +153,6 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 
 	/**
 	 * @dataProvider provideNormalizeLinkUrl
-	 * @covers Parser::normalizeLinkUrl
-	 * @covers Parser::normalizeUrlComponent
 	 */
 	public function testNormalizeLinkUrl( $explanation, $url, $expected ) {
 		$this->assertEquals( $expected, Parser::normalizeLinkUrl( $url ), $explanation );
@@ -184,7 +180,217 @@ class ParserMethodsTest extends MediaWikiLangTestCase {
 				'http://example.org/%23%2F%3F%26%3D%2B%3B?%23%2F%3F%26%3D%2B%3B#%23%2F%3F%26%3D%2B%3B',
 				'http://example.org/%23%2F%3F&=+;?%23/?%26%3D%2B%3B#%23/?&=+;',
 			],
+			[
+				'IPv6 links aren\'t escaped',
+				'http://[::1]/foobar',
+				'http://[::1]/foobar',
+			],
+			[
+				'non-IPv6 links aren\'t unescaped',
+				'http://%5B::1%5D/foobar',
+				'http://%5B::1%5D/foobar',
+			],
 		];
+	}
+
+	public function testWrapOutput() {
+		$title = Title::newFromText( 'foo' );
+		$po = new ParserOptions();
+		$parser = MediaWikiServices::getInstance()->getParser();
+		$parser->parse( 'Hello World', $title, $po );
+		$text = $parser->getOutput()->getText();
+
+		$this->assertContains( 'Hello World', $text );
+		$this->assertContains( '<div', $text );
+		$this->assertContains( 'class="mw-parser-output"', $text );
+	}
+
+	/**
+	 * @param string $name
+	 * @return Title
+	 */
+	private function getMockTitle( $name ) {
+		$title = $this->getMock( Title::class );
+		$title->method( 'getPrefixedDBkey' )->willReturn( $name );
+		$title->method( 'getPrefixedText' )->willReturn( $name );
+		$title->method( 'getDBkey' )->willReturn( $name );
+		$title->method( 'getText' )->willReturn( $name );
+		$title->method( 'getNamespace' )->willReturn( 0 );
+		$title->method( 'getPageLanguage' )->willReturn( Language::factory( 'en' ) );
+
+		return $title;
+	}
+
+	public function provideRevisionAccess() {
+		$title = $this->getMockTitle( 'ParserRevisionAccessTest' );
+
+		$frank = $this->getMockBuilder( User::class )
+			->disableOriginalConstructor()
+			->getMock();
+
+		$frank->method( 'getName' )->willReturn( 'Frank' );
+
+		$text = '* user:{{REVISIONUSER}};id:{{REVISIONID}};time:{{REVISIONTIMESTAMP}};';
+		$po = new ParserOptions( $frank );
+
+		yield 'current' => [ $text, $po, 0, 'user:CurrentAuthor;id:200;time:20160606000000;' ];
+		yield 'current with ID' => [ $text, $po, 200, 'user:CurrentAuthor;id:200;time:20160606000000;' ];
+
+		$text = '* user:{{REVISIONUSER}};id:{{REVISIONID}};time:{{REVISIONTIMESTAMP}};';
+		$po = new ParserOptions( $frank );
+
+		yield 'old' => [ $text, $po, 100, 'user:OldAuthor;id:100;time:20140404000000;' ];
+
+		$oldRevision = new MutableRevisionRecord( $title );
+		$oldRevision->setId( 100 );
+		$oldRevision->setUser( new UserIdentityValue( 7, 'FauxAuthor', 0 ) );
+		$oldRevision->setTimestamp( '20141111111111' );
+		$oldRevision->setContent( SlotRecord::MAIN, new WikitextContent( 'FAUX' ) );
+
+		$po = new ParserOptions( $frank );
+		$po->setCurrentRevisionCallback( function () use ( $oldRevision ) {
+			return new Revision( $oldRevision );
+		} );
+
+		yield 'old with override' => [ $text, $po, 100, 'user:FauxAuthor;id:100;time:20141111111111;' ];
+
+		$text = '* user:{{REVISIONUSER}};user-subst:{{subst:REVISIONUSER}};';
+
+		$po = new ParserOptions( $frank );
+		$po->setIsPreview( true );
+
+		yield 'preview without override, using context' => [
+			$text,
+			$po,
+			null,
+			'user:Frank;',
+			'user-subst:Frank;',
+		];
+
+		$text = '* user:{{REVISIONUSER}};time:{{REVISIONTIMESTAMP}};'
+			. 'user-subst:{{subst:REVISIONUSER}};time-subst:{{subst:REVISIONTIMESTAMP}};';
+
+		$newRevision = new MutableRevisionRecord( $title );
+		$newRevision->setUser( new UserIdentityValue( 9, 'NewAuthor', 0 ) );
+		$newRevision->setTimestamp( '20180808000000' );
+		$newRevision->setContent( SlotRecord::MAIN, new WikitextContent( 'NEW' ) );
+
+		$po = new ParserOptions( $frank );
+		$po->setIsPreview( true );
+		$po->setCurrentRevisionCallback( function () use ( $newRevision ) {
+			return new Revision( $newRevision );
+		} );
+
+		yield 'preview' => [
+			$text,
+			$po,
+			null,
+			'user:NewAuthor;time:20180808000000;',
+			'user-subst:NewAuthor;time-subst:20180808000000;',
+		];
+
+		$po = new ParserOptions( $frank );
+		$po->setCurrentRevisionCallback( function () use ( $newRevision ) {
+			return new Revision( $newRevision );
+		} );
+
+		yield 'pre-save' => [
+			$text,
+			$po,
+			null,
+			'user:NewAuthor;time:20180808000000;',
+			'user-subst:NewAuthor;time-subst:20180808000000;',
+		];
+
+		$text = "(ONE)<includeonly>(TWO)</includeonly>"
+			. "<noinclude>#{{:ParserRevisionAccessTest}}#</noinclude>";
+
+		$newRevision = new MutableRevisionRecord( $title );
+		$newRevision->setUser( new UserIdentityValue( 9, 'NewAuthor', 0 ) );
+		$newRevision->setTimestamp( '20180808000000' );
+		$newRevision->setContent( SlotRecord::MAIN, new WikitextContent( $text ) );
+
+		$po = new ParserOptions( $frank );
+		$po->setIsPreview( true );
+		$po->setCurrentRevisionCallback( function () use ( $newRevision ) {
+			return new Revision( $newRevision );
+		} );
+
+		yield 'preview with self-transclude' => [ $text, $po, null, '(ONE)#(ONE)(TWO)#' ];
+	}
+
+	/**
+	 * @dataProvider provideRevisionAccess
+	 */
+	public function testRevisionAccess(
+		$text,
+		ParserOptions $po,
+		$revId,
+		$expectedInHtml,
+		$expectedInPst = null
+	) {
+		$title = $this->getMockTitle( 'ParserRevisionAccessTest' );
+
+		$po->enableLimitReport( false );
+
+		$oldRevision = new MutableRevisionRecord( $title );
+		$oldRevision->setId( 100 );
+		$oldRevision->setUser( new UserIdentityValue( 7, 'OldAuthor', 0 ) );
+		$oldRevision->setTimestamp( '20140404000000' );
+		$oldRevision->setContent( SlotRecord::MAIN, new WikitextContent( 'OLD' ) );
+
+		$currentRevision = new MutableRevisionRecord( $title );
+		$currentRevision->setId( 200 );
+		$currentRevision->setUser( new UserIdentityValue( 9, 'CurrentAuthor', 0 ) );
+		$currentRevision->setTimestamp( '20160606000000' );
+		$currentRevision->setContent( SlotRecord::MAIN, new WikitextContent( 'CURRENT' ) );
+
+		$revisionStore = $this->getMockBuilder( RevisionStore::class )
+			->disableOriginalConstructor()
+			->getMock();
+
+		$revisionStore
+			->method( 'getKnownCurrentRevision' )
+			->willReturnMap( [
+				[ $title, 100, $oldRevision ],
+				[ $title, 200, $currentRevision ],
+				[ $title, 0, $currentRevision ],
+			] );
+
+		$revisionStore
+			->method( 'getRevisionById' )
+			->willReturnMap( [
+				[ 100, 0, $oldRevision ],
+				[ 200, 0, $currentRevision ],
+			] );
+
+		$this->setService( 'RevisionStore', $revisionStore );
+
+		$parser = MediaWikiServices::getInstance()->getParser();
+		$parser->parse( $text, $title, $po, true, true, $revId );
+		$html = $parser->getOutput()->getText();
+
+		$this->assertContains( $expectedInHtml, $html, 'In HTML' );
+
+		if ( $expectedInPst !== null ) {
+			$pst = $parser->preSaveTransform( $text, $title, $po->getUser(), $po );
+			$this->assertContains( $expectedInPst, $pst, 'After Pre-Safe Transform' );
+		}
+	}
+
+	public static function provideGuessSectionNameFromWikiText() {
+		return [
+			[ '1/2', 'html5', '#1/2' ],
+			[ '1/2', 'legacy', '#1.2F2' ],
+		];
+	}
+
+	/** @dataProvider provideGuessSectionNameFromWikiText */
+	public function testGuessSectionNameFromWikiText( $input, $mode, $expected ) {
+		$this->setMwGlobals( [ 'wgFragmentMode' => [ $mode ] ] );
+		$result = MediaWikiServices::getInstance()->getParser()
+			->guessSectionNameFromWikiText( $input );
+		$this->assertEquals( $result, $expected );
 	}
 
 	// @todo Add tests for cleanSig() / cleanSigInSig(), getSection(),

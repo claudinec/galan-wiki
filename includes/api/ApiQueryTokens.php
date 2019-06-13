@@ -2,9 +2,7 @@
 /**
  * Module to fetch tokens via action=query&meta=tokens
  *
- * Created on August 8, 2014
- *
- * Copyright © 2014 Brad Jorsch bjorsch@wikimedia.org
+ * Copyright © 2014 Wikimedia Foundation and contributors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,7 +38,7 @@ class ApiQueryTokens extends ApiQueryBase {
 		];
 
 		if ( $this->lacksSameOriginSecurity() ) {
-			$this->setWarning( 'Tokens may not be obtained when the same-origin policy is not applied' );
+			$this->addWarning( [ 'apiwarn-tokens-origin' ] );
 			return;
 		}
 
@@ -96,7 +94,7 @@ class ApiQueryTokens extends ApiQueryBase {
 	public static function getToken( User $user, MediaWiki\Session\Session $session, $salt ) {
 		if ( is_array( $salt ) ) {
 			$session->persist();
-			return call_user_func_array( [ $session, 'getToken' ], $salt );
+			return $session->getToken( ...$salt );
 		} else {
 			return $user->getEditTokenObject( $salt, $session->getRequest() );
 		}
@@ -131,6 +129,6 @@ class ApiQueryTokens extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Tokens';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Tokens';
 	}
 }

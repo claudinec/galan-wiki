@@ -1,5 +1,7 @@
 <?php
 
+use MediaWiki\Block\DatabaseBlock;
+
 /**
  * @covers LocalIdLookup
  * @group Database
@@ -8,12 +10,9 @@ class LocalIdLookupTest extends MediaWikiTestCase {
 	private $localUsers = [];
 
 	protected function setUp() {
-		global $wgGroupPermissions;
-
 		parent::setUp();
 
-		$this->stashMwGlobals( [ 'wgGroupPermissions' ] );
-		$wgGroupPermissions['local-id-lookup-test']['hideuser'] = true;
+		$this->setGroupPermissions( 'local-id-lookup-test', 'hideuser', true );
 	}
 
 	public function addDBData() {
@@ -23,7 +22,7 @@ class LocalIdLookupTest extends MediaWikiTestCase {
 
 		$sysop = static::getTestSysop()->getUser();
 
-		$block = new Block( [
+		$block = new DatabaseBlock( [
 			'address' => $this->localUsers[2]->getName(),
 			'by' => $sysop->getId(),
 			'reason' => __METHOD__,
@@ -32,7 +31,7 @@ class LocalIdLookupTest extends MediaWikiTestCase {
 		] );
 		$block->insert();
 
-		$block = new Block( [
+		$block = new DatabaseBlock( [
 			'address' => $this->localUsers[3]->getName(),
 			'by' => $sysop->getId(),
 			'reason' => __METHOD__,
@@ -127,9 +126,8 @@ class LocalIdLookupTest extends MediaWikiTestCase {
 	 * @param bool $localDBSet $wgLocalDatabases contains the shared DB
 	 */
 	public function testIsAttachedShared( $sharedDB, $sharedTable, $localDBSet ) {
-		global $wgDBName;
 		$this->setMwGlobals( [
-			'wgSharedDB' => $sharedDB ? $wgDBName : null,
+			'wgSharedDB' => $sharedDB ? "dummy" : null,
 			'wgSharedTables' => $sharedTable ? [ 'user' ] : [],
 			'wgLocalDatabases' => $localDBSet ? [ 'shared' ] : [],
 		] );

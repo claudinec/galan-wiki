@@ -59,6 +59,14 @@ abstract class FormAction extends Action {
 	}
 
 	/**
+	 * Whether the form should use OOUI
+	 * @return bool
+	 */
+	protected function usesOOUI() {
+		return false;
+	}
+
+	/**
 	 * Get the HTMLForm to control behavior
 	 * @return HTMLForm|null
 	 */
@@ -68,7 +76,11 @@ abstract class FormAction extends Action {
 		// Give hooks a chance to alter the form, adding extra fields or text etc
 		Hooks::run( 'ActionModifyFormFields', [ $this->getName(), &$this->fields, $this->page ] );
 
-		$form = new HTMLForm( $this->fields, $this->getContext(), $this->getName() );
+		if ( $this->usesOOUI() ) {
+			$form = HTMLForm::factory( 'ooui', $this->fields, $this->getContext(), $this->getName() );
+		} else {
+			$form = new HTMLForm( $this->fields, $this->getContext(), $this->getName() );
+		}
 		$form->setSubmitCallback( [ $this, 'onSubmit' ] );
 
 		$title = $this->getTitle();
@@ -97,8 +109,13 @@ abstract class FormAction extends Action {
 	 *
 	 * If you don't want to do anything with the form, just return false here.
 	 *
+	 * This method will be passed to the HTMLForm as a submit callback (see
+	 * HTMLForm::setSubmitCallback) and must return as documented for HTMLForm::trySubmit.
+	 *
+	 * @see HTMLForm::setSubmitCallback()
+	 * @see HTMLForm::trySubmit()
 	 * @param array $data
-	 * @return bool|array True for success, false for didn't-try, array of errors on failure
+	 * @return bool|string|array|Status Must return as documented for HTMLForm::trySubmit
 	 */
 	abstract public function onSubmit( $data );
 

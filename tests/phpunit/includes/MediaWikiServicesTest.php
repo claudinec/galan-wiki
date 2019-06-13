@@ -1,12 +1,9 @@
 <?php
-use Liuggio\StatsdClient\Factory\StatsdDataFactory;
-use MediaWiki\Interwiki\InterwikiLookup;
-use MediaWiki\Linker\LinkRenderer;
-use MediaWiki\Linker\LinkRendererFactory;
+
 use MediaWiki\MediaWikiServices;
-use MediaWiki\Services\DestructibleService;
-use MediaWiki\Services\SalvageableService;
-use MediaWiki\Services\ServiceDisabledException;
+use Wikimedia\Services\DestructibleService;
+use Wikimedia\Services\SalvageableService;
+use Wikimedia\Services\ServiceDisabledException;
 
 /**
  * @covers MediaWiki\MediaWikiServices
@@ -14,6 +11,7 @@ use MediaWiki\Services\ServiceDisabledException;
  * @group MediaWiki
  */
 class MediaWikiServicesTest extends MediaWikiTestCase {
+	private $deprecatedServices = [];
 
 	/**
 	 * @return Config
@@ -47,14 +45,14 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 	public function testGetInstance() {
 		$services = MediaWikiServices::getInstance();
-		$this->assertInstanceOf( 'MediaWiki\\MediaWikiServices', $services );
+		$this->assertInstanceOf( MediaWikiServices::class, $services );
 	}
 
 	public function testForceGlobalInstance() {
 		$newServices = $this->newMediaWikiServices();
 		$oldServices = MediaWikiServices::forceGlobalInstance( $newServices );
 
-		$this->assertInstanceOf( 'MediaWiki\\MediaWikiServices', $oldServices );
+		$this->assertInstanceOf( MediaWikiServices::class, $oldServices );
 		$this->assertNotSame( $oldServices, $newServices );
 
 		$theServices = MediaWikiServices::getInstance();
@@ -70,13 +68,13 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 		$newServices = $this->newMediaWikiServices();
 		$oldServices = MediaWikiServices::forceGlobalInstance( $newServices );
 
-		$service1 = $this->getMock( SalvageableService::class );
+		$service1 = $this->createMock( SalvageableService::class );
 		$service1->expects( $this->never() )
 			->method( 'salvage' );
 
 		$newServices->defineService(
 			'Test',
-			function() use ( $service1 ) {
+			function () use ( $service1 ) {
 				return $service1;
 			}
 		);
@@ -103,11 +101,11 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 		$newServices = $this->newMediaWikiServices();
 		$oldServices = MediaWikiServices::forceGlobalInstance( $newServices );
 
-		$service1 = $this->getMock( SalvageableService::class );
+		$service1 = $this->createMock( SalvageableService::class );
 		$service1->expects( $this->never() )
 			->method( 'salvage' );
 
-		$service2 = $this->getMock( SalvageableService::class );
+		$service2 = $this->createMock( SalvageableService::class );
 		$service2->expects( $this->once() )
 			->method( 'salvage' )
 			->with( $service1 );
@@ -120,7 +118,7 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 		$newServices->defineService(
 			'Test',
-			function() use ( &$instantiatorReturnValues ) {
+			function () use ( &$instantiatorReturnValues ) {
 				return array_shift( $instantiatorReturnValues );
 			}
 		);
@@ -143,16 +141,13 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 		$newServices = $this->newMediaWikiServices();
 		$oldServices = MediaWikiServices::forceGlobalInstance( $newServices );
 
-		$lbFactory = $this->getMockBuilder( 'LBFactorySimple' )
+		$lbFactory = $this->getMockBuilder( \Wikimedia\Rdbms\LBFactorySimple::class )
 			->disableOriginalConstructor()
 			->getMock();
 
-		$lbFactory->expects( $this->once() )
-			->method( 'destroy' );
-
 		$newServices->redefineService(
 			'DBLoadBalancerFactory',
-			function() use ( $lbFactory ) {
+			function () use ( $lbFactory ) {
 				return $lbFactory;
 			}
 		);
@@ -164,28 +159,30 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 		try {
 			MediaWikiServices::getInstance()->getService( 'DBLoadBalancerFactory' );
-			$this->fail( 'DBLoadBalancerFactory shoudl have been disabled' );
+			$this->fail( 'DBLoadBalancerFactory should have been disabled' );
 		}
 		catch ( ServiceDisabledException $ex ) {
 			// ok, as expected
-		}
-		catch ( Throwable $ex ) {
+		} catch ( Throwable $ex ) {
 			$this->fail( 'ServiceDisabledException expected, caught ' . get_class( $ex ) );
 		}
 
 		MediaWikiServices::forceGlobalInstance( $oldServices );
 		$newServices->destroy();
+
+		// No exception was thrown, avoid being risky
+		$this->assertTrue( true );
 	}
 
 	public function testResetChildProcessServices() {
 		$newServices = $this->newMediaWikiServices();
 		$oldServices = MediaWikiServices::forceGlobalInstance( $newServices );
 
-		$service1 = $this->getMock( DestructibleService::class );
+		$service1 = $this->createMock( DestructibleService::class );
 		$service1->expects( $this->once() )
 			->method( 'destroy' );
 
-		$service2 = $this->getMock( DestructibleService::class );
+		$service2 = $this->createMock( DestructibleService::class );
 		$service2->expects( $this->never() )
 			->method( 'destroy' );
 
@@ -197,7 +194,7 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 		$newServices->defineService(
 			'Test',
-			function() use ( &$instantiatorReturnValues ) {
+			function () use ( &$instantiatorReturnValues ) {
 				return array_shift( $instantiatorReturnValues );
 			}
 		);
@@ -220,9 +217,9 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 		$services->defineService(
 			'Test',
-			function() use ( &$serviceCounter ) {
+			function () use ( &$serviceCounter ) {
 				$serviceCounter++;
-				$service = $this->getMock( 'MediaWiki\Services\DestructibleService' );
+				$service = $this->createMock( Wikimedia\Services\DestructibleService::class );
 				$service->expects( $this->once() )->method( 'destroy' );
 				return $service;
 			}
@@ -250,8 +247,8 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 
 		$services->defineService(
 			'Test',
-			function() {
-				$service = $this->getMock( 'MediaWiki\Services\DestructibleService' );
+			function () {
+				$service = $this->createMock( Wikimedia\Services\DestructibleService::class );
 				$service->expects( $this->never() )->method( 'destroy' );
 				return $service;
 			}
@@ -280,6 +277,7 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 			$getterCases[$name] = [
 				'get' . $service,
 				$class,
+				in_array( $service, $this->deprecatedServices )
 			];
 		}
 
@@ -289,7 +287,11 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 	/**
 	 * @dataProvider provideGetters
 	 */
-	public function testGetters( $getter, $type ) {
+	public function testGetters( $getter, $type, $isDeprecated = false ) {
+		if ( $isDeprecated ) {
+			$this->hideDeprecated( MediaWikiServices::class . "::$getter" );
+		}
+
 		// Test against the default instance, since the dummy will not know the default services.
 		$services = MediaWikiServices::getInstance();
 		$service = $services->$getter();
@@ -297,32 +299,18 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 	}
 
 	public function provideGetService() {
-		// NOTE: This should list all service getters defined in ServiceWiring.php.
-		// NOTE: For every test case defined here there should be a corresponding
-		// test case defined in provideGetters().
-		return [
-			'BootstrapConfig' => [ 'BootstrapConfig', Config::class ],
-			'ConfigFactory' => [ 'ConfigFactory', ConfigFactory::class ],
-			'MainConfig' => [ 'MainConfig', Config::class ],
-			'SiteStore' => [ 'SiteStore', SiteStore::class ],
-			'SiteLookup' => [ 'SiteLookup', SiteLookup::class ],
-			'StatsdDataFactory' => [ 'StatsdDataFactory', StatsdDataFactory::class ],
-			'InterwikiLookup' => [ 'InterwikiLookup', InterwikiLookup::class ],
-			'EventRelayerGroup' => [ 'EventRelayerGroup', EventRelayerGroup::class ],
-			'SearchEngineFactory' => [ 'SearchEngineFactory', SearchEngineFactory::class ],
-			'SearchEngineConfig' => [ 'SearchEngineConfig', SearchEngineConfig::class ],
-			'SkinFactory' => [ 'SkinFactory', SkinFactory::class ],
-			'DBLoadBalancerFactory' => [ 'DBLoadBalancerFactory', 'LBFactory' ],
-			'DBLoadBalancer' => [ 'DBLoadBalancer', 'LoadBalancer' ],
-			'WatchedItemStore' => [ 'WatchedItemStore', WatchedItemStore::class ],
-			'GenderCache' => [ 'GenderCache', GenderCache::class ],
-			'LinkCache' => [ 'LinkCache', LinkCache::class ],
-			'LinkRenderer' => [ 'LinkRenderer', LinkRenderer::class ],
-			'LinkRendererFactory' => [ 'LinkRendererFactory', LinkRendererFactory::class ],
-			'_MediaWikiTitleCodec' => [ '_MediaWikiTitleCodec', MediaWikiTitleCodec::class ],
-			'TitleFormatter' => [ 'TitleFormatter', TitleFormatter::class ],
-			'TitleParser' => [ 'TitleParser', TitleParser::class ],
-		];
+		global $IP;
+		$serviceList = require "$IP/includes/ServiceWiring.php";
+		$ret = [];
+		foreach ( $serviceList as $name => $callback ) {
+			$fun = new ReflectionFunction( $callback );
+			if ( !$fun->hasReturnType() ) {
+				throw new MWException( 'All service callbacks must have a return type defined, ' .
+					"none found for $name" );
+			}
+			$ret[$name] = [ $name, $fun->getReturnType()->__toString() ];
+		}
+		return $ret;
 	}
 
 	/**
@@ -350,4 +338,35 @@ class MediaWikiServicesTest extends MediaWikiTestCase {
 		}
 	}
 
+	public function testDefaultServiceWiringServicesHaveTests() {
+		global $IP;
+		$testedServices = array_keys( $this->provideGetService() );
+		$allServices = array_keys( require "$IP/includes/ServiceWiring.php" );
+		$this->assertEquals(
+			[],
+			array_diff( $allServices, $testedServices ),
+			'The following services have not been added to MediaWikiServicesTest::provideGetService'
+		);
+	}
+
+	public function testGettersAreSorted() {
+		$methods = ( new ReflectionClass( MediaWikiServices::class ) )
+			->getMethods( ReflectionMethod::IS_STATIC | ReflectionMethod::IS_PUBLIC );
+
+		$names = array_map( function ( $method ) {
+			return $method->getName();
+		}, $methods );
+		$serviceNames = array_map( function ( $name ) {
+			return "get$name";
+		}, array_keys( $this->provideGetService() ) );
+		$names = array_values( array_filter( $names, function ( $name ) use ( $serviceNames ) {
+			return in_array( $name, $serviceNames );
+		} ) );
+
+		$sortedNames = $names;
+		natcasesort( $sortedNames );
+
+		$this->assertSame( $sortedNames, $names,
+			'Please keep service getters sorted alphabetically' );
+	}
 }

@@ -24,6 +24,10 @@
  * @author Ævar Arnfjörð Bjarmason <avarab@gmail.com>
  */
 
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\IResultWrapper;
+use Wikimedia\Rdbms\IDatabase;
+
 /**
  * A special page that list pages that have highest category count
  *
@@ -50,7 +54,8 @@ class MostcategoriesPage extends QueryPage {
 				'title' => 'page_title',
 				'value' => 'COUNT(*)'
 			],
-			'conds' => [ 'page_namespace' => MWNamespace::getContentNamespaces() ],
+			'conds' => [ 'page_namespace' =>
+				MediaWikiServices::getInstance()->getNamespaceInfo()->getContentNamespaces() ],
 			'options' => [
 				'HAVING' => 'COUNT(*) > 1',
 				'GROUP BY' => [ 'page_namespace', 'page_title' ]
@@ -66,22 +71,10 @@ class MostcategoriesPage extends QueryPage {
 
 	/**
 	 * @param IDatabase $db
-	 * @param ResultWrapper $res
+	 * @param IResultWrapper $res
 	 */
 	function preprocessResults( $db, $res ) {
-		# There's no point doing a batch check if we aren't caching results;
-		# the page must exist for it to have been pulled out of the table
-		if ( !$this->isCached() || !$res->numRows() ) {
-			return;
-		}
-
-		$batch = new LinkBatch();
-		foreach ( $res as $row ) {
-			$batch->add( $row->namespace, $row->title );
-		}
-		$batch->execute();
-
-		$res->seek( 0 );
+		$this->executeLBFromResultWrapper( $res );
 	}
 
 	/**
@@ -103,10 +96,11 @@ class MostcategoriesPage extends QueryPage {
 			);
 		}
 
+		$linkRenderer = $this->getLinkRenderer();
 		if ( $this->isCached() ) {
-			$link = Linker::link( $title );
+			$link = $linkRenderer->makeLink( $title );
 		} else {
-			$link = Linker::linkKnown( $title );
+			$link = $linkRenderer->makeKnownLink( $title );
 		}
 
 		$count = $this->msg( 'ncategories' )->numParams( $result->value )->escaped();

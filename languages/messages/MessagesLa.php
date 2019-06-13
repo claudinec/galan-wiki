@@ -51,7 +51,7 @@ $namespaceAliases = [
 	'Disputatio_Imaginis' => NS_FILE_TALK,
 ];
 
-$separatorTransformTable = [ ',' => "\xc2\xa0" ];
+$separatorTransformTable = [ ',' => "\u{00A0}" ];
 
 $dateFormats = [
 	'mdy time' => 'H:i',
@@ -157,4 +157,3 @@ $specialPageAliases = [
 	'Whatlinkshere'             => [ 'Nexus_ad_paginam' ],
 	'Withoutinterwiki'          => [ 'Paginae_sine_nexibus_ad_linguas_alias', 'Paginae_sine_nexibus_intervicis' ],
 ];
-

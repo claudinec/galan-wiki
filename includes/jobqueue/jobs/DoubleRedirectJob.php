@@ -21,16 +21,14 @@
  * @ingroup JobQueue
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Job to fix double redirects after moving a page
  *
  * @ingroup JobQueue
  */
 class DoubleRedirectJob extends Job {
-	/** @var string Reason for the change, 'maintenance' or 'move'. Suffix fo
-	 *    message key 'double-redirect-fixed-'.
-	 */
-	private $reason;
 
 	/** @var Title The title which has changed, redirects pointing to this
 	 *    title are fixed
@@ -42,11 +40,15 @@ class DoubleRedirectJob extends Job {
 
 	/**
 	 * @param Title $title
-	 * @param array $params
+	 * @param array $params Expected to contain these elements:
+	 * - 'redirTitle' => string The title that changed and should be fixed.
+	 * - 'reason' => string Reason for the change, can be "move" or "maintenance". Used as a suffix
+	 *   for the message keys "double-redirect-fixed-move" and
+	 *   "double-redirect-fixed-maintenance".
+	 * ]
 	 */
 	function __construct( Title $title, array $params ) {
 		parent::__construct( 'fixDoubleRedirect', $title, $params );
-		$this->reason = $params['reason'];
 		$this->redirTitle = Title::newFromText( $params['redirTitle'] );
 	}
 
@@ -116,7 +118,7 @@ class DoubleRedirectJob extends Job {
 		}
 
 		// Check for a suppression tag (used e.g. in periodically archived discussions)
-		$mw = MagicWord::get( 'staticredirect' );
+		$mw = MediaWikiServices::getInstance()->getMagicWordFactory()->get( 'staticredirect' );
 		if ( $content->matchMagicWord( $mw ) ) {
 			wfDebug( __METHOD__ . ": skipping: suppressed with __STATICREDIRECT__\n" );
 
@@ -137,7 +139,7 @@ class DoubleRedirectJob extends Job {
 			wfDebug( __METHOD__ . " : skipping, already good\n" );
 		}
 
-		// Preserve fragment (bug 14904)
+		// Preserve fragment (T16904)
 		$newTitle = Title::makeTitle( $newTitle->getNamespace(), $newTitle->getDBkey(),
 			$currentDest->getFragment(), $newTitle->getInterwiki() );
 
@@ -164,10 +166,11 @@ class DoubleRedirectJob extends Job {
 		$article = WikiPage::factory( $this->title );
 
 		// Messages: double-redirect-fixed-move, double-redirect-fixed-maintenance
-		$reason = wfMessage( 'double-redirect-fixed-' . $this->reason,
+		$reason = wfMessage( 'double-redirect-fixed-' . $this->params['reason'],
 			$this->redirTitle->getPrefixedText(), $newTitle->getPrefixedText()
 		)->inContentLanguage()->text();
-		$article->doEditContent( $newContent, $reason, EDIT_UPDATE | EDIT_SUPPRESS_RC, false, $user );
+		$flags = EDIT_UPDATE | EDIT_SUPPRESS_RC | EDIT_INTERNAL;
+		$article->doEditContent( $newContent, $reason, $flags, false, $user );
 		$wgUser = $oldUser;
 
 		return true;
@@ -178,7 +181,8 @@ class DoubleRedirectJob extends Job {
 	 *
 	 * @param Title $title
 	 *
-	 * @return bool If the specified title is not a redirect, or if it is a circular redirect
+	 * @return Title|bool The final Title after following all redirects, or false if
+	 *  the page is not a redirect or the redirect loops.
 	 */
 	public static function getFinalDestination( $title ) {
 		$dbw = wfGetDB( DB_MASTER );
@@ -197,7 +201,7 @@ class DoubleRedirectJob extends Job {
 			$seenTitles[$titleText] = true;
 
 			if ( $title->isExternal() ) {
-				// If the target is interwiki, we have to break early (bug 40352).
+				// If the target is interwiki, we have to break early (T42352).
 				// Otherwise it will look up a row in the local page table
 				// with the namespace/page of the interwiki target which can cause
 				// unexpected results (e.g. X -> foo:Bar -> Bar -> .. )

@@ -20,6 +20,8 @@
  * @file
  */
 
+use MediaWiki\Logger\LegacyLogger;
+
 /**
  * New debugger system that outputs a toolbar on page view.
  *
@@ -93,7 +95,7 @@ class MWDebug {
 	 */
 	public static function addModules( OutputPage $out ) {
 		if ( self::$enabled ) {
-			$out->addModules( 'mediawiki.debug.init' );
+			$out->addModules( 'mediawiki.debug' );
 		}
 	}
 
@@ -145,8 +147,6 @@ class MWDebug {
 	 * @param string $log 'production' will always trigger a php error, 'auto'
 	 *    will trigger an error if $wgDevelopmentWarnings is true, and 'debug'
 	 *    will only write to the debug log(s).
-	 *
-	 * @return mixed
 	 */
 	public static function warning( $msg, $callerOffset = 1, $level = E_USER_NOTICE, $log = 'auto' ) {
 		global $wgDevelopmentWarnings;
@@ -185,7 +185,7 @@ class MWDebug {
 	 * @param string $function Function that is deprecated.
 	 * @param string|bool $version Version in which the function was deprecated.
 	 * @param string|bool $component Component to which the function belongs.
-	 *    If false, it is assumbed the function is in MediaWiki core.
+	 *    If false, it is assumed the function is in MediaWiki core.
 	 * @param int $callerOffset How far up the callstack is the original
 	 *    caller. 2 = function that called the function that called
 	 *    MWDebug::deprecated() (Added in 1.20).
@@ -334,6 +334,7 @@ class MWDebug {
 				if ( isset( $context['seconds_elapsed'] ) && isset( $context['memory_used'] ) ) {
 					$prefix .= "{$context['seconds_elapsed']} {$context['memory_used']}  ";
 				}
+				$str = LegacyLogger::interpolate( $str, $context );
 				$str = $prefix . $str;
 			}
 			self::$debug[] = rtrim( UtfNormal\Validator::cleanUp( $str ) );
@@ -347,12 +348,12 @@ class MWDebug {
 	 * @param string $sql
 	 * @param string $function
 	 * @param bool $isMaster
-	 * @return int ID number of the query to pass to queryTime or -1 if the
-	 *  debugger is disabled
+	 * @param float $runTime Query run time
+	 * @return bool True if debugger is enabled, false otherwise
 	 */
-	public static function query( $sql, $function, $isMaster ) {
+	public static function query( $sql, $function, $isMaster, $runTime ) {
 		if ( !self::$enabled ) {
-			return -1;
+			return false;
 		}
 
 		// Replace invalid UTF-8 chars with a square UTF-8 character
@@ -368,7 +369,7 @@ class MWDebug {
 				| [\xF0-\xF4](?![\x80-\xBF]{3}) # Invalid UTF-8 Sequence Start
 				| (?<=[\x0-\x7F\xF5-\xFF])[\x80-\xBF] # Invalid UTF-8 Sequence Middle
 				| (?<![\xC2-\xDF]|[\xE0-\xEF]|[\xE0-\xEF][\x80-\xBF]|[\xF0-\xF4]
-				   |[\xF0-\xF4][\x80-\xBF]|[\xF0-\xF4][\x80-\xBF]{2})[\x80-\xBF] # Overlong Sequence
+					| [\xF0-\xF4][\x80-\xBF]|[\xF0-\xF4][\x80-\xBF]{2})[\x80-\xBF] # Overlong Sequence
 				| (?<=[\xE0-\xEF])[\x80-\xBF](?![\x80-\xBF]) # Short 3 byte sequence
 				| (?<=[\xF0-\xF4])[\x80-\xBF](?![\x80-\xBF]{2}) # Short 4 byte sequence
 				| (?<=[\xF0-\xF4][\x80-\xBF])[\x80-\xBF](?![\x80-\xBF]) # Short 4 byte sequence (2)
@@ -384,26 +385,10 @@ class MWDebug {
 			'sql' => $sql,
 			'function' => $function,
 			'master' => (bool)$isMaster,
-			'time' => 0.0,
-			'_start' => microtime( true ),
+			'time' => $runTime,
 		];
 
-		return count( self::$query ) - 1;
-	}
-
-	/**
-	 * Calculates how long a query took.
-	 *
-	 * @since 1.19
-	 * @param int $id
-	 */
-	public static function queryTime( $id ) {
-		if ( $id === -1 || !self::$enabled ) {
-			return;
-		}
-
-		self::$query[$id]['time'] = microtime( true ) - self::$query[$id]['_start'];
-		unset( self::$query[$id]['_start'] );
+		return true;
 	}
 
 	/**
@@ -439,19 +424,20 @@ class MWDebug {
 		$html = '';
 
 		if ( self::$enabled ) {
-			MWDebug::log( 'MWDebug output complete' );
+			self::log( 'MWDebug output complete' );
 			$debugInfo = self::getDebugInfo( $context );
 
 			// Cannot use OutputPage::addJsConfigVars because those are already outputted
 			// by the time this method is called.
 			$html = ResourceLoader::makeInlineScript(
-				ResourceLoader::makeConfigSetScript( [ 'debugInfo' => $debugInfo ] )
+				ResourceLoader::makeConfigSetScript( [ 'debugInfo' => $debugInfo ] ),
+				$context->getOutput()->getCSPNonce()
 			);
 		}
 
 		if ( $wgDebugComments ) {
 			$html .= "<!-- Debug output:\n" .
-				htmlspecialchars( implode( "\n", self::$debug ) ) .
+				htmlspecialchars( implode( "\n", self::$debug ), ENT_NOQUOTES ) .
 				"\n\n-->";
 		}
 
@@ -509,7 +495,7 @@ class MWDebug {
 			}
 		}
 
-		MWDebug::log( 'MWDebug output complete' );
+		self::log( 'MWDebug output complete' );
 		$debugInfo = self::getDebugInfo( $context );
 
 		ApiResult::setIndexedTagName( $debugInfo, 'debuginfo' );
@@ -531,7 +517,7 @@ class MWDebug {
 			return [];
 		}
 
-		global $wgVersion, $wgRequestTime;
+		global $wgVersion;
 		$request = $context->getRequest();
 
 		// HHVM's reported memory usage from memory_get_peak_usage()
@@ -540,14 +526,21 @@ class MWDebug {
 		// see: https://github.com/facebook/hhvm/issues/2257#issuecomment-39362246
 		$realMemoryUsage = wfIsHHVM();
 
+		$branch = GitInfo::currentBranch();
+		if ( GitInfo::isSHA1( $branch ) ) {
+			// If it's a detached HEAD, the SHA1 will already be
+			// included in the MW version, so don't show it.
+			$branch = false;
+		}
+
 		return [
 			'mwVersion' => $wgVersion,
 			'phpEngine' => wfIsHHVM() ? 'HHVM' : 'PHP',
 			'phpVersion' => wfIsHHVM() ? HHVM_VERSION : PHP_VERSION,
 			'gitRevision' => GitInfo::headSHA1(),
-			'gitBranch' => GitInfo::currentBranch(),
+			'gitBranch' => $branch,
 			'gitViewUrl' => GitInfo::headViewUrl(),
-			'time' => microtime( true ) - $wgRequestTime,
+			'time' => $request->getElapsedTime(),
 			'log' => self::$log,
 			'debugLog' => self::$debug,
 			'queries' => self::$query,

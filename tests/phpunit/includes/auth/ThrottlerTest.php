@@ -4,25 +4,16 @@ namespace MediaWiki\Auth;
 
 use BagOStuff;
 use HashBagOStuff;
-use InvalidArgumentException;
 use Psr\Log\AbstractLogger;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use Wikimedia\TestingAccessWrapper;
 
 /**
  * @group AuthManager
- * @covers MediaWiki\Auth\Throttler
+ * @covers \MediaWiki\Auth\Throttler
  */
 class ThrottlerTest extends \MediaWikiTestCase {
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
-
 	public function testConstructor() {
 		$cache = new \HashBagOStuff();
 		$logger = $this->getMockBuilder( AbstractLogger::class )
@@ -34,7 +25,7 @@ class ThrottlerTest extends \MediaWikiTestCase {
 			[ 'type' => 'foo', 'cache' => $cache ]
 		);
 		$throttler->setLogger( $logger );
-		$throttlerPriv = \TestingAccessWrapper::newFromObject( $throttler );
+		$throttlerPriv = TestingAccessWrapper::newFromObject( $throttler );
 		$this->assertSame( [ [ 'count' => 123, 'seconds' => 456 ] ], $throttlerPriv->conditions );
 		$this->assertSame( 'foo', $throttlerPriv->type );
 		$this->assertSame( $cache, $throttlerPriv->cache );
@@ -42,7 +33,7 @@ class ThrottlerTest extends \MediaWikiTestCase {
 
 		$throttler = new Throttler( [ [ 'count' => 123, 'seconds' => 456 ] ] );
 		$throttler->setLogger( new NullLogger() );
-		$throttlerPriv = \TestingAccessWrapper::newFromObject( $throttler );
+		$throttlerPriv = TestingAccessWrapper::newFromObject( $throttler );
 		$this->assertSame( [ [ 'count' => 123, 'seconds' => 456 ] ], $throttlerPriv->conditions );
 		$this->assertSame( 'custom', $throttlerPriv->type );
 		$this->assertInstanceOf( BagOStuff::class, $throttlerPriv->cache );
@@ -52,7 +43,7 @@ class ThrottlerTest extends \MediaWikiTestCase {
 			'seconds' => 654 ] ] ] );
 		$throttler = new Throttler();
 		$throttler->setLogger( new NullLogger() );
-		$throttlerPriv = \TestingAccessWrapper::newFromObject( $throttler );
+		$throttlerPriv = TestingAccessWrapper::newFromObject( $throttler );
 		$this->assertSame( [ [ 'count' => 321, 'seconds' => 654 ] ], $throttlerPriv->conditions );
 		$this->assertSame( 'password', $throttlerPriv->type );
 		$this->assertInstanceOf( BagOStuff::class, $throttlerPriv->cache );
@@ -72,7 +63,7 @@ class ThrottlerTest extends \MediaWikiTestCase {
 	public function testNormalizeThrottleConditions( $condition, $normalized ) {
 		$throttler = new Throttler( $condition );
 		$throttler->setLogger( new NullLogger() );
-		$throttlerPriv = \TestingAccessWrapper::newFromObject( $throttler );
+		$throttlerPriv = TestingAccessWrapper::newFromObject( $throttler );
 		$this->assertSame( $normalized, $throttlerPriv->conditions );
 	}
 
@@ -94,7 +85,7 @@ class ThrottlerTest extends \MediaWikiTestCase {
 	}
 
 	public function testNormalizeThrottleConditions2() {
-		$priv = \TestingAccessWrapper::newFromClass( Throttler::class );
+		$priv = TestingAccessWrapper::newFromClass( Throttler::class );
 		$this->assertSame( [], $priv->normalizeThrottleConditions( null ) );
 		$this->assertSame( [], $priv->normalizeThrottleConditions( 'bad' ) );
 	}
@@ -172,7 +163,8 @@ class ThrottlerTest extends \MediaWikiTestCase {
 	}
 
 	public function testExpiration() {
-		$cache = $this->getMock( HashBagOStuff::class, [ 'add' ] );
+		$cache = $this->getMockBuilder( HashBagOStuff::class )
+			->setMethods( [ 'add' ] )->getMock();
 		$throttler = new Throttler( [ [ 'count' => 3, 'seconds' => 10 ] ], [ 'cache' => $cache ] );
 		$throttler->setLogger( new NullLogger() );
 
@@ -205,9 +197,9 @@ class ThrottlerTest extends \MediaWikiTestCase {
 			->setMethods( [ 'log' ] )
 			->getMockForAbstractClass();
 		$logger->expects( $this->once() )->method( 'log' )->with( $this->anything(), $this->anything(), [
-			'type' => 'custom',
+			'throttle' => 'custom',
 			'index' => 0,
-			'ip' => '1.2.3.4',
+			'ipKey' => '1.2.3.4',
 			'username' => 'SomeUser',
 			'count' => 1,
 			'expiry' => 10,

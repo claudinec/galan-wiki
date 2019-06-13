@@ -3,6 +3,7 @@
 namespace MediaWiki\Session;
 
 use MediaWikiTestCase;
+use Wikimedia\TestingAccessWrapper;
 
 /**
  * @group Session
@@ -17,7 +18,7 @@ class SessionProviderTest extends MediaWikiTestCase {
 		$config = new \HashConfig();
 
 		$provider = $this->getMockForAbstractClass( SessionProvider::class );
-		$priv = \TestingAccessWrapper::newFromObject( $provider );
+		$priv = TestingAccessWrapper::newFromObject( $provider );
 
 		$provider->setConfig( $config );
 		$this->assertSame( $config, $priv->config );
@@ -133,12 +134,11 @@ class SessionProviderTest extends MediaWikiTestCase {
 			$this->fail( 'Expected exception not thrown' );
 		} catch ( \BadMethodCallException $ex ) {
 			$this->assertSame(
-				'MediaWiki\\Session\\SessionProvider::preventSessionsForUser must be implmented ' .
+				'MediaWiki\\Session\\SessionProvider::preventSessionsForUser must be implemented ' .
 					'when canChangeUser() is false',
 				$ex->getMessage()
 			);
 		}
-
 	}
 
 	public function testHashToSessionId() {
@@ -149,7 +149,7 @@ class SessionProviderTest extends MediaWikiTestCase {
 		$provider = $this->getMockForAbstractClass( SessionProvider::class,
 			[], 'MockSessionProvider' );
 		$provider->setConfig( $config );
-		$priv = \TestingAccessWrapper::newFromObject( $provider );
+		$priv = TestingAccessWrapper::newFromObject( $provider );
 
 		$this->assertSame( 'eoq8cb1mg7j30ui5qolafps4hg29k5bb', $priv->hashToSessionId( 'foobar' ) );
 		$this->assertSame( '4do8j7tfld1g8tte9jqp3csfgmulaun9',
@@ -199,7 +199,7 @@ class SessionProviderTest extends MediaWikiTestCase {
 			);
 		}
 
-		\TestingAccessWrapper::newFromObject( $backend )->provider = $provider;
+		TestingAccessWrapper::newFromObject( $backend )->provider = $provider;
 		$this->assertNull( $provider->getAllowedUserRights( $backend ) );
 	}
 

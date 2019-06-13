@@ -23,6 +23,8 @@
  * @author Rob Church <robchur@gmail.com>
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * File reversion user interface
  *
@@ -66,6 +68,10 @@ class RevertAction extends FormAction {
 		}
 	}
 
+	protected function usesOOUI() {
+		return true;
+	}
+
 	protected function alterForm( HTMLForm $form ) {
 		$form->setWrapperLegendMsg( 'filerevert-legend' );
 		$form->setSubmitTextMsg( 'filerevert-submit' );
@@ -74,8 +80,6 @@ class RevertAction extends FormAction {
 	}
 
 	protected function getFormFields() {
-		global $wgContLang;
-
 		$timestamp = $this->oldFile->getTimestamp();
 
 		$user = $this->getUser();
@@ -84,8 +88,9 @@ class RevertAction extends FormAction {
 		$userTime = $lang->userTime( $timestamp, $user );
 		$siteTs = MWTimestamp::getLocalInstance( $timestamp );
 		$ts = $siteTs->format( 'YmdHis' );
-		$siteDate = $wgContLang->date( $ts, false, false );
-		$siteTime = $wgContLang->time( $ts, false, false );
+		$contLang = MediaWikiServices::getInstance()->getContentLanguage();
+		$siteDate = $contLang->date( $ts, false, false );
+		$siteTime = $contLang->time( $ts, false, false );
 		$tzMsg = $siteTs->getTimezoneMessage()->inContentLanguage()->text();
 
 		return [
@@ -112,20 +117,29 @@ class RevertAction extends FormAction {
 	public function onSubmit( $data ) {
 		$this->useTransactionalTimeLimit();
 
-		$source = $this->page->getFile()->getArchiveVirtualUrl(
-			$this->getRequest()->getText( 'oldimage' )
-		);
+		$old = $this->getRequest()->getText( 'oldimage' );
+		$localFile = $this->page->getFile();
+		$oldFile = OldLocalFile::newFromArchiveName( $this->getTitle(), $localFile->getRepo(), $old );
+
+		$source = $localFile->getArchiveVirtualUrl( $old );
 		$comment = $data['comment'];
 
+		if ( $localFile->getSha1() === $oldFile->getSha1() ) {
+			return Status::newFatal( 'filerevert-identical' );
+		}
+
 		// TODO: Preserve file properties from database instead of reloading from file
-		return $this->page->getFile()->upload(
+		return $localFile->upload(
 			$source,
 			$comment,
 			$comment,
 			0,
 			false,
 			false,
-			$this->getUser()
+			$this->getUser(),
+			[],
+			true,
+			true
 		);
 	}
 

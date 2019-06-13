@@ -1,12 +1,14 @@
 /* suggestions plugin */
 
+/* stylelint-disable selector-class-pattern */
+
 .suggestions {
 	overflow: hidden;
 	position: absolute;
 	top: 0;
 	left: 0;
 	width: 0;
-	border: none;
+	border: 0;
 	z-index: 1099;
 	padding: 0;
 	margin: -1px 0 0 0;
@@ -16,8 +18,7 @@
 	position: relative;
 	background-color: #fff;
 	cursor: pointer;
-	border: solid 1px #aaa;
-	padding: 0;
+	border: 1px solid #a2a9b1;
 	margin: 0;
 	margin-top: -2px;
 	display: none;
@@ -28,7 +29,7 @@
 .suggestions-results {
 	background-color: #fff;
 	cursor: pointer;
-	border: solid 1px #aaa;
+	border: 1px solid #a2a9b1;
 	padding: 0;
 	margin: 0;
 }
@@ -41,18 +42,17 @@
 	text-align: left;
 	/* Apply ellipsis to suggestions */
 	overflow: hidden;
-	-o-text-overflow: ellipsis; /* Opera 9 to 10 */
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
 .suggestions-result-current {
-	background-color: #4c59a6;
+	background-color: #2a4b8d;
 	color: #fff;
 }
 
 .suggestions-special .special-label {
-	color: #808080;
+	color: #72777d;
 	text-align: left;
 }
 
@@ -63,7 +63,7 @@
 }
 
 .suggestions-special .special-hover {
-	background-color: #c0c0c0;
+	background-color: #c8ccd1;
 }
 
 .suggestions-result-current .special-label,

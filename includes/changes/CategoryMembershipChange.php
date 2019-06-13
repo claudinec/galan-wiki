@@ -23,8 +23,6 @@
  * @since 1.27
  */
 
-use Wikimedia\Assert\Assert;
-
 class CategoryMembershipChange {
 
 	const CATEGORY_ADDITION = 1;
@@ -59,7 +57,7 @@ class CategoryMembershipChange {
 
 	/**
 	 * @param Title $pageTitle Title instance of the categorized page
-	 * @param Revision $revision Latest Revision instance of the categorized page
+	 * @param Revision|null $revision Latest Revision instance of the categorized page
 	 *
 	 * @throws MWException
 	 */
@@ -71,7 +69,7 @@ class CategoryMembershipChange {
 			$this->timestamp = $revision->getTimestamp();
 		}
 		$this->revision = $revision;
-		$this->newForCategorizationCallback = [ 'RecentChange', 'newForCategorization' ];
+		$this->newForCategorizationCallback = [ RecentChange::class, 'newForCategorization' ];
 	}
 
 	/**
@@ -83,11 +81,10 @@ class CategoryMembershipChange {
 	 *
 	 * @throws MWException
 	 */
-	public function overrideNewForCategorizationCallback( $callback ) {
+	public function overrideNewForCategorizationCallback( callable $callback ) {
 		if ( !defined( 'MW_PHPUNIT_TEST' ) ) {
 			throw new MWException( 'Cannot override newForCategorization callback in operation.' );
 		}
-		Assert::parameterType( 'callable', $callback, '$callback' );
 		$this->newForCategorizationCallback = $callback;
 	}
 
@@ -129,23 +126,25 @@ class CategoryMembershipChange {
 			$this->getUser(),
 			$this->getChangeMessageText(
 				$type,
-				[ 'prefixedText' => $this->pageTitle->getPrefixedText() ],
+				$this->pageTitle->getPrefixedText(),
 				$this->numTemplateLinks
 			),
 			$this->pageTitle,
 			$this->getPreviousRevisionTimestamp(),
-			$this->revision
+			$this->revision,
+			$type === self::CATEGORY_ADDITION
 		);
 	}
 
 	/**
 	 * @param string $timestamp Timestamp of the recent change to occur in TS_MW format
 	 * @param Title $categoryTitle Title of the category a page is being added to or removed from
-	 * @param User $user User object of the user that made the change
+	 * @param User|null $user User object of the user that made the change
 	 * @param string $comment Change summary
 	 * @param Title $pageTitle Title of the page that is being added or removed
 	 * @param string $lastTimestamp Parent revision timestamp of this change in TS_MW format
 	 * @param Revision|null $revision
+	 * @param bool $added true, if the category was added, false for removed
 	 *
 	 * @throws MWException
 	 */
@@ -156,7 +155,8 @@ class CategoryMembershipChange {
 		$comment,
 		Title $pageTitle,
 		$lastTimestamp,
-		$revision
+		$revision,
+		$added
 	) {
 		$deleted = $revision ? $revision->getVisibility() & Revision::SUPPRESSED_USER : 0;
 		$newRevId = $revision ? $revision->getId() : 0;
@@ -164,7 +164,7 @@ class CategoryMembershipChange {
 		/**
 		 * T109700 - Default bot flag to true when there is no corresponding RC entry
 		 * This means all changes caused by parser functions & Lua on reparse are marked as bot
-		 * Also in the case no RC entry could be found due to slave lag
+		 * Also in the case no RC entry could be found due to replica DB lag
 		 */
 		$bot = 1;
 		$lastRevId = 0;
@@ -184,21 +184,19 @@ class CategoryMembershipChange {
 		}
 
 		/** @var RecentChange $rc */
-		$rc = call_user_func_array(
-			$this->newForCategorizationCallback,
-			[
-				$timestamp,
-				$categoryTitle,
-				$user,
-				$comment,
-				$pageTitle,
-				$lastRevId,
-				$newRevId,
-				$lastTimestamp,
-				$bot,
-				$ip,
-				$deleted
-			]
+		$rc = ( $this->newForCategorizationCallback )(
+			$timestamp,
+			$categoryTitle,
+			$user,
+			$comment,
+			$pageTitle,
+			$lastRevId,
+			$newRevId,
+			$lastTimestamp,
+			$bot,
+			$ip,
+			$deleted,
+			$added
 		);
 		$rc->save();
 	}
@@ -245,13 +243,12 @@ class CategoryMembershipChange {
 	 *
 	 * @param int $type may be CategoryMembershipChange::CATEGORY_ADDITION
 	 * or CategoryMembershipChange::CATEGORY_REMOVAL
-	 * @param array $params
-	 * - prefixedText: result of Title::->getPrefixedText()
+	 * @param string $prefixedText result of Title::->getPrefixedText()
 	 * @param int $numTemplateLinks
 	 *
 	 * @return string
 	 */
-	private function getChangeMessageText( $type, array $params, $numTemplateLinks ) {
+	private function getChangeMessageText( $type, $prefixedText, $numTemplateLinks ) {
 		$array = [
 			self::CATEGORY_ADDITION => 'recentchanges-page-added-to-category',
 			self::CATEGORY_REMOVAL => 'recentchanges-page-removed-from-category',
@@ -263,7 +260,7 @@ class CategoryMembershipChange {
 			$msgKey .= '-bundled';
 		}
 
-		return wfMessage( $msgKey, $params )->inContentLanguage()->text();
+		return wfMessage( $msgKey, $prefixedText )->inContentLanguage()->text();
 	}
 
 	/**

@@ -18,8 +18,8 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @author Aaron Schulz
  */
+use Psr\Log\LoggerInterface;
 
 /**
  * Class to handle job queues stored in Redis
@@ -66,11 +66,15 @@
 class JobQueueRedis extends JobQueue {
 	/** @var RedisConnectionPool */
 	protected $redisPool;
+	/** @var LoggerInterface */
+	protected $logger;
 
 	/** @var string Server address */
 	protected $server;
 	/** @var string Compression method to use */
 	protected $compression;
+
+	const MAX_PUSH_SIZE = 25; // avoid tying up the server
 
 	/**
 	 * @param array $params Possible keys:
@@ -89,13 +93,14 @@ class JobQueueRedis extends JobQueue {
 		parent::__construct( $params );
 		$params['redisConfig']['serializer'] = 'none'; // make it easy to use Lua
 		$this->server = $params['redisServer'];
-		$this->compression = isset( $params['compression'] ) ? $params['compression'] : 'none';
+		$this->compression = $params['compression'] ?? 'none';
 		$this->redisPool = RedisConnectionPool::singleton( $params['redisConfig'] );
 		if ( empty( $params['daemonized'] ) ) {
 			throw new InvalidArgumentException(
 				"Non-daemonized mode is no longer supported. Please install the " .
 				"mediawiki/services/jobrunner service and update \$wgJobTypeConf as needed." );
 		}
+		$this->logger = \MediaWiki\Logger\LoggerFactory::getInstance( 'redis' );
 	}
 
 	protected function supportedOrders() {
@@ -198,7 +203,7 @@ class JobQueueRedis extends JobQueue {
 			}
 		}
 
-		if ( !count( $items ) ) {
+		if ( $items === [] ) {
 			return; // nothing to do
 		}
 
@@ -208,7 +213,7 @@ class JobQueueRedis extends JobQueue {
 			if ( $flags & self::QOS_ATOMIC ) {
 				$batches = [ $items ]; // all or nothing
 			} else {
-				$batches = array_chunk( $items, 100 ); // avoid tying up the server
+				$batches = array_chunk( $items, self::MAX_PUSH_SIZE );
 			}
 			$failed = 0;
 			$pushed = 0;
@@ -220,9 +225,9 @@ class JobQueueRedis extends JobQueue {
 					$failed += count( $itemBatch );
 				}
 			}
-			JobQueue::incrStats( 'inserts', $this->type, count( $items ) );
-			JobQueue::incrStats( 'inserts_actual', $this->type, $pushed );
-			JobQueue::incrStats( 'dupe_inserts', $this->type,
+			$this->incrStats( 'inserts', $this->type, count( $items ) );
+			$this->incrStats( 'inserts_actual', $this->type, $pushed );
+			$this->incrStats( 'dupe_inserts', $this->type,
 				count( $items ) - $failed - $pushed );
 			if ( $failed > 0 ) {
 				$err = "Could not insert {$failed} {$this->type} job(s).";
@@ -250,6 +255,7 @@ class JobQueueRedis extends JobQueue {
 			$args[] = (string)$this->serialize( $item );
 		}
 		static $script =
+		/** @lang Lua */
 <<<LUA
 		local kUnclaimed, kSha1ById, kIdBySha1, kDelayed, kData, kQwJobs = unpack(KEYS)
 		-- First argument is the queue ID
@@ -301,7 +307,7 @@ LUA;
 
 	/**
 	 * @see JobQueue::doPop()
-	 * @return Job|bool
+	 * @return RunnableJob|bool
 	 * @throws JobQueueError
 	 */
 	protected function doPop() {
@@ -315,7 +321,7 @@ LUA;
 					break; // no jobs; nothing to do
 				}
 
-				JobQueue::incrStats( 'pops', $this->type );
+				$this->incrStats( 'pops', $this->type );
 				$item = $this->unserialize( $blob );
 				if ( $item === false ) {
 					wfDebugLog( 'JobQueueRedis', "Could not unserialize {$this->type} job." );
@@ -339,6 +345,7 @@ LUA;
 	 */
 	protected function popAndAcquireBlob( RedisConnRef $conn ) {
 		static $script =
+		/** @lang Lua */
 <<<LUA
 		local kUnclaimed, kSha1ById, kIdBySha1, kClaimed, kAttempts, kData = unpack(KEYS)
 		local rTime = unpack(ARGV)
@@ -372,20 +379,21 @@ LUA;
 
 	/**
 	 * @see JobQueue::doAck()
-	 * @param Job $job
-	 * @return Job|bool
+	 * @param RunnableJob $job
+	 * @return RunnableJob|bool
 	 * @throws UnexpectedValueException
 	 * @throws JobQueueError
 	 */
-	protected function doAck( Job $job ) {
-		if ( !isset( $job->metadata['uuid'] ) ) {
+	protected function doAck( RunnableJob $job ) {
+		$uuid = $job->getMetadata( 'uuid' );
+		if ( $uuid === null ) {
 			throw new UnexpectedValueException( "Job of type '{$job->getType()}' has no UUID." );
 		}
 
-		$uuid = $job->metadata['uuid'];
 		$conn = $this->getConnection();
 		try {
 			static $script =
+			/** @lang Lua */
 <<<LUA
 			local kClaimed, kAttempts, kData = unpack(KEYS)
 			local id = unpack(ARGV)
@@ -416,7 +424,7 @@ LUA;
 				return false;
 			}
 
-			JobQueue::incrStats( 'acks', $this->type );
+			$this->incrStats( 'acks', $this->type );
 		} catch ( RedisException $e ) {
 			$this->throwRedisException( $conn, $e );
 		}
@@ -455,11 +463,11 @@ LUA;
 
 	/**
 	 * @see JobQueue::doIsRootJobOldDuplicate()
-	 * @param Job $job
+	 * @param IJobSpecification $job
 	 * @return bool
 	 * @throws JobQueueError
 	 */
-	protected function doIsRootJobOldDuplicate( Job $job ) {
+	protected function doIsRootJobOldDuplicate( IJobSpecification $job ) {
 		if ( !$job->hasRootJobParams() ) {
 			return false; // job has no de-deplication info
 		}
@@ -619,7 +627,7 @@ LUA;
 	 *
 	 * @param string $uid
 	 * @param RedisConnRef $conn
-	 * @return Job|bool Returns false if the job does not exist
+	 * @return RunnableJob|bool Returns false if the job does not exist
 	 * @throws JobQueueError
 	 * @throws UnexpectedValueException
 	 */
@@ -631,14 +639,17 @@ LUA;
 			}
 			$item = $this->unserialize( $data );
 			if ( !is_array( $item ) ) { // this shouldn't happen
-				throw new UnexpectedValueException( "Could not find job with ID '$uid'." );
+				throw new UnexpectedValueException( "Could not unserialize job with ID '$uid'." );
 			}
-			$title = Title::makeTitle( $item['namespace'], $item['title'] );
-			$job = Job::factory( $item['type'], $title, $item['params'] );
-			$job->metadata['uuid'] = $item['uuid'];
-			$job->metadata['timestamp'] = $item['timestamp'];
+
+			$params = $item['params'];
+			$params += [ 'namespace' => $item['namespace'], 'title' => $item['title'] ];
+			$job = $this->factoryJob( $item['type'], $params );
+			$job->setMetadata( 'uuid', $item['uuid'] );
+			$job->setMetadata( 'timestamp', $item['timestamp'] );
 			// Add in attempt count for debugging at showJobs.php
-			$job->metadata['attempts'] = $conn->hGet( $this->getQueueKey( 'h-attempts' ), $uid );
+			$job->setMetadata( 'attempts',
+				$conn->hGet( $this->getQueueKey( 'h-attempts' ), $uid ) );
 
 			return $job;
 		} catch ( RedisException $e ) {
@@ -675,8 +686,8 @@ LUA;
 		return [
 			// Fields that describe the nature of the job
 			'type' => $job->getType(),
-			'namespace' => $job->getTitle()->getNamespace(),
-			'title' => $job->getTitle()->getDBkey(),
+			'namespace' => $job->getParams()['namespace'] ?? NS_SPECIAL,
+			'title' => $job->getParams()['title'] ?? '',
 			'params' => $job->getParams(),
 			// Some jobs cannot run until a "release timestamp"
 			'rtimestamp' => $job->getReleaseTimestamp() ?: 0,
@@ -691,13 +702,15 @@ LUA;
 
 	/**
 	 * @param array $fields
-	 * @return Job|bool
+	 * @return RunnableJob|bool
 	 */
 	protected function getJobFromFields( array $fields ) {
-		$title = Title::makeTitle( $fields['namespace'], $fields['title'] );
-		$job = Job::factory( $fields['type'], $title, $fields['params'] );
-		$job->metadata['uuid'] = $fields['uuid'];
-		$job->metadata['timestamp'] = $fields['timestamp'];
+		$params = $fields['params'];
+		$params += [ 'namespace' => $fields['namespace'], 'title' => $fields['title'] ];
+
+		$job = $this->factoryJob( $fields['type'], $params );
+		$job->setMetadata( 'uuid', $fields['uuid'] );
+		$job->setMetadata( 'timestamp', $fields['timestamp'] );
 
 		return $job;
 	}
@@ -745,7 +758,7 @@ LUA;
 	 * @throws JobQueueConnectionError
 	 */
 	protected function getConnection() {
-		$conn = $this->redisPool->getConnection( $this->server );
+		$conn = $this->redisPool->getConnection( $this->server, $this->logger );
 		if ( !$conn ) {
 			throw new JobQueueConnectionError(
 				"Unable to connect to redis server {$this->server}." );
@@ -768,7 +781,7 @@ LUA;
 	 * @return string JSON
 	 */
 	private function encodeQueueName() {
-		return json_encode( [ $this->type, $this->wiki ] );
+		return json_encode( [ $this->type, $this->domain ] );
 	}
 
 	/**
@@ -786,9 +799,9 @@ LUA;
 	private function getGlobalKey( $name ) {
 		$parts = [ 'global', 'jobqueue', $name ];
 		foreach ( $parts as $part ) {
-		    if ( !preg_match( '/[a-zA-Z0-9_-]+/', $part ) ) {
-		        throw new InvalidArgumentException( "Key part characters are out of range." );
-		    }
+			if ( !preg_match( '/[a-zA-Z0-9_-]+/', $part ) ) {
+				throw new InvalidArgumentException( "Key part characters are out of range." );
+			}
 		}
 
 		return implode( ':', $parts );
@@ -801,8 +814,9 @@ LUA;
 	 */
 	private function getQueueKey( $prop, $type = null ) {
 		$type = is_string( $type ) ? $type : $this->type;
-		list( $db, $prefix ) = wfSplitWikiID( $this->wiki );
-		$keyspace = $prefix ? "$db-$prefix" : $db;
+
+		// Use wiki ID for b/c
+		$keyspace = WikiMap::getWikiIdFromDbDomain( $this->domain );
 
 		$parts = [ $keyspace, 'jobqueue', $type, $prop ];
 

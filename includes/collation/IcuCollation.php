@@ -22,7 +22,7 @@
  * @since 1.16.3
  */
 class IcuCollation extends Collation {
-	const FIRST_LETTER_VERSION = 2;
+	const FIRST_LETTER_VERSION = 4;
 
 	/** @var Collator */
 	private $primaryCollator;
@@ -35,6 +35,9 @@ class IcuCollation extends Collation {
 
 	/** @var Language */
 	protected $digitTransformLanguage;
+
+	/** @var bool */
+	private $useNumericCollation = false;
 
 	/** @var array */
 	private $firstLetterData;
@@ -72,8 +75,8 @@ class IcuCollation extends Collation {
 	 * letters (denoted by keys starting with '-').
 	 *
 	 * These are additions to (or subtractions from) the data stored in the
-	 * first-letters-root.ser file (which among others includes full basic latin,
-	 * cyrillic and greek alphabets).
+	 * first-letters-root.php data file (which among others includes full basic Latin,
+	 * Cyrillic and Greek alphabets).
 	 *
 	 * "Separate letter" is a letter that would have a separate heading/section
 	 * for it in a dictionary or a phone book in this language. This data isn't
@@ -88,78 +91,152 @@ class IcuCollation extends Collation {
 	 * available and that there are, in fact, no additional letters to consider.
 	 */
 	private static $tailoringFirstLetters = [
-		// Verified by native speakers
+		'af' => [],
+		'am' => [],
+		'ar' => [],
+		'as' => [ "\u{0982}", "\u{0981}", "\u{0983}", "\u{09CE}", "ক্ষ " ],
+		'ast' => [ "Ch", "Ll", "Ñ" ], // not in libicu
+		'az' => [ "Ç", "Ə", "Ğ", "İ", "Ö", "Ş", "Ü" ],
 		'be' => [ "Ё" ],
 		'be-tarask' => [ "Ё" ],
-		'cy' => [ "Ch", "Dd", "Ff", "Ng", "Ll", "Ph", "Rh", "Th" ],
-		'en' => [],
-		'fa' => [ "آ", "ء", "ه" ],
-		'fi' => [ "Å", "Ä", "Ö" ],
-		'fr' => [],
-		'hu' => [ "Cs", "Dz", "Dzs", "Gy", "Ly", "Ny", "Ö", "Sz", "Ty", "Ü", "Zs" ],
-		'is' => [ "Á", "Ð", "É", "Í", "Ó", "Ú", "Ý", "Þ", "Æ", "Ö", "Å" ],
-		'it' => [],
-		'lv' => [ "Č", "Ģ", "Ķ", "Ļ", "Ņ", "Š", "Ž" ],
-		'pl' => [ "Ą", "Ć", "Ę", "Ł", "Ń", "Ó", "Ś", "Ź", "Ż" ],
-		'pt' => [],
-		'ru' => [],
-		'sv' => [ "Å", "Ä", "Ö" ],
-		'sv@collation=standard' => [ "Å", "Ä", "Ö" ],
-		'uk' => [ "Ґ", "Ь" ],
-		'vi' => [ "Ă", "Â", "Đ", "Ê", "Ô", "Ơ", "Ư" ],
-		// Not verified, but likely correct
-		'af' => [],
-		'ast' => [ "Ch", "Ll", "Ñ" ],
-		'az' => [ "Ç", "Ə", "Ğ", "İ", "Ö", "Ş", "Ü" ],
 		'bg' => [],
+		'bn' => [ 'ং', 'ঃ', 'ঁ' ],
+		'bn@collation=traditional' => [
+			'ং', 'ঃ', 'ঁ', 'ক্', 'খ্', 'গ্', 'ঘ্', 'ঙ্', 'চ্', 'ছ্', 'জ্', 'ঝ্',
+			'ঞ্', 'ট্', 'ঠ্', 'ড্', 'ঢ্', 'ণ্', 'ৎ', 'থ্', 'দ্', 'ধ্', 'ন্', 'প্',
+			'ফ্', 'ব্', 'ভ্', 'ম্', 'য্', 'র্', 'ৰ্', 'ল্', 'ৱ্', 'শ্', 'ষ্', 'স্', 'হ্'
+		],
+		'bo' => [],
 		'br' => [ "Ch", "C'h" ],
 		'bs' => [ "Č", "Ć", "Dž", "Đ", "Lj", "Nj", "Š", "Ž" ],
+		'bs-Cyrl' => [],
 		'ca' => [],
-		'co' => [],
+		'chr' => [],
+		'co' => [], // not in libicu
 		'cs' => [ "Č", "Ch", "Ř", "Š", "Ž" ],
+		'cy' => [ "Ch", "Dd", "Ff", "Ng", "Ll", "Ph", "Rh", "Th" ],
 		'da' => [ "Æ", "Ø", "Å" ],
 		'de' => [],
+		'de-AT@collation=phonebook' => [ 'ä', 'ö', 'ü', 'ß' ],
 		'dsb' => [ "Č", "Ć", "Dź", "Ě", "Ch", "Ł", "Ń", "Ŕ", "Š", "Ś", "Ž", "Ź" ],
+		'ee' => [ "Dz", "Ɖ", "Ɛ", "Ƒ", "Gb", "Ɣ", "Kp", "Ny", "Ŋ", "Ɔ", "Ts", "Ʋ" ],
 		'el' => [],
+		'en' => [],
 		'eo' => [ "Ĉ", "Ĝ", "Ĥ", "Ĵ", "Ŝ", "Ŭ" ],
 		'es' => [ "Ñ" ],
-		'et' => [ "Š", "Ž", "Õ", "Ä", "Ö", "Ü", "W" ], // added W for CollationEt (xx-uca-et)
-		'eu' => [ "Ñ" ],
+		'et' => [ "Š", "Ž", "Õ", "Ä", "Ö", "Ü" ],
+		'eu' => [ "Ñ" ], // not in libicu
+		'fa' => [
+			// RTL, let's put each letter on a new line
+			"آ",
+			"ء",
+			"ه",
+			"ا",
+			"و"
+		],
+		'fi' => [ "Å", "Ä", "Ö" ],
+		'fil' => [ "Ñ", "Ng" ],
 		'fo' => [ "Á", "Ð", "Í", "Ó", "Ú", "Ý", "Æ", "Ø", "Å" ],
-		'fur' => [ "À", "Á", "Â", "È", "Ì", "Ò", "Ù" ],
-		'fy' => [],
+		'fr' => [],
+		'fr-CA' => [], // fr-CA sorts accents slightly different from fr.
+		'fur' => [ "À", "Á", "Â", "È", "Ì", "Ò", "Ù" ], // not in libicu
+		'fy' => [], // not in libicu
 		'ga' => [],
-		'gd' => [],
+		'gd' => [], // not in libicu
 		'gl' => [ "Ch", "Ll", "Ñ" ],
+		'gu' => [ "\u{0A82}", "\u{0A83}", "\u{0A81}", "\u{0AB3}" ],
+		'ha' => [ 'Ɓ', 'Ɗ', 'Ƙ', 'Sh', 'Ts', 'Ƴ' ],
+		'haw' => [ 'ʻ' ],
+		'he' => [],
+		'hi' => [ "\u{0902}", "\u{0903}" ],
 		'hr' => [ "Č", "Ć", "Dž", "Đ", "Lj", "Nj", "Š", "Ž" ],
 		'hsb' => [ "Č", "Dź", "Ě", "Ch", "Ł", "Ń", "Ř", "Š", "Ć", "Ž" ],
+		'hu' => [ "Cs", "Dz", "Dzs", "Gy", "Ly", "Ny", "Ö", "Sz", "Ty", "Ü", "Zs" ],
+		'hy' => [ "և" ],
+		'id' => [],
+		'ig' => [ "Ch", "Gb", "Gh", "Gw", "Ị", "Kp", "Kw", "Ṅ", "Nw", "Ny", "Ọ", "Sh", "Ụ" ],
+		'is' => [ "Á", "Ð", "É", "Í", "Ó", "Ú", "Ý", "Þ", "Æ", "Ö", "Å" ],
+		'it' => [],
+		'ka' => [],
 		'kk' => [ "Ү", "І" ],
 		'kl' => [ "Æ", "Ø", "Å" ],
-		'ku' => [ "Ç", "Ê", "Î", "Ş", "Û" ],
+		'km' => [
+			"រ", "ឫ", "ឬ", "ល", "ឭ", "ឮ", "\u{17BB}\u{17C6}",
+			"\u{17C6}", "\u{17B6}\u{17C6}", "\u{17C7}",
+			"\u{17B7}\u{17C7}", "\u{17BB}\u{17C7}",
+			"\u{17C1}\u{17C7}", "\u{17C4}\u{17C7}",
+		],
+		'kn' => [ "\u{0C81}", "\u{0C83}", "\u{0CF1}", "\u{0CF2}" ],
+		'kok' => [ "\u{0902}", "\u{0903}", "ळ", "क्ष" ],
+		'ku' => [ "Ç", "Ê", "Î", "Ş", "Û" ], // not in libicu
 		'ky' => [ "Ё" ],
-		'la' => [],
+		'la' => [], // not in libicu
 		'lb' => [],
+		'lkt' => [ 'Č', 'Ǧ', 'Ȟ', 'Š', 'Ž' ],
+		'ln' => [ 'Ɛ' ],
+		'lo' => [],
 		'lt' => [ "Č", "Š", "Ž" ],
-		'mk' => [],
-		'mo' => [ "Ă", "Â", "Î", "Ş", "Ţ" ],
+		'lv' => [ "Č", "Ģ", "Ķ", "Ļ", "Ņ", "Š", "Ž" ],
+		'mk' => [ "Ѓ", "Ќ" ],
+		'ml' => [],
+		'mn' => [],
+		'mo' => [ "Ă", "Â", "Î", "Ș", "Ț" ], // not in libicu
+		'mr' => [ "\u{0902}", "\u{0903}", "ळ", "क्ष", "ज्ञ" ],
+		'ms' => [],
 		'mt' => [ "Ċ", "Ġ", "Għ", "Ħ", "Ż" ],
+		'nb' => [ "Æ", "Ø", "Å" ],
+		'ne' => [],
 		'nl' => [],
-		'no' => [ "Æ", "Ø", "Å" ],
-		'oc' => [],
-		'rm' => [],
-		'ro' => [ "Ă", "Â", "Î", "Ş", "Ţ" ],
-		'rup' => [ "Ă", "Â", "Î", "Ľ", "Ń", "Ş", "Ţ" ],
+		'nn' => [ "Æ", "Ø", "Å" ],
+		'no' => [ "Æ", "Ø", "Å" ], // not in libicu. You should probably use nb or nn instead.
+		'oc' => [], // not in libicu
+		'om' => [ 'Ch', 'Dh', 'Kh', 'Ny', 'Ph', 'Sh' ],
+		'or' => [ "\u{0B01}", "\u{0B02}", "\u{0B03}", "କ୍ଷ" ],
+		'pa' => [ "\u{0A4D}" ],
+		'pl' => [ "Ą", "Ć", "Ę", "Ł", "Ń", "Ó", "Ś", "Ź", "Ż" ],
+		'pt' => [],
+		'rm' => [], // not in libicu
+		'ro' => [ "Ă", "Â", "Î", "Ș", "Ț" ],
+		'ru' => [],
+		'rup' => [ "Ă", "Â", "Î", "Ľ", "Ń", "Ș", "Ț" ], // not in libicu
 		'sco' => [],
+		'se' => [
+			'Á', 'Č', 'Ʒ', 'Ǯ', 'Đ', 'Ǧ', 'Ǥ', 'Ǩ', 'Ŋ',
+			'Š', 'Ŧ', 'Ž', 'Ø', 'Æ', 'Ȧ', 'Ä', 'Ö'
+		],
+		'si' => [ "\u{0D82}", "\u{0D83}", "\u{0DA4}" ],
 		'sk' => [ "Ä", "Č", "Ch", "Ô", "Š", "Ž" ],
 		'sl' => [ "Č", "Š", "Ž" ],
 		'smn' => [ "Á", "Č", "Đ", "Ŋ", "Š", "Ŧ", "Ž", "Æ", "Ø", "Å", "Ä", "Ö" ],
 		'sq' => [ "Ç", "Dh", "Ë", "Gj", "Ll", "Nj", "Rr", "Sh", "Th", "Xh", "Zh" ],
 		'sr' => [],
+		'sr-Latn' => [ "Č", "Ć", "Dž", "Đ", "Lj", "Nj", "Š", "Ž" ],
+		'sv' => [ "Å", "Ä", "Ö" ],
+		'sv@collation=standard' => [ "Å", "Ä", "Ö" ],
+		'sw' => [],
+		'ta' => [
+			"\u{0B82}", "ஃ", "க்ஷ", "க்", "ங்", "ச்", "ஞ்", "ட்", "ண்", "த்", "ந்",
+			"ப்", "ம்", "ய்", "ர்", "ல்", "வ்", "ழ்", "ள்", "ற்", "ன்", "ஜ்", "ஶ்", "ஷ்",
+			"ஸ்", "ஹ்", "க்ஷ்"
+		],
+		'te' => [ "\u{0C01}", "\u{0C02}", "\u{0C03}" ],
+		'th' => [ "ฯ", "\u{0E46}", "\u{0E4D}", "\u{0E3A}" ],
 		'tk' => [ "Ç", "Ä", "Ž", "Ň", "Ö", "Ş", "Ü", "Ý" ],
-		'tl' => [ "Ñ", "Ng" ],
+		'tl' => [ "Ñ", "Ng" ], // not in libicu
+		'to' => [ "Ng", "ʻ" ],
 		'tr' => [ "Ç", "Ğ", "İ", "Ö", "Ş", "Ü" ],
-		'tt' => [ "Ә", "Ө", "Ү", "Җ", "Ң", "Һ" ],
-		'uz' => [ "Ch", "G'", "Ng", "O'", "Sh" ],
+		'-tr' => [ "ı" ],
+		'tt' => [ "Ә", "Ө", "Ү", "Җ", "Ң", "Һ" ], // not in libicu
+		'uk' => [ "Ґ", "Ь" ],
+		'uz' => [ "Ch", "G'", "Ng", "O'", "Sh" ], // not in libicu
+		'vi' => [ "Ă", "Â", "Đ", "Ê", "Ô", "Ơ", "Ư" ],
+		'vo' => [ "Ä", "Ö", "Ü" ],
+		'yi' => [
+			"\u{05D1}\u{05BF}", "\u{05DB}\u{05BC}", "\u{05E4}\u{05BC}",
+			"\u{05E9}\u{05C2}", "\u{05EA}\u{05BC}"
+		],
+		'yo' => [ "Ẹ", "Gb", "Ọ", "Ṣ" ],
+		'zu' => [],
 	];
 
 	/**
@@ -185,6 +262,15 @@ class IcuCollation extends Collation {
 
 		$this->primaryCollator = Collator::create( $locale );
 		$this->primaryCollator->setStrength( Collator::PRIMARY );
+
+		// If the special suffix for numeric collation is present, turn on numeric collation.
+		if ( substr( $locale, -5, 5 ) === '-u-kn' ) {
+			$this->useNumericCollation = true;
+			// Strip off the special suffix so it doesn't trip up fetchFirstLetterData().
+			$this->locale = substr( $this->locale, 0, -5 );
+			$this->mainCollator->setAttribute( Collator::NUMERIC_COLLATION, Collator::ON );
+			$this->primaryCollator->setAttribute( Collator::NUMERIC_COLLATION, Collator::ON );
+		}
 	}
 
 	public function getSortKey( $string ) {
@@ -201,8 +287,9 @@ class IcuCollation extends Collation {
 			return '';
 		}
 
-		// Check for CJK
 		$firstChar = mb_substr( $string, 0, 1, 'UTF-8' );
+
+		// If the first character is a CJK character, just return that character.
 		if ( ord( $firstChar ) > 0x7f && self::isCjk( UtfNormal\Utils::utf8ToCodepoint( $firstChar ) ) ) {
 			return $firstChar;
 		}
@@ -220,7 +307,19 @@ class IcuCollation extends Collation {
 			// Before the first letter
 			return '';
 		}
-		return $this->getLetterByIndex( $min );
+
+		$sortLetter = $this->getLetterByIndex( $min );
+
+		if ( $this->useNumericCollation ) {
+			// If the sort letter is a number, return '0–9' (or localized equivalent).
+			// ASCII value of 0 is 48. ASCII value of 9 is 57.
+			// Note that this also applies to non-Arabic numerals since they are
+			// mapped to Arabic numeral sort letters. For example, ২ sorts as 2.
+			if ( ord( $sortLetter ) >= 48 && ord( $sortLetter ) <= 57 ) {
+				$sortLetter = wfMessage( 'category-header-numerals' )->numParams( 0, 9 )->text();
+			}
+		}
+		return $sortLetter;
 	}
 
 	/**
@@ -232,9 +331,10 @@ class IcuCollation extends Collation {
 			$cache = ObjectCache::getLocalServerInstance( CACHE_ANYTHING );
 			$cacheKey = $cache->makeKey(
 				'first-letters',
+				static::class,
 				$this->locale,
 				$this->digitTransformLanguage->getCode(),
-				self::getICUVersion(),
+				INTL_ICU_VERSION,
 				self::FIRST_LETTER_VERSION
 			);
 			$this->firstLetterData = $cache->getWithSetCallback( $cacheKey, $cache::TTL_WEEK, function () {
@@ -249,9 +349,10 @@ class IcuCollation extends Collation {
 	 * @throws MWException
 	 */
 	private function fetchFirstLetterData() {
+		global $IP;
 		// Generate data from serialized data file
 		if ( isset( self::$tailoringFirstLetters[$this->locale] ) ) {
-			$letters = wfGetPrecompiledData( 'first-letters-root.ser' );
+			$letters = require "$IP/includes/collation/data/first-letters-root.php";
 			// Append additional characters
 			$letters = array_merge( $letters, self::$tailoringFirstLetters[$this->locale] );
 			// Remove unnecessary ones, if any
@@ -264,7 +365,10 @@ class IcuCollation extends Collation {
 			foreach ( $digits as $digit ) {
 				$letters[] = $this->digitTransformLanguage->formatNum( $digit, true );
 			}
+		} elseif ( $this->locale === 'root' ) {
+			$letters = require "$IP/includes/collation/data/first-letters-root.php";
 		} else {
+			// FIXME: Is this still used?
 			$letters = wfGetPrecompiledData( "first-letters-{$this->locale}.ser" );
 			if ( $letters === false ) {
 				throw new MWException( "MediaWiki does not support ICU locale " .
@@ -285,9 +389,16 @@ class IcuCollation extends Collation {
 		foreach ( $letters as $letter ) {
 			$key = $this->getPrimarySortKey( $letter );
 			if ( isset( $letterMap[$key] ) ) {
-				// Primary collision
-				// Keep whichever one sorts first in the main collator
-				if ( $this->mainCollator->compare( $letter, $letterMap[$key] ) < 0 ) {
+				// Primary collision (two characters with the same sort position).
+				// Keep whichever one sorts first in the main collator.
+				$comp = $this->mainCollator->compare( $letter, $letterMap[$key] );
+				wfDebug( "Primary collision '$letter' '{$letterMap[$key]}' (comparison: $comp)\n" );
+				// If that also has a collision, use codepoint as a tiebreaker.
+				if ( $comp === 0 ) {
+					$comp = UtfNormal\Utils::utf8ToCodepoint( $letter ) <=>
+						UtfNormal\Utils::utf8ToCodepoint( $letterMap[$key] );
+				}
+				if ( $comp < 0 ) {
 					$letterMap[$key] = $letter;
 				}
 			} else {
@@ -375,6 +486,8 @@ class IcuCollation extends Collation {
 	}
 
 	/**
+	 * @param string $index
+	 * @return string
 	 * @since 1.16.3
 	 */
 	public function getLetterByIndex( $index ) {
@@ -382,6 +495,8 @@ class IcuCollation extends Collation {
 	}
 
 	/**
+	 * @param string $index
+	 * @return string
 	 * @since 1.16.3
 	 */
 	public function getSortKeyByLetterIndex( $index ) {
@@ -389,6 +504,7 @@ class IcuCollation extends Collation {
 	}
 
 	/**
+	 * @return string
 	 * @since 1.16.3
 	 */
 	public function getFirstLetterCount() {
@@ -396,6 +512,9 @@ class IcuCollation extends Collation {
 	}
 
 	/**
+	 * Test if a code point is a CJK (Chinese, Japanese, Korean) character
+	 * @param int $codepoint
+	 * @return bool
 	 * @since 1.16.3
 	 */
 	public static function isCjk( $codepoint ) {
@@ -408,22 +527,6 @@ class IcuCollation extends Collation {
 	}
 
 	/**
-	 * Return the version of ICU library used by PHP's intl extension,
-	 * or false when the extension is not installed of the version
-	 * can't be determined.
-	 *
-	 * The constant INTL_ICU_VERSION this function refers to isn't really
-	 * documented. It is available since PHP 5.3.7 (see PHP bug 54561).
-	 * This function will return false on older PHPs.
-	 *
-	 * @since 1.21
-	 * @return string|bool
-	 */
-	static function getICUVersion() {
-		return defined( 'INTL_ICU_VERSION' ) ? INTL_ICU_VERSION : false;
-	}
-
-	/**
 	 * Return the version of Unicode appropriate for the version of ICU library
 	 * currently in use, or false when it can't be determined.
 	 *
@@ -431,7 +534,7 @@ class IcuCollation extends Collation {
 	 * @return string|bool
 	 */
 	static function getUnicodeVersionForICU() {
-		$icuVersion = IcuCollation::getICUVersion();
+		$icuVersion = INTL_ICU_VERSION;
 		if ( !$icuVersion ) {
 			return false;
 		}
@@ -439,6 +542,19 @@ class IcuCollation extends Collation {
 		$versionPrefix = substr( $icuVersion, 0, 3 );
 		// Source: http://site.icu-project.org/download
 		$map = [
+			'63.' => '11.0',
+			'62.' => '11.0',
+			'61.' => '10.0',
+			'60.' => '10.0',
+			'59.' => '9.0',
+			'58.' => '9.0',
+			'57.' => '8.0',
+			'56.' => '8.0',
+			'55.' => '7.0',
+			'54.' => '7.0',
+			'53.' => '6.3',
+			'52.' => '6.3',
+			'51.' => '6.2',
 			'50.' => '6.2',
 			'49.' => '6.1',
 			'4.8' => '6.0',
@@ -451,10 +567,6 @@ class IcuCollation extends Collation {
 			'3.4' => '4.1',
 		];
 
-		if ( isset( $map[$versionPrefix] ) ) {
-			return $map[$versionPrefix];
-		} else {
-			return false;
-		}
+		return $map[$versionPrefix] ?? false;
 	}
 }

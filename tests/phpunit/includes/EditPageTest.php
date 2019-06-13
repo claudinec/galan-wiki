@@ -1,5 +1,7 @@
 <?php
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * @group Editing
  *
@@ -12,25 +14,22 @@
 class EditPageTest extends MediaWikiLangTestCase {
 
 	protected function setUp() {
-		global $wgExtraNamespaces, $wgNamespaceContentModels, $wgContentHandlers, $wgContLang;
-
 		parent::setUp();
 
+		$contLang = MediaWikiServices::getInstance()->getContentLanguage();
+		$this->setContentLang( $contLang );
+
 		$this->setMwGlobals( [
-			'wgExtraNamespaces' => $wgExtraNamespaces,
-			'wgNamespaceContentModels' => $wgNamespaceContentModels,
-			'wgContentHandlers' => $wgContentHandlers,
-			'wgContLang' => $wgContLang,
+			'wgExtraNamespaces' => [
+				12312 => 'Dummy',
+				12313 => 'Dummy_talk',
+			],
+			'wgNamespaceContentModels' => [ 12312 => 'testing' ],
 		] );
-
-		$wgExtraNamespaces[12312] = 'Dummy';
-		$wgExtraNamespaces[12313] = 'Dummy_talk';
-
-		$wgNamespaceContentModels[12312] = "testing";
-		$wgContentHandlers["testing"] = 'DummyContentHandlerForTesting';
-
-		MWNamespace::getCanonicalNamespaces( true ); # reset namespace cache
-		$wgContLang->resetNamespaces(); # reset namespace cache
+		$this->mergeMwGlobalArrayValue(
+			'wgContentHandlers',
+			[ 'testing' => 'DummyContentHandlerForTesting' ]
+		);
 	}
 
 	/**
@@ -53,7 +52,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 				false
 			],
 			[
-				"An initial section with a fake heder (bug 32617)\n\n== Test == ??\nwtf",
+				"An initial section with a fake heder (T34617)\n\n== Test == ??\nwtf",
 				false
 			],
 			[
@@ -61,7 +60,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 				"Section"
 			],
 			[
-				"== Section== \t\r\n followed by whitespace (bug 35051)",
+				"== Section== \t\r\n followed by whitespace (T37051)",
 				'Section',
 			],
 		];
@@ -163,6 +162,10 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		if ( !isset( $edit['wpStarttime'] ) ) {
 			$edit['wpStarttime'] = wfTimestampNow();
+		}
+
+		if ( !isset( $edit['wpUnicodeCheck'] ) ) {
+			$edit['wpUnicodeCheck'] = EditPage::UNICODE_CHECK;
 		}
 
 		$req = new FauxRequest( $edit, true ); // session ??
@@ -348,6 +351,8 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		wfGetDB( DB_MASTER )->commit( __METHOD__ );
 
+		$this->assertEquals( 0, DeferredUpdates::pendingUpdatesCount(), 'No deferred updates' );
+
 		if ( $expectedCode != EditPage::AS_BLANK_ARTICLE ) {
 			$latest = $page->getLatest();
 			$page->doDeleteArticleReal( $pageTitle );
@@ -363,6 +368,9 @@ class EditPageTest extends MediaWikiLangTestCase {
 		}
 	}
 
+	/**
+	 * @covers EditPage
+	 */
 	public function testUpdatePage() {
 		$checkIds = [];
 
@@ -391,7 +399,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		$page = $this->assertEdit( 'EditPageTest_testUpdatePage', "zero", null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $text,
-			"expected successfull update with given text" );
+			"expected successful update with given text" );
 		$this->assertGreaterThan( 0, $checkIds[0], "First event rev ID set" );
 
 		$this->forceRevisionDate( $page, '20120101000000' );
@@ -404,11 +412,14 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		$this->assertEdit( 'EditPageTest_testUpdatePage', null, null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $text,
-			"expected successfull update with given text" );
+			"expected successful update with given text" );
 		$this->assertGreaterThan( 0, $checkIds[1], "Second edit hook rev ID set" );
 		$this->assertGreaterThan( $checkIds[0], $checkIds[1], "Second event rev ID is higher" );
 	}
 
+	/**
+	 * @covers EditPage
+	 */
 	public function testUpdatePageTrx() {
 		$text = "one";
 		$edit = [
@@ -418,7 +429,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		$page = $this->assertEdit( 'EditPageTest_testTrxUpdatePage', "zero", null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $text,
-			"expected successfull update with given text" );
+			"expected successful update with given text" );
 
 		$this->forceRevisionDate( $page, '20120101000000' );
 
@@ -444,7 +455,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		$this->assertEdit( 'EditPageTest_testTrxUpdatePage', null, null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $text,
-			"expected successfull update with given text" );
+			"expected successful update with given text" );
 
 		$text = "three";
 		$edit = [
@@ -454,7 +465,7 @@ class EditPageTest extends MediaWikiLangTestCase {
 
 		$this->assertEdit( 'EditPageTest_testTrxUpdatePage', null, null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $text,
-			"expected successfull update with given text" );
+			"expected successful update with given text" );
 
 		wfGetDB( DB_MASTER )->commit( __METHOD__ );
 
@@ -529,7 +540,7 @@ hello
 
 		$this->assertEdit( 'EditPageTest_testSectionEdit', $base, null, $edit,
 			EditPage::AS_SUCCESS_UPDATE, $expected,
-			"expected successfull update of section" );
+			"expected successful update of section" );
 	}
 
 	public static function provideAutoMerge() {
@@ -670,7 +681,7 @@ hello
 
 		// first edit
 		$this->assertEdit( 'EditPageTest_testAutoMerge', null, 'Adam', $adamsEdit,
-			EditPage::AS_SUCCESS_UPDATE, null, "expected successfull update" );
+			EditPage::AS_SUCCESS_UPDATE, null, "expected successful update" );
 
 		// second edit
 		$this->assertEdit( 'EditPageTest_testAutoMerge', null, 'Berta', $bertasEdit,
@@ -679,34 +690,92 @@ hello
 
 	/**
 	 * @depends testAutoMerge
+	 * @covers EditPage
 	 */
 	public function testCheckDirectEditingDisallowed_forNonTextContent() {
-		$title = Title::newFromText( 'Dummy:NonTextPageForEditPage' );
-		$page = WikiPage::factory( $title );
-
-		$article = new Article( $title );
-		$article->getContext()->setTitle( $title );
-		$ep = new EditPage( $article );
-		$ep->setContextTitle( $title );
-
 		$user = $GLOBALS['wgUser'];
 
 		$edit = [
 			'wpTextbox1' => serialize( 'non-text content' ),
 			'wpEditToken' => $user->getEditToken(),
 			'wpEdittime' => '',
-			'wpStarttime' => wfTimestampNow()
+			'wpStarttime' => wfTimestampNow(),
+			'wpUnicodeCheck' => EditPage::UNICODE_CHECK,
 		];
+
+		$this->setExpectedException(
+			MWException::class,
+			'This content model is not supported: testing'
+		);
+
+		$this->doEditDummyNonTextPage( $edit );
+	}
+
+	/** @covers EditPage */
+	public function testShouldPreventChangingContentModelWhenUserCannotChangeModelForTitle() {
+		$this->setTemporaryHook( 'getUserPermissionsErrors',
+			function ( Title $page, $user, $action, &$result ) {
+				if ( $action === 'editcontentmodel' &&
+					 $page->getContentModel() === CONTENT_MODEL_WIKITEXT ) {
+					$result = false;
+
+					return false;
+				}
+			} );
+
+		$user = $GLOBALS['wgUser'];
+
+		$status = $this->doEditDummyNonTextPage( [
+			'wpTextbox1' => 'some text',
+			'wpEditToken' => $user->getEditToken(),
+			'wpEdittime' => '',
+			'wpStarttime' => wfTimestampNow(),
+			'wpUnicodeCheck' => EditPage::UNICODE_CHECK,
+			'model' => CONTENT_MODEL_WIKITEXT,
+			'format' => CONTENT_FORMAT_WIKITEXT,
+		] );
+
+		$this->assertFalse( $status->isOK() );
+		$this->assertEquals( EditPage::AS_NO_CHANGE_CONTENT_MODEL, $status->getValue() );
+	}
+
+	/** @covers EditPage */
+	public function testShouldPreventChangingContentModelWhenUserCannotEditTargetTitle() {
+		$this->setTemporaryHook( 'getUserPermissionsErrors',
+			function ( Title $page, $user, $action, &$result ) {
+				if ( $action === 'edit' && $page->getContentModel() === CONTENT_MODEL_WIKITEXT ) {
+					$result = false;
+					return false;
+				}
+			} );
+
+		$user = $GLOBALS['wgUser'];
+
+		$status = $this->doEditDummyNonTextPage( [
+			'wpTextbox1' => 'some text',
+			'wpEditToken' => $user->getEditToken(),
+			'wpEdittime' => '',
+			'wpStarttime' => wfTimestampNow(),
+			'wpUnicodeCheck' => EditPage::UNICODE_CHECK,
+			'model' => CONTENT_MODEL_WIKITEXT,
+			'format' => CONTENT_FORMAT_WIKITEXT,
+		] );
+
+		$this->assertFalse( $status->isOK() );
+		$this->assertEquals( EditPage::AS_NO_CHANGE_CONTENT_MODEL, $status->getValue() );
+	}
+
+	private function doEditDummyNonTextPage( array $edit ): Status {
+		$title = Title::newFromText( 'Dummy:NonTextPageForEditPage' );
+
+		$article = new Article( $title );
+		$article->getContext()->setTitle( $title );
+		$ep = new EditPage( $article );
+		$ep->setContextTitle( $title );
 
 		$req = new FauxRequest( $edit, true );
 		$ep->importFormData( $req );
 
-		$this->setExpectedException(
-			'MWException',
-			'This content model is not supported: testing'
-		);
-
-		$ep->internalAttemptSave( $result, false );
+		return $ep->internalAttemptSave( $result, false );
 	}
-
 }

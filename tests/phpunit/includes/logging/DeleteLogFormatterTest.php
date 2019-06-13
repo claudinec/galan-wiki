@@ -1,5 +1,8 @@
 <?php
 
+/**
+ * @covers DeleteLogFormatter
+ */
 class DeleteLogFormatterTest extends LogFormatterTestCase {
 
 	/**
@@ -59,6 +62,32 @@ class DeleteLogFormatterTest extends LogFormatterTestCase {
 	public static function provideRestoreLogDatabaseRows() {
 		return [
 			// Current format
+			[
+				[
+					'type' => 'delete',
+					'action' => 'restore',
+					'comment' => 'delete comment',
+					'namespace' => NS_MAIN,
+					'title' => 'Page',
+					'params' => [
+						':assoc:count' => [
+							'revisions' => 2,
+							'files' => 1,
+						],
+					],
+				],
+				[
+					'text' => 'User restored page Page (2 revisions and 1 file)',
+					'api' => [
+						'count' => [
+							'revisions' => 2,
+							'files' => 1,
+						],
+					],
+				],
+			],
+
+			// Legacy format without counts
 			[
 				[
 					'type' => 'delete',
@@ -428,7 +457,7 @@ class DeleteLogFormatterTest extends LogFormatterTestCase {
 				],
 			],
 
-			// Legacy format
+			// Legacy formats
 			[
 				[
 					'type' => 'suppress',
@@ -466,6 +495,27 @@ class DeleteLogFormatterTest extends LogFormatterTestCase {
 					],
 				],
 			],
+			[
+				[
+					'type' => 'delete',
+					'action' => 'revision',
+					'comment' => 'Old rows might lack ofield/nfield (T224815)',
+					'namespace' => NS_MAIN,
+					'title' => 'Page',
+					'params' => [
+						'oldid',
+						'1234',
+					],
+				],
+				[
+					'legacy' => true,
+					'text' => 'User changed visibility of revisions on page Page',
+					'api' => [
+						'type' => 'oldid',
+						'ids' => [ '1234' ],
+					],
+				],
+			]
 		];
 	}
 

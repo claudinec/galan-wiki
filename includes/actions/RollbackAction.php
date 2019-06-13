@@ -35,20 +35,36 @@ class RollbackAction extends FormAction {
 		return 'rollback';
 	}
 
-	protected function preText() {
-		return $this->msg( 'confirm-rollback-top' )->parse();
+	protected function usesOOUI() {
+		return true;
+	}
+
+	protected function getDescription() {
+		return '';
+	}
+
+	public function doesWrites() {
+		return true;
+	}
+
+	public function onSuccess() {
+		return false;
+	}
+
+	public function onSubmit( $data ) {
+		return false;
 	}
 
 	protected function alterForm( HTMLForm $form ) {
+		$form->setWrapperLegendMsg( 'confirm-rollback-top' );
 		$form->setSubmitTextMsg( 'confirm-rollback-button' );
 		$form->setTokenSalt( 'rollback' );
 
-		// Copy parameters from GET to confirmation form
 		$from = $this->getRequest()->getVal( 'from' );
 		if ( $from === null ) {
 			throw new BadRequestError( 'rollbackfailed', 'rollback-missingparam' );
 		}
-		foreach ( [ 'from', 'bot', 'hidediff', 'summary' ] as $param ) {
+		foreach ( [ 'from', 'bot', 'hidediff', 'summary', 'token' ] as $param ) {
 			$val = $this->getRequest()->getVal( $param );
 			if ( $val !== null ) {
 				$form->addHiddenField( $param, $val );
@@ -57,22 +73,31 @@ class RollbackAction extends FormAction {
 	}
 
 	/**
-	 * This must return true so that HTMLForm::show() will not display the form again after
-	 * submission. For rollback, display either the form or the result (success/error)
-	 * not both.
-	 *
-	 * @return bool
 	 * @throws ErrorPageError
+	 * @throws ReadOnlyError
+	 * @throws ThrottledError
 	 */
-	public function onSubmit( $data ) {
-		$this->useTransactionalTimeLimit();
+	public function show() {
+		if ( $this->getUser()->getOption( 'showrollbackconfirmation' ) == false ||
+			 $this->getRequest()->wasPosted() ) {
+			$this->handleRollbackRequest();
+		} else {
+			$this->showRollbackConfirmationForm();
+		}
+	}
+
+	public function handleRollbackRequest() {
+		$this->enableTransactionalTimelimit();
 
 		$request = $this->getRequest();
 		$user = $this->getUser();
 		$from = $request->getVal( 'from' );
 		$rev = $this->page->getRevision();
-		if ( $from === null || $from === '' ) {
+		if ( $from === null ) {
 			throw new ErrorPageError( 'rollbackfailed', 'rollback-missingparam' );
+		}
+		if ( !$rev ) {
+			throw new ErrorPageError( 'rollbackfailed', 'rollback-missingrevision' );
 		}
 		if ( $from !== $rev->getUserText() ) {
 			throw new ErrorPageError( 'rollbackfailed', 'alreadyrolled', [
@@ -86,8 +111,7 @@ class RollbackAction extends FormAction {
 		$errors = $this->page->doRollback(
 			$from,
 			$request->getText( 'summary' ),
-			// Provided by HTMLForm
-			$request->getVal( 'wpEditToken' ),
+			$request->getVal( 'token' ),
 			$request->getBool( 'bot' ),
 			$data,
 			$this->getUser()
@@ -97,9 +121,7 @@ class RollbackAction extends FormAction {
 			throw new ThrottledError;
 		}
 
-		if ( isset( $errors[0][0] ) &&
-			( $errors[0][0] == 'alreadyrolled' || $errors[0][0] == 'cantrollback' )
-		) {
+		if ( $this->hasRollbackRelatedErrors( $errors ) ) {
 			$this->getOutput()->setPageTitle( $this->msg( 'rollbackfailed' ) );
 			$errArray = $errors[0];
 			$errMsg = array_shift( $errArray );
@@ -110,12 +132,16 @@ class RollbackAction extends FormAction {
 				$current = $data['current'];
 
 				if ( $current->getComment() != '' ) {
-					$this->getOutput()->addHTML( $this->msg( 'editcomment' )->rawParams(
-						Linker::formatComment( $current->getComment() ) )->parse() );
+					$this->getOutput()->addWikiMsg(
+						'editcomment',
+						Message::rawParam(
+							Linker::formatComment( $current->getComment() )
+						)
+					);
 				}
 			}
 
-			return true;
+			return;
 		}
 
 		# NOTE: Permission errors already handled by Action::checkExecute.
@@ -138,8 +164,13 @@ class RollbackAction extends FormAction {
 
 		$old = Linker::revUserTools( $current );
 		$new = Linker::revUserTools( $target );
-		$this->getOutput()->addHTML( $this->msg( 'rollback-success' )->rawParams( $old, $new )
-			->parseAsBlock() );
+		$this->getOutput()->addHTML(
+			$this->msg( 'rollback-success' )
+				->rawParams( $old, $new )
+				->params( $current->getUserText( Revision::FOR_THIS_USER, $user ) )
+				->params( $target->getUserText( Revision::FOR_THIS_USER, $user ) )
+				->parseAsBlock()
+		);
 
 		if ( $user->getBoolOption( 'watchrollback' ) ) {
 			$user->addWatch( $this->page->getTitle(), User::IGNORE_USER_RIGHTS );
@@ -160,19 +191,53 @@ class RollbackAction extends FormAction {
 			);
 			$de->showDiff( '', '' );
 		}
-		return true;
 	}
 
-	public function onSuccess() {
-		// Required by parent class, but redundant because onSubmit already shows
-		// the success message when needed.
+	/**
+	 * Enables transactional time limit for POST and GET requests to RollbackAction
+	 * @throws ConfigException
+	 */
+	private function enableTransactionalTimelimit() {
+		// If Rollbacks are made POST-only, use $this->useTransactionalTimeLimit()
+		wfTransactionalTimeLimit();
+		if ( !$this->getRequest()->wasPosted() ) {
+			/**
+			 * We apply the higher POST limits on GET requests
+			 * to prevent logstash.wikimedia.org from being spammed
+			 */
+			$fname = __METHOD__;
+			$trxLimits = $this->context->getConfig()->get( 'TrxProfilerLimits' );
+			$trxProfiler = Profiler::instance()->getTransactionProfiler();
+			$trxProfiler->redefineExpectations( $trxLimits['POST'], $fname );
+			DeferredUpdates::addCallableUpdate( function () use ( $trxProfiler, $trxLimits, $fname
+			) {
+				$trxProfiler->redefineExpectations( $trxLimits['PostSend-POST'], $fname );
+			} );
+		}
 	}
 
-	protected function getDescription() {
-		return '';
+	private function showRollbackConfirmationForm() {
+		$form = $this->getForm();
+		if ( $form->show() ) {
+			$this->onSuccess();
+		}
 	}
 
-	public function doesWrites() {
-		return true;
+	protected function getFormFields() {
+		return [
+			'intro' => [
+				'type' => 'info',
+				'vertical-label' => true,
+				'raw' => true,
+				'default' => $this->msg( 'confirm-rollback-bottom' )->parse()
+			]
+		];
+	}
+
+	private function hasRollbackRelatedErrors( array $errors ) {
+		return isset( $errors[0][0] ) &&
+			( $errors[0][0] == 'alreadyrolled' ||
+				$errors[0][0] == 'cantrollback'
+			);
 	}
 }

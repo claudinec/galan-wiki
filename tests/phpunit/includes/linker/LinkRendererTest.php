@@ -1,17 +1,18 @@
 <?php
 
 use MediaWiki\Linker\LinkRenderer;
+use MediaWiki\Linker\LinkRendererFactory;
 use MediaWiki\MediaWikiServices;
 
 /**
- * @covers LinkRenderer
+ * @covers MediaWiki\Linker\LinkRenderer
  */
 class LinkRendererTest extends MediaWikiLangTestCase {
 
 	/**
-	 * @var TitleFormatter
+	 * @var LinkRendererFactory
 	 */
-	private $titleFormatter;
+	private $factory;
 
 	public function setUp() {
 		parent::setUp();
@@ -22,12 +23,12 @@ class LinkRendererTest extends MediaWikiLangTestCase {
 			'wgScriptPath' => '/w',
 			'wgScript' => '/w/index.php',
 		] );
-		$this->titleFormatter = MediaWikiServices::getInstance()->getTitleFormatter();
+		$this->factory = MediaWikiServices::getInstance()->getLinkRendererFactory();
 	}
 
 	public function testMergeAttribs() {
 		$target = new TitleValue( NS_SPECIAL, 'Blankpage' );
-		$linkRenderer = new LinkRenderer( $this->titleFormatter );
+		$linkRenderer = $this->factory->create();
 		$link = $linkRenderer->makeBrokenLink( $target, null, [
 			// Appended to class
 			'class' => 'foobar',
@@ -46,15 +47,14 @@ class LinkRendererTest extends MediaWikiLangTestCase {
 
 	public function testMakeKnownLink() {
 		$target = new TitleValue( NS_MAIN, 'Foobar' );
-		$linkRenderer = new LinkRenderer( $this->titleFormatter );
+		$linkRenderer = $this->factory->create();
 
 		// Query added
 		$this->assertEquals(
-			'<a href="/w/index.php?title=Foobar&amp;foo=bar" '. 'title="Foobar">Foobar</a>',
+			'<a href="/w/index.php?title=Foobar&amp;foo=bar" title="Foobar">Foobar</a>',
 			$linkRenderer->makeKnownLink( $target, null, [], [ 'foo' => 'bar' ] )
 		);
 
-		// forcearticlepath
 		$linkRenderer->setForceArticlePath( true );
 		$this->assertEquals(
 			'<a href="/wiki/Foobar?foo=bar" title="Foobar">Foobar</a>',
@@ -73,7 +73,7 @@ class LinkRendererTest extends MediaWikiLangTestCase {
 	public function testMakeBrokenLink() {
 		$target = new TitleValue( NS_MAIN, 'Foobar' );
 		$special = new TitleValue( NS_SPECIAL, 'Foobar' );
-		$linkRenderer = new LinkRenderer( $this->titleFormatter );
+		$linkRenderer = $this->factory->create();
 
 		// action=edit&redlink=1 added
 		$this->assertEquals(
@@ -105,7 +105,7 @@ class LinkRendererTest extends MediaWikiLangTestCase {
 	}
 
 	public function testMakeLink() {
-		$linkRenderer = new LinkRenderer( $this->titleFormatter );
+		$linkRenderer = $this->factory->create();
 		$foobar = new TitleValue( NS_SPECIAL, 'Foobar' );
 		$blankpage = new TitleValue( NS_SPECIAL, 'Blankpage' );
 		$this->assertEquals(
@@ -130,5 +130,69 @@ class LinkRendererTest extends MediaWikiLangTestCase {
 			. '(page does not exist)"><script>evil()</script></a>',
 			$linkRenderer->makeLink( $foobar, new HtmlArmor( '<script>evil()</script>' ) )
 		);
+
+		$this->assertEquals(
+			'<a href="#fragment">fragment</a>',
+			$linkRenderer->makeLink( Title::newFromText( '#fragment' ) )
+		);
+	}
+
+	public function testGetLinkClasses() {
+		$wanCache = ObjectCache::getMainWANInstance();
+		$titleFormatter = MediaWikiServices::getInstance()->getTitleFormatter();
+		$nsInfo = MediaWikiServices::getInstance()->getNamespaceInfo();
+		$linkCache = new LinkCache( $titleFormatter, $wanCache, $nsInfo );
+		$foobarTitle = new TitleValue( NS_MAIN, 'FooBar' );
+		$redirectTitle = new TitleValue( NS_MAIN, 'Redirect' );
+		$userTitle = new TitleValue( NS_USER, 'Someuser' );
+		$linkCache->addGoodLinkObj(
+			1, // id
+			$foobarTitle,
+			10, // len
+			0 // redir
+		);
+		$linkCache->addGoodLinkObj(
+			2, // id
+			$redirectTitle,
+			10, // len
+			1 // redir
+		);
+
+		$linkCache->addGoodLinkObj(
+			3, // id
+			$userTitle,
+			10, // len
+			0 // redir
+		);
+
+		$linkRenderer = new LinkRenderer( $titleFormatter, $linkCache, $nsInfo );
+		$linkRenderer->setStubThreshold( 0 );
+		$this->assertEquals(
+			'',
+			$linkRenderer->getLinkClasses( $foobarTitle )
+		);
+
+		$linkRenderer->setStubThreshold( 20 );
+		$this->assertEquals(
+			'stub',
+			$linkRenderer->getLinkClasses( $foobarTitle )
+		);
+
+		$linkRenderer->setStubThreshold( 0 );
+		$this->assertEquals(
+			'mw-redirect',
+			$linkRenderer->getLinkClasses( $redirectTitle )
+		);
+
+		$linkRenderer->setStubThreshold( 20 );
+		$this->assertEquals(
+			'',
+			$linkRenderer->getLinkClasses( $userTitle )
+		);
+	}
+
+	function tearDown() {
+		Title::clearCaches();
+		parent::tearDown();
 	}
 }

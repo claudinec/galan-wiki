@@ -4,7 +4,7 @@ namespace MediaWiki\Auth;
 
 /**
  * @group AuthManager
- * @covers MediaWiki\Auth\UserDataAuthenticationRequest
+ * @covers \MediaWiki\Auth\UserDataAuthenticationRequest
  */
 class UserDataAuthenticationRequestTest extends AuthenticationRequestTestCase {
 
@@ -36,7 +36,6 @@ class UserDataAuthenticationRequestTest extends AuthenticationRequestTestCase {
 			$this->assertSame( $email ?: 'default@example.com', $user->getEmail() );
 			$this->assertSame( $realname ?: 'Fake Name', $user->getRealName() );
 		}
-
 	}
 
 	public static function providePopulateUser() {
@@ -54,9 +53,8 @@ class UserDataAuthenticationRequestTest extends AuthenticationRequestTestCase {
 	 * @dataProvider provideLoadFromSubmission
 	 */
 	public function testLoadFromSubmission(
-		array $args, array $data, $expectState /* $hiddenPref, $enableEmail */
+		array $args, array $data, $expectState, $hiddenPref = null, $enableEmail = null
 	) {
-		list( $args, $data, $expectState, $hiddenPref, $enableEmail ) = func_get_args();
 		$this->setMwGlobals( 'wgHiddenPrefs', $hiddenPref );
 		$this->setMwGlobals( 'wgEnableEmail', $enableEmail );
 		parent::testLoadFromSubmission( $args, $data, $expectState );

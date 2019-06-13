@@ -19,8 +19,10 @@
  * @author לערי ריינהארט
  */
 
+$fallback = 'ca, fr';
+
 $bookstoreList = [
-	'Amazon.fr' => 'http://www.amazon.fr/exec/obidos/ISBN=$1'
+	'Amazon.fr' => 'https://www.amazon.fr/exec/obidos/ISBN=$1'
 ];
 
 $namespaceNames = [
@@ -56,6 +58,8 @@ $namespaceAliases = [
 	'Imatge'               => NS_FILE,
 	'Discussion_Imatge'    => NS_FILE_TALK,
 ];
+
+$namespaceGenderAliases = [];
 
 $specialPageAliases = [
 	'Allmessages'               => [ 'Messatge_sistèma', 'Messatge_del_sistèma' ],
@@ -282,7 +286,6 @@ $dateFormats = [
 	'oc normal both' => 'j F "de" Y "a" H.i',
 ];
 
-$separatorTransformTable = [ ',' => "\xc2\xa0", '.' => ',' ];
+$separatorTransformTable = [ ',' => "\u{00A0}", '.' => ',' ];
 
 $linkTrail = "/^([a-zàâçéèêîôû]+)(.*)$/sDu";
-

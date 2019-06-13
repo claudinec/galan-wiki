@@ -46,6 +46,9 @@ use WebRequest;
  * @since 1.27
  */
 final class Session implements \Countable, \Iterator, \ArrayAccess {
+	/** @var null|string[] Encryption algorithm to use */
+	private static $encryptionAlgorithm = null;
+
 	/** @var SessionBackend Session backend */
 	private $backend;
 
@@ -126,6 +129,11 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 
 	/**
 	 * Make this session not be persisted across requests
+	 *
+	 * This will remove persistence information (e.g. delete cookies)
+	 * from the associated WebRequest(s), and delete session data in the
+	 * backend. The session data will still be available via get() until
+	 * the end of the request.
 	 */
 	public function unpersist() {
 		$this->backend->unpersist();
@@ -283,7 +291,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	/**
 	 * Fetch a value from the session
 	 * @param string|int $key
-	 * @param mixed $default Returned if $this->exists( $key ) would be false
+	 * @param mixed|null $default Returned if $this->exists( $key ) would be false
 	 * @return mixed
 	 */
 	public function get( $key, $default = null ) {
@@ -384,7 +392,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	 * @return string[] Encryption key, HMAC key
 	 */
 	private function getSecretKeys() {
-		global $wgSessionSecret, $wgSecretKey;
+		global $wgSessionSecret, $wgSecretKey, $wgSessionPbkdf2Iterations;
 
 		$wikiSecret = $wgSessionSecret ?: $wgSecretKey;
 		$userSecret = $this->get( 'wsSessionSecret', null );
@@ -392,12 +400,68 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 			$userSecret = \MWCryptRand::generateHex( 32 );
 			$this->set( 'wsSessionSecret', $userSecret );
 		}
+		$iterations = $this->get( 'wsSessionPbkdf2Iterations', null );
+		if ( $iterations === null ) {
+			$iterations = $wgSessionPbkdf2Iterations;
+			$this->set( 'wsSessionPbkdf2Iterations', $iterations );
+		}
 
-		$keymats = hash_pbkdf2( 'sha256', $wikiSecret, $userSecret, 10001, 64, true );
+		$keymats = hash_pbkdf2( 'sha256', $wikiSecret, $userSecret, $iterations, 64, true );
 		return [
 			substr( $keymats, 0, 32 ),
 			substr( $keymats, 32, 32 ),
 		];
+	}
+
+	/**
+	 * Decide what type of encryption to use, based on system capabilities.
+	 * @return array
+	 */
+	private static function getEncryptionAlgorithm() {
+		global $wgSessionInsecureSecrets;
+
+		if ( self::$encryptionAlgorithm === null ) {
+			if ( function_exists( 'openssl_encrypt' ) ) {
+				$methods = openssl_get_cipher_methods();
+				if ( in_array( 'aes-256-ctr', $methods, true ) ) {
+					self::$encryptionAlgorithm = [ 'openssl', 'aes-256-ctr' ];
+					return self::$encryptionAlgorithm;
+				}
+				if ( in_array( 'aes-256-cbc', $methods, true ) ) {
+					self::$encryptionAlgorithm = [ 'openssl', 'aes-256-cbc' ];
+					return self::$encryptionAlgorithm;
+				}
+			}
+
+			if ( function_exists( 'mcrypt_encrypt' )
+				&& in_array( 'rijndael-128', mcrypt_list_algorithms(), true )
+			) {
+				$modes = mcrypt_list_modes();
+				if ( in_array( 'ctr', $modes, true ) ) {
+					self::$encryptionAlgorithm = [ 'mcrypt', 'rijndael-128', 'ctr' ];
+					return self::$encryptionAlgorithm;
+				}
+				if ( in_array( 'cbc', $modes, true ) ) {
+					self::$encryptionAlgorithm = [ 'mcrypt', 'rijndael-128', 'cbc' ];
+					return self::$encryptionAlgorithm;
+				}
+			}
+
+			if ( $wgSessionInsecureSecrets ) {
+				// @todo: import a pure-PHP library for AES instead of this
+				self::$encryptionAlgorithm = [ 'insecure' ];
+				return self::$encryptionAlgorithm;
+			}
+
+			throw new \BadMethodCallException(
+				'Encryption is not available. You really should install the PHP OpenSSL extension, ' .
+				'or failing that the mcrypt extension. But if you really can\'t and you\'re willing ' .
+				'to accept insecure storage of sensitive session data, set ' .
+				'$wgSessionInsecureSecrets = true in LocalSettings.php to make this exception go away.'
+			);
+		}
+
+		return self::$encryptionAlgorithm;
 	}
 
 	/**
@@ -409,8 +473,6 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	 * @param mixed $value
 	 */
 	public function setSecret( $key, $value ) {
-		global $wgSessionInsecureSecrets;
-
 		list( $encKey, $hmacKey ) = $this->getSecretKeys();
 		$serialized = serialize( $value );
 
@@ -419,28 +481,33 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 
 		// Encrypt
 		// @todo: import a pure-PHP library for AES instead of doing $wgSessionInsecureSecrets
-		$iv = \MWCryptRand::generate( 16, true );
-		if ( function_exists( 'openssl_encrypt' ) ) {
-			$ciphertext = openssl_encrypt( $serialized, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $iv );
-			if ( $ciphertext === false ) {
-				throw new UnexpectedValueException( 'Encryption failed: ' . openssl_error_string() );
-			}
-		} elseif ( function_exists( 'mcrypt_encrypt' ) ) {
-			$ciphertext = mcrypt_encrypt( 'rijndael-128', $encKey, $serialized, 'ctr', $iv );
-			if ( $ciphertext === false ) {
-				throw new UnexpectedValueException( 'Encryption failed' );
-			}
-		} elseif ( $wgSessionInsecureSecrets ) {
-			$ex = new \Exception( 'No encryption is available, storing data as plain text' );
-			$this->logger->warning( $ex->getMessage(), [ 'exception' => $ex ] );
-			$ciphertext = $serialized;
-		} else {
-			throw new \BadMethodCallException(
-				'Encryption is not available. You really should install the PHP OpenSSL extension, ' .
-				'or failing that the mcrypt extension. But if you really can\'t and you\'re willing ' .
-				'to accept insecure storage of sensitive session data, set ' .
-				'$wgSessionInsecureSecrets = true in LocalSettings.php to make this exception go away.'
-			);
+		$iv = random_bytes( 16 );
+		$algorithm = self::getEncryptionAlgorithm();
+		switch ( $algorithm[0] ) {
+			case 'openssl':
+				$ciphertext = openssl_encrypt( $serialized, $algorithm[1], $encKey, OPENSSL_RAW_DATA, $iv );
+				if ( $ciphertext === false ) {
+					throw new \UnexpectedValueException( 'Encryption failed: ' . openssl_error_string() );
+				}
+				break;
+			case 'mcrypt':
+				// PKCS7 padding
+				$blocksize = mcrypt_get_block_size( $algorithm[1], $algorithm[2] );
+				$pad = $blocksize - ( strlen( $serialized ) % $blocksize );
+				$serialized .= str_repeat( chr( $pad ), $pad );
+
+				$ciphertext = mcrypt_encrypt( $algorithm[1], $encKey, $serialized, $algorithm[2], $iv );
+				if ( $ciphertext === false ) {
+					throw new \UnexpectedValueException( 'Encryption failed' );
+				}
+				break;
+			case 'insecure':
+				$ex = new \Exception( 'No encryption is available, storing data as plain text' );
+				$this->logger->warning( $ex->getMessage(), [ 'exception' => $ex ] );
+				$ciphertext = $serialized;
+				break;
+			default:
+				throw new \LogicException( 'invalid algorithm' );
 		}
 
 		// Seal
@@ -455,12 +522,10 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	/**
 	 * Fetch a value from the session that was set with self::setSecret()
 	 * @param string|int $key
-	 * @param mixed $default Returned if $this->exists( $key ) would be false or decryption fails
+	 * @param mixed|null $default Returned if $this->exists( $key ) would be false or decryption fails
 	 * @return mixed
 	 */
 	public function getSecret( $key, $default = null ) {
-		global $wgSessionInsecureSecrets;
-
 		// Fetch
 		$encrypted = $this->get( $key, null );
 		if ( $encrypted === null ) {
@@ -472,7 +537,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 		// Extension::OATHAuth.
 
 		// Unseal and check
-		$pieces = explode( '.', $encrypted );
+		$pieces = explode( '.', $encrypted, 4 );
 		if ( count( $pieces ) !== 3 ) {
 			$ex = new \Exception( 'Invalid sealed-secret format' );
 			$this->logger->warning( $ex->getMessage(), [ 'exception' => $ex ] );
@@ -488,38 +553,39 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 		}
 
 		// Decrypt
-		// @todo: import a pure-PHP library for AES instead of doing $wgSessionInsecureSecrets
-		if ( function_exists( 'openssl_decrypt' ) ) {
-			$serialized = openssl_decrypt(
-				base64_decode( $ciphertext ), 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, base64_decode( $iv )
-			);
-			if ( $serialized === false ) {
-				$ex = new \Exception( 'Decyption failed: ' . openssl_error_string() );
-				$this->logger->debug( $ex->getMessage(), [ 'exception' => $ex ] );
-				return $default;
-			}
-		} elseif ( function_exists( 'mcrypt_decrypt' ) ) {
-			$serialized = mcrypt_decrypt(
-				'rijndael-128', $encKey, base64_decode( $ciphertext ), 'ctr', base64_decode( $iv )
-			);
-			if ( $serialized === false ) {
-				$ex = new \Exception( 'Decyption failed' );
-				$this->logger->debug( $ex->getMessage(), [ 'exception' => $ex ] );
-				return $default;
-			}
-		} elseif ( $wgSessionInsecureSecrets ) {
-			$ex = new \Exception(
-				'No encryption is available, retrieving data that was stored as plain text'
-			);
-			$this->logger->warning( $ex->getMessage(), [ 'exception' => $ex ] );
-			$serialized = base64_decode( $ciphertext );
-		} else {
-			throw new \BadMethodCallException(
-				'Encryption is not available. You really should install the PHP OpenSSL extension, ' .
-				'or failing that the mcrypt extension. But if you really can\'t and you\'re willing ' .
-				'to accept insecure storage of sensitive session data, set ' .
-				'$wgSessionInsecureSecrets = true in LocalSettings.php to make this exception go away.'
-			);
+		$algorithm = self::getEncryptionAlgorithm();
+		switch ( $algorithm[0] ) {
+			case 'openssl':
+				$serialized = openssl_decrypt( base64_decode( $ciphertext ), $algorithm[1], $encKey,
+					OPENSSL_RAW_DATA, base64_decode( $iv ) );
+				if ( $serialized === false ) {
+					$ex = new \Exception( 'Decyption failed: ' . openssl_error_string() );
+					$this->logger->debug( $ex->getMessage(), [ 'exception' => $ex ] );
+					return $default;
+				}
+				break;
+			case 'mcrypt':
+				$serialized = mcrypt_decrypt( $algorithm[1], $encKey, base64_decode( $ciphertext ),
+					$algorithm[2], base64_decode( $iv ) );
+				if ( $serialized === false ) {
+					$ex = new \Exception( 'Decyption failed' );
+					$this->logger->debug( $ex->getMessage(), [ 'exception' => $ex ] );
+					return $default;
+				}
+
+				// Remove PKCS7 padding
+				$pad = ord( substr( $serialized, -1 ) );
+				$serialized = substr( $serialized, 0, -$pad );
+				break;
+			case 'insecure':
+				$ex = new \Exception(
+					'No encryption is available, retrieving data that was stored as plain text'
+				);
+				$this->logger->warning( $ex->getMessage(), [ 'exception' => $ex ] );
+				$serialized = base64_decode( $ciphertext );
+				break;
+			default:
+				throw new \LogicException( 'invalid algorithm' );
 		}
 
 		$value = unserialize( $serialized );
@@ -534,7 +600,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	 *
 	 * Calls to save() or clear() will not be delayed.
 	 *
-	 * @return \ScopedCallback When this goes out of scope, a save will be triggered
+	 * @return \Wikimedia\ScopedCallback When this goes out of scope, a save will be triggered
 	 */
 	public function delaySave() {
 		return $this->backend->delaySave();
@@ -542,6 +608,9 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 
 	/**
 	 * Save the session
+	 *
+	 * This will update the backend data and might re-persist the session
+	 * if needed.
 	 */
 	public function save() {
 		$this->backend->save();
@@ -552,31 +621,37 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	 * @{
 	 */
 
+	/** @inheritDoc */
 	public function count() {
 		$data = &$this->backend->getData();
 		return count( $data );
 	}
 
+	/** @inheritDoc */
 	public function current() {
 		$data = &$this->backend->getData();
 		return current( $data );
 	}
 
+	/** @inheritDoc */
 	public function key() {
 		$data = &$this->backend->getData();
 		return key( $data );
 	}
 
+	/** @inheritDoc */
 	public function next() {
 		$data = &$this->backend->getData();
 		next( $data );
 	}
 
+	/** @inheritDoc */
 	public function rewind() {
 		$data = &$this->backend->getData();
 		reset( $data );
 	}
 
+	/** @inheritDoc */
 	public function valid() {
 		$data = &$this->backend->getData();
 		return key( $data ) !== null;
@@ -585,6 +660,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	/**
 	 * @note Despite the name, this seems to be intended to implement isset()
 	 *  rather than array_key_exists(). So do that.
+	 * @inheritDoc
 	 */
 	public function offsetExists( $offset ) {
 		$data = &$this->backend->getData();
@@ -597,6 +673,7 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 	 *  data to detect such changes.
 	 * @note Accessing a nonexistent key via this mechanism causes that key to
 	 *  be created with a null value, and does not raise a PHP warning.
+	 * @inheritDoc
 	 */
 	public function &offsetGet( $offset ) {
 		$data = &$this->backend->getData();
@@ -607,10 +684,12 @@ final class Session implements \Countable, \Iterator, \ArrayAccess {
 		return $data[$offset];
 	}
 
+	/** @inheritDoc */
 	public function offsetSet( $offset, $value ) {
 		$this->set( $offset, $value );
 	}
 
+	/** @inheritDoc */
 	public function offsetUnset( $offset ) {
 		$this->remove( $offset );
 	}

@@ -1,5 +1,7 @@
 <?php
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Test class for Export methods.
  *
@@ -20,7 +22,6 @@ class ExportTest extends MediaWikiLangTestCase {
 	 * @covers WikiExporter::pageByTitle
 	 */
 	public function testPageByTitle() {
-		global $wgContLang;
 		$pageTitle = 'UTPage';
 
 		$exporter = new WikiExporter(
@@ -30,14 +31,14 @@ class ExportTest extends MediaWikiLangTestCase {
 
 		$title = Title::newFromText( $pageTitle );
 
-		ob_start();
+		$sink = new DumpStringOutput;
+		$exporter->setOutputSink( $sink );
 		$exporter->openStream();
 		$exporter->pageByTitle( $title );
 		$exporter->closeStream();
-		$xmlString = ob_get_clean();
 
 		// This throws error if invalid xml output
-		$xmlObject = simplexml_load_string( $xmlString );
+		$xmlObject = simplexml_load_string( $sink );
 
 		/**
 		 * Check namespaces match xml
@@ -51,7 +52,8 @@ class ExportTest extends MediaWikiLangTestCase {
 			}
 		}
 
-		$actualNamespaces = (array)$wgContLang->getNamespaces();
+		$actualNamespaces = (array)MediaWikiServices::getInstance()->getContentLanguage()->
+			getNamespaces();
 		$actualNamespaces = array_values( $actualNamespaces );
 		$this->assertEquals( $actualNamespaces, $xmlNamespaces );
 

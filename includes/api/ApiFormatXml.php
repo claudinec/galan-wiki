@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Sep 19, 2006
- *
  * Copyright © 2006 Yuri Astrakhan "<Firstname><Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -108,26 +104,18 @@ class ApiFormatXml extends ApiFormatBase {
 			$value = (array)$value;
 		}
 		if ( is_array( $value ) ) {
-			$contentKey = isset( $value[ApiResult::META_CONTENT] )
-				? $value[ApiResult::META_CONTENT]
-				: '*';
-			$subelementKeys = isset( $value[ApiResult::META_SUBELEMENTS] )
-				? $value[ApiResult::META_SUBELEMENTS]
-				: [];
+			$contentKey = $value[ApiResult::META_CONTENT] ?? '*';
+			$subelementKeys = $value[ApiResult::META_SUBELEMENTS] ?? [];
 			if ( isset( $value[ApiResult::META_BC_SUBELEMENTS] ) ) {
 				$subelementKeys = array_merge(
 					$subelementKeys, $value[ApiResult::META_BC_SUBELEMENTS]
 				);
 			}
-			$preserveKeys = isset( $value[ApiResult::META_PRESERVE_KEYS] )
-				? $value[ApiResult::META_PRESERVE_KEYS]
-				: [];
+			$preserveKeys = $value[ApiResult::META_PRESERVE_KEYS] ?? [];
 			$indexedTagName = isset( $value[ApiResult::META_INDEXED_TAG_NAME] )
 				? self::mangleName( $value[ApiResult::META_INDEXED_TAG_NAME], $preserveKeys )
 				: '_v';
-			$bcBools = isset( $value[ApiResult::META_BC_BOOLS] )
-				? $value[ApiResult::META_BC_BOOLS]
-				: [];
+			$bcBools = $value[ApiResult::META_BC_BOOLS] ?? [];
 			$indexSubelements = isset( $value[ApiResult::META_TYPE] )
 				? $value[ApiResult::META_TYPE] !== 'array'
 				: false;
@@ -269,17 +257,17 @@ class ApiFormatXml extends ApiFormatBase {
 	protected function addXslt() {
 		$nt = Title::newFromText( $this->mXslt );
 		if ( is_null( $nt ) || !$nt->exists() ) {
-			$this->setWarning( 'Invalid or non-existent stylesheet specified' );
+			$this->addWarning( 'apiwarn-invalidxmlstylesheet' );
 
 			return;
 		}
 		if ( $nt->getNamespace() != NS_MEDIAWIKI ) {
-			$this->setWarning( 'Stylesheet should be in the MediaWiki namespace.' );
+			$this->addWarning( 'apiwarn-invalidxmlstylesheetns' );
 
 			return;
 		}
 		if ( substr( $nt->getText(), -4 ) !== '.xsl' ) {
-			$this->setWarning( 'Stylesheet should have .xsl extension.' );
+			$this->addWarning( 'apiwarn-invalidxmlstylesheetext' );
 
 			return;
 		}

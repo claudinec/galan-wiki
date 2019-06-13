@@ -21,6 +21,7 @@
  * @ingroup Upload
  * @ingroup JobQueue
  */
+use Wikimedia\ScopedCallback;
 
 /**
  * Upload a file from the upload stash into the local file repo.
@@ -83,7 +84,7 @@ class PublishStashedFileJob extends Job {
 				$this->params['text'],
 				$this->params['watch'],
 				$user,
-				isset( $this->params['tags'] ) ? $this->params['tags'] : []
+				$this->params['tags'] ?? []
 			);
 			if ( !$status->isGood() ) {
 				UploadBase::setSessionStatus(
@@ -127,7 +128,7 @@ class PublishStashedFileJob extends Job {
 			);
 			$this->setLastError( get_class( $e ) . ": " . $e->getMessage() );
 			// To prevent potential database referential integrity issues.
-			// See bug 32551.
+			// See T34551.
 			MWExceptionHandler::rollbackMasterChangesAndLog( $e );
 
 			return false;

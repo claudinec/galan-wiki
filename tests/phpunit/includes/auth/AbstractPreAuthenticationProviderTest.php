@@ -4,18 +4,9 @@ namespace MediaWiki\Auth;
 
 /**
  * @group AuthManager
- * @covers MediaWiki\Auth\AbstractPreAuthenticationProvider
+ * @covers \MediaWiki\Auth\AbstractPreAuthenticationProvider
  */
 class AbstractPreAuthenticationProviderTest extends \MediaWikiTestCase {
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
-
 	public function testAbstractPreAuthenticationProvider() {
 		$user = \User::newFromName( 'UTSysop' );
 

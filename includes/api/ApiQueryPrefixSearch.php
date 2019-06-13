@@ -1,5 +1,4 @@
 <?php
-use MediaWiki\MediaWikiServices;
 
 /**
  * This program is free software; you can redistribute it and/or modify
@@ -25,6 +24,11 @@ use MediaWiki\MediaWikiServices;
  * @ingroup API
  */
 class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
+	use SearchApi;
+
+	/** @var array list of api allowed params */
+	private $allowedParams;
+
 	public function __construct( $query, $moduleName ) {
 		parent::__construct( $query, $moduleName, 'ps' );
 	}
@@ -44,25 +48,23 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 		$params = $this->extractRequestParams();
 		$search = $params['search'];
 		$limit = $params['limit'];
-		$namespaces = $params['namespace'];
 		$offset = $params['offset'];
 
-		$searchEngine = MediaWikiServices::getInstance()->newSearchEngine();
-		$searchEngine->setLimitOffset( $limit + 1, $offset );
-		$searchEngine->setNamespaces( $namespaces );
-		$titles = $searchEngine->extractTitles( $searchEngine->completionSearchWithVariants( $search ) );
+		$searchEngine = $this->buildSearchEngine( $params );
+		$suggestions = $searchEngine->completionSearchWithVariants( $search );
+		$titles = $searchEngine->extractTitles( $suggestions );
+
+		if ( $suggestions->hasMoreResults() ) {
+			$this->setContinueEnumParameter( 'offset', $offset + $limit );
+		}
 
 		if ( $resultPageSet ) {
-			$resultPageSet->setRedirectMergePolicy( function( array $current, array $new ) {
+			$resultPageSet->setRedirectMergePolicy( function ( array $current, array $new ) {
 				if ( !isset( $current['index'] ) || $new['index'] < $current['index'] ) {
 					$current['index'] = $new['index'];
 				}
 				return $current;
 			} );
-			if ( count( $titles ) > $limit ) {
-				$this->setContinueEnumParameter( 'offset', $offset + $params['limit'] );
-				array_pop( $titles );
-			}
 			$resultPageSet->populateFromTitles( $titles );
 			foreach ( $titles as $index => $title ) {
 				$resultPageSet->setGeneratorData( $title, [ 'index' => $index + $offset + 1 ] );
@@ -71,22 +73,19 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 			$result = $this->getResult();
 			$count = 0;
 			foreach ( $titles as $title ) {
-				if ( ++$count > $limit ) {
-					$this->setContinueEnumParameter( 'offset', $offset + $params['limit'] );
-					break;
-				}
 				$vals = [
-					'ns' => intval( $title->getNamespace() ),
+					'ns' => (int)$title->getNamespace(),
 					'title' => $title->getPrefixedText(),
 				];
 				if ( $title->isSpecialPage() ) {
 					$vals['special'] = true;
 				} else {
-					$vals['pageid'] = intval( $title->getArticleID() );
+					$vals['pageid'] = (int)$title->getArticleID();
 				}
 				$fit = $result->addValue( [ 'query', $this->getModuleName() ], null, $vals );
+				++$count;
 				if ( !$fit ) {
-					$this->setContinueEnumParameter( 'offset', $offset + $count - 1 );
+					$this->setContinueEnumParameter( 'offset', $offset + $count );
 					break;
 				}
 			}
@@ -101,29 +100,21 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 	}
 
 	public function getAllowedParams() {
-			return [
-				'search' => [
-					ApiBase::PARAM_TYPE => 'string',
-					ApiBase::PARAM_REQUIRED => true,
-				],
-				'namespace' => [
-					ApiBase::PARAM_DFLT => NS_MAIN,
-					ApiBase::PARAM_TYPE => 'namespace',
-					ApiBase::PARAM_ISMULTI => true,
-				],
-				'limit' => [
-					ApiBase::PARAM_DFLT => 10,
-					ApiBase::PARAM_TYPE => 'limit',
-					ApiBase::PARAM_MIN => 1,
-					// Non-standard value for compatibility with action=opensearch
-					ApiBase::PARAM_MAX => 100,
-					ApiBase::PARAM_MAX2 => 200,
-				],
-				'offset' => [
-					ApiBase::PARAM_DFLT => 0,
-					ApiBase::PARAM_TYPE => 'integer',
-				],
-			];
+		if ( $this->allowedParams !== null ) {
+			return $this->allowedParams;
+		}
+		$this->allowedParams = $this->buildCommonApiParams();
+
+		return $this->allowedParams;
+	}
+
+	public function getSearchProfileParams() {
+		return [
+			'profile' => [
+				'profile-type' => SearchEngine::COMPLETION_PROFILE_TYPE,
+				'help-message' => 'apihelp-query+prefixsearch-param-profile',
+			],
+		];
 	}
 
 	protected function getExamplesMessages() {
@@ -134,6 +125,6 @@ class ApiQueryPrefixSearch extends ApiQueryGeneratorBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Prefixsearch';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Prefixsearch';
 	}
 }

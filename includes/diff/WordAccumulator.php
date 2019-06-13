@@ -46,11 +46,9 @@ class WordAccumulator {
 	private function flushGroup( $new_tag ) {
 		if ( $this->group !== '' ) {
 			if ( $this->tag == 'ins' ) {
-				$this->line .= "<ins{$this->insClass}>" .
-							   htmlspecialchars( $this->group ) . '</ins>';
+				$this->line .= "<ins{$this->insClass}>" . htmlspecialchars( $this->group ) . '</ins>';
 			} elseif ( $this->tag == 'del' ) {
-				$this->line .= "<del{$this->delClass}>" .
-							   htmlspecialchars( $this->group ) . '</del>';
+				$this->line .= "<del{$this->delClass}>" . htmlspecialchars( $this->group ) . '</del>';
 			} else {
 				$this->line .= htmlspecialchars( $this->group );
 			}
@@ -68,7 +66,7 @@ class WordAccumulator {
 			array_push( $this->lines, $this->line );
 		} else {
 			# make empty lines visible by inserting an NBSP
-			array_push( $this->lines, '&#160;' );
+			array_push( $this->lines, "\u{00A0}" );
 		}
 		$this->line = '';
 	}
@@ -91,6 +89,8 @@ class WordAccumulator {
 				$this->flushLine( $tag );
 				$word = substr( $word, 1 );
 			}
+			// FIXME: Don't use assert()
+			// phpcs:ignore MediaWiki.Usage.ForbiddenFunctions.assert
 			assert( !strstr( $word, "\n" ) );
 			$this->group .= $word;
 		}

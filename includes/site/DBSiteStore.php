@@ -1,5 +1,7 @@
 <?php
 
+use Wikimedia\Rdbms\LoadBalancer;
+
 /**
  * Represents the site configuration of a wiki.
  * Holds a list of sites (ie SiteList), stored in the database.
@@ -24,7 +26,7 @@
  * @file
  * @ingroup Site
  *
- * @license GNU GPL v2+
+ * @license GPL-2.0-or-later
  * @author Jeroen De Dauw < jeroendedauw@gmail.com >
  * @author Daniel Kinzler
  */
@@ -43,7 +45,7 @@ class DBSiteStore implements SiteStore {
 	/**
 	 * @since 1.27
 	 *
-	 * @todo: inject some kind of connection manager that is aware of the target wiki,
+	 * @todo inject some kind of connection manager that is aware of the target wiki,
 	 * instead of injecting a LoadBalancer.
 	 *
 	 * @param LoadBalancer $dbLoadBalancer
@@ -73,7 +75,7 @@ class DBSiteStore implements SiteStore {
 	protected function loadSites() {
 		$this->sites = new SiteList();
 
-		$dbr = $this->dbLoadBalancer->getConnection( DB_SLAVE );
+		$dbr = $this->dbLoadBalancer->getConnection( DB_REPLICA );
 
 		$res = $dbr->select(
 			'sites',
@@ -130,8 +132,6 @@ class DBSiteStore implements SiteStore {
 				$this->sites->setSite( $site );
 			}
 		}
-
-		$this->dbLoadBalancer->reuseConnection( $dbr );
 	}
 
 	/**
@@ -198,7 +198,7 @@ class DBSiteStore implements SiteStore {
 				'site_type' => $site->getType(),
 				'site_group' => $site->getGroup(),
 				'site_source' => $site->getSource(),
-				'site_language' => $site->getLanguageCode() === null ? '' : $site->getLanguageCode(),
+				'site_language' => $site->getLanguageCode() ?? '',
 				'site_protocol' => $site->getProtocol(),
 				'site_domain' => strrev( $site->getDomain() ) . '.',
 				'site_data' => serialize( $site->getExtraData() ),
@@ -214,8 +214,6 @@ class DBSiteStore implements SiteStore {
 					'sites', $fields, [ 'site_id' => $rowId ], __METHOD__
 				) && $success;
 			} else {
-				$rowId = $dbw->nextSequenceValue( 'sites_site_id_seq' );
-				$fields['site_id'] = $rowId;
 				$success = $dbw->insert( 'sites', $fields, __METHOD__ ) && $success;
 				$rowId = $dbw->insertId();
 			}
@@ -249,8 +247,6 @@ class DBSiteStore implements SiteStore {
 
 		$dbw->endAtomic( __METHOD__ );
 
-		$this->dbLoadBalancer->reuseConnection( $dbw );
-
 		$this->reset();
 
 		return $success;
@@ -279,8 +275,6 @@ class DBSiteStore implements SiteStore {
 		$ok = $dbw->delete( 'sites', '*', __METHOD__ );
 		$ok = $dbw->delete( 'site_identifiers', '*', __METHOD__ ) && $ok;
 		$dbw->endAtomic( __METHOD__ );
-
-		$this->dbLoadBalancer->reuseConnection( $dbw );
 
 		$this->reset();
 

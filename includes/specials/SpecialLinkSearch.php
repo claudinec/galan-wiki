@@ -22,6 +22,9 @@
  * @author Brion Vibber
  */
 
+use Wikimedia\Rdbms\IResultWrapper;
+use Wikimedia\Rdbms\IDatabase;
+
 /**
  * Special:LinkSearch to search the external-links table.
  * @ingroup SpecialPage
@@ -29,11 +32,6 @@
 class LinkSearchPage extends QueryPage {
 	/** @var array|bool */
 	private $mungedQuery = false;
-
-	/**
-	 * @var PageLinkRenderer
-	 */
-	protected $linkRenderer = null;
 
 	function setParams( $params ) {
 		$this->mQuery = $params['query'];
@@ -49,39 +47,11 @@ class LinkSearchPage extends QueryPage {
 		// using the setServices() method.
 	}
 
-	/**
-	 * Initialize or override the PageLinkRenderer LinkSearchPage collaborates with.
-	 * Useful mainly for testing.
-	 *
-	 * @todo query logic and rendering logic should be split and also injected
-	 *
-	 * @param PageLinkRenderer $linkRenderer
-	 */
-	public function setPageLinkRenderer(
-		PageLinkRenderer $linkRenderer
-	) {
-		$this->linkRenderer = $linkRenderer;
-	}
-
-	/**
-	 * Initialize any services we'll need (unless it has already been provided via a setter).
-	 * This allows for dependency injection even though we don't control object creation.
-	 */
-	private function initServices() {
-		global $wgContLang;
-		if ( !$this->linkRenderer ) {
-			$titleFormatter = new MediaWikiTitleCodec( $wgContLang, GenderCache::singleton() );
-			$this->linkRenderer = new MediaWikiPageLinkRenderer( $titleFormatter );
-		}
-	}
-
 	function isCacheable() {
 		return false;
 	}
 
 	public function execute( $par ) {
-		$this->initServices();
-
 		$this->setHeaders();
 		$this->outputHeader();
 
@@ -99,7 +69,7 @@ class LinkSearchPage extends QueryPage {
 			}
 		}
 
-		$target2 = $target;
+		$target2 = Parser::normalizeLinkUrl( $target );
 		// Get protocol, default is http://
 		$protocol = 'http://';
 		$bits = wfParseUrl( $target );
@@ -158,7 +128,7 @@ class LinkSearchPage extends QueryPage {
 
 		if ( $target != '' ) {
 			$this->setParams( [
-				'query' => Parser::normalizeLinkUrl( $target2 ),
+				'query' => $target2,
 				'namespace' => $namespace,
 				'protocol' => $protocol ] );
 			parent::execute( $par );
@@ -176,37 +146,6 @@ class LinkSearchPage extends QueryPage {
 		return false;
 	}
 
-	/**
-	 * Return an appropriately formatted LIKE query and the clause
-	 *
-	 * @param string $query Search pattern to search for
-	 * @param string $prot Protocol, e.g. 'http://'
-	 *
-	 * @return array
-	 */
-	static function mungeQuery( $query, $prot ) {
-		$field = 'el_index';
-		$dbr = wfGetDB( DB_SLAVE );
-
-		if ( $query === '*' && $prot !== '' ) {
-			// Allow queries like 'ftp://*' to find all ftp links
-			$rv = [ $prot, $dbr->anyString() ];
-		} else {
-			$rv = LinkFilter::makeLikeArray( $query, $prot );
-		}
-
-		if ( $rv === false ) {
-			// LinkFilter doesn't handle wildcard in IP, so we'll have to munge here.
-			$pattern = '/^(:?[0-9]{1,3}\.)+\*\s*$|^(:?[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]*\*\s*$/';
-			if ( preg_match( $pattern, $query ) ) {
-				$rv = [ $prot . rtrim( $query, " \t*" ), $dbr->anyString() ];
-				$field = 'el_to';
-			}
-		}
-
-		return [ $rv, $field ];
-	}
-
 	function linkParameters() {
 		$params = [];
 		$params['target'] = $this->mProt . $this->mQuery;
@@ -218,17 +157,30 @@ class LinkSearchPage extends QueryPage {
 	}
 
 	public function getQueryInfo() {
-		$dbr = wfGetDB( DB_SLAVE );
-		// strip everything past first wildcard, so that
-		// index-based-only lookup would be done
-		list( $this->mungedQuery, $clause ) = self::mungeQuery( $this->mQuery, $this->mProt );
+		$dbr = wfGetDB( DB_REPLICA );
+
+		if ( $this->mQuery === '*' && $this->mProt !== '' ) {
+			$this->mungedQuery = [
+				'el_index_60' . $dbr->buildLike( $this->mProt, $dbr->anyString() ),
+			];
+		} else {
+			$this->mungedQuery = LinkFilter::getQueryConditions( $this->mQuery, [
+				'protocol' => $this->mProt,
+				'oneWildcard' => true,
+				'db' => $dbr
+			] );
+		}
 		if ( $this->mungedQuery === false ) {
 			// Invalid query; return no results
 			return [ 'tables' => 'page', 'fields' => 'page_id', 'conds' => '0=1' ];
 		}
 
-		$stripped = LinkFilter::keepOneWildcard( $this->mungedQuery );
-		$like = $dbr->buildLike( $stripped );
+		$orderBy = [];
+		if ( !isset( $this->mungedQuery['el_index_60'] ) ) {
+			$orderBy[] = 'el_index_60';
+		}
+		$orderBy[] = 'el_id';
+
 		$retval = [
 			'tables' => [ 'page', 'externallinks' ],
 			'fields' => [
@@ -237,11 +189,13 @@ class LinkSearchPage extends QueryPage {
 				'value' => 'el_index',
 				'url' => 'el_to'
 			],
-			'conds' => [
-				'page_id = el_from',
-				"$clause $like"
-			],
-			'options' => [ 'USE INDEX' => $clause ]
+			'conds' => array_merge(
+				[
+					'page_id = el_from',
+				],
+				$this->mungedQuery
+			),
+			'options' => [ 'ORDER BY' => $orderBy ]
 		];
 
 		if ( $this->mNs !== null && !$this->getConfig()->get( 'MiserMode' ) ) {
@@ -255,19 +209,10 @@ class LinkSearchPage extends QueryPage {
 	 * Pre-fill the link cache
 	 *
 	 * @param IDatabase $db
-	 * @param ResultWrapper $res
+	 * @param IResultWrapper $res
 	 */
 	function preprocessResults( $db, $res ) {
-		if ( $res->numRows() > 0 ) {
-			$linkBatch = new LinkBatch();
-
-			foreach ( $res as $row ) {
-				$linkBatch->add( $row->namespace, $row->title );
-			}
-
-			$res->seek( 0 );
-			$linkBatch->execute();
-		}
+		$this->executeLBFromResultWrapper( $res );
 	}
 
 	/**
@@ -277,7 +222,7 @@ class LinkSearchPage extends QueryPage {
 	 */
 	function formatResult( $skin, $result ) {
 		$title = new TitleValue( (int)$result->namespace, $result->title );
-		$pageLink = $this->linkRenderer->renderHtmlLink( $title );
+		$pageLink = $this->getLinkRenderer()->makeLink( $title );
 
 		$url = $result->url;
 		$urlLink = Linker::makeExternalLink( $url, $url );
@@ -287,9 +232,7 @@ class LinkSearchPage extends QueryPage {
 
 	/**
 	 * Override to squash the ORDER BY.
-	 * We do a truncated index search, so the optimizer won't trust
-	 * it as good enough for optimizing sort. The implicit ordering
-	 * from the scan will usually do well enough for our needs.
+	 * Not much point in descending order here.
 	 * @return array
 	 */
 	function getOrderFields() {
@@ -305,6 +248,7 @@ class LinkSearchPage extends QueryPage {
 	 *
 	 * @see T130058
 	 * @todo FIXME This special page should not use LIMIT for paging
+	 * @return int
 	 */
 	protected function getMaxResults() {
 		return max( parent::getMaxResults(), 60000 );

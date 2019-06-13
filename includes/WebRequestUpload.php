@@ -20,6 +20,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Object to access the $_FILES array
  *
@@ -63,13 +65,12 @@ class WebRequestUpload {
 			return null;
 		}
 
-		global $wgContLang;
 		$name = $this->fileInfo['name'];
 
 		# Safari sends filenames in HTML-encoded Unicode form D...
 		# Horrid and evil! Let's try to make some kind of sense of it.
 		$name = Sanitizer::decodeCharReferences( $name );
-		$name = $wgContLang->normalize( $name );
+		$name = MediaWikiServices::getInstance()->getContentLanguage()->normalize( $name );
 		wfDebug( __METHOD__ . ": {$this->fileInfo['name']} normalized to '$name'\n" );
 		return $name;
 	}
@@ -102,7 +103,7 @@ class WebRequestUpload {
 
 	/**
 	 * Return the upload error. See link for explanation
-	 * http://www.php.net/manual/en/features.file-upload.errors.php
+	 * https://www.php.net/manual/en/features.file-upload.errors.php
 	 *
 	 * @return int One of the UPLOAD_ constants, 0 if non-existent
 	 */

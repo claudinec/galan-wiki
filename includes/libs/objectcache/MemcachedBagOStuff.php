@@ -30,6 +30,12 @@ class MemcachedBagOStuff extends BagOStuff {
 	/** @var MemcachedClient|Memcached */
 	protected $client;
 
+	function __construct( array $params ) {
+		parent::__construct( $params );
+
+		$this->attrMap[self::ATTR_SYNCWRITES] = self::QOS_SYNCWRITES_BE; // unreliable
+	}
+
 	/**
 	 * Fill in some defaults for missing keys in $params.
 	 *
@@ -37,22 +43,14 @@ class MemcachedBagOStuff extends BagOStuff {
 	 * @return array
 	 */
 	protected function applyDefaultParams( $params ) {
-		if ( !isset( $params['compress_threshold'] ) ) {
-			$params['compress_threshold'] = 1500;
-		}
-		if ( !isset( $params['connect_timeout'] ) ) {
-			$params['connect_timeout'] = 0.5;
-		}
-		return $params;
+		return $params + [
+			'compress_threshold' => 1500,
+			'connect_timeout' => 0.5,
+			'debug' => false
+		];
 	}
 
-	protected function doGet( $key, $flags = 0 ) {
-		$casToken = null;
-
-		return $this->getWithToken( $key, $casToken, $flags );
-	}
-
-	protected function getWithToken( $key, &$casToken, $flags = 0 ) {
+	protected function doGet( $key, $flags = 0, &$casToken = null ) {
 		return $this->client->get( $this->validateKeyEncoding( $key ), $casToken );
 	}
 
@@ -61,26 +59,35 @@ class MemcachedBagOStuff extends BagOStuff {
 			$this->fixExpiry( $exptime ) );
 	}
 
-	protected function cas( $casToken, $key, $value, $exptime = 0 ) {
+	protected function cas( $casToken, $key, $value, $exptime = 0, $flags = 0 ) {
 		return $this->client->cas( $casToken, $this->validateKeyEncoding( $key ),
 			$value, $this->fixExpiry( $exptime ) );
 	}
 
-	public function delete( $key ) {
+	public function delete( $key, $flags = 0 ) {
 		return $this->client->delete( $this->validateKeyEncoding( $key ) );
 	}
 
-	public function add( $key, $value, $exptime = 0 ) {
+	public function add( $key, $value, $exptime = 0, $flags = 0 ) {
 		return $this->client->add( $this->validateKeyEncoding( $key ), $value,
 			$this->fixExpiry( $exptime ) );
 	}
 
-	public function merge( $key, $callback, $exptime = 0, $attempts = 10, $flags = 0 ) {
-		if ( !is_callable( $callback ) ) {
-			throw new Exception( "Got invalid callback." );
-		}
+	public function incr( $key, $value = 1 ) {
+		$n = $this->client->incr( $this->validateKeyEncoding( $key ), $value );
 
-		return $this->mergeViaCas( $key, $callback, $exptime, $attempts );
+		return ( $n !== false && $n !== null ) ? $n : false;
+	}
+
+	public function decr( $key, $value = 1 ) {
+		$n = $this->client->decr( $this->validateKeyEncoding( $key ), $value );
+
+		return ( $n !== false && $n !== null ) ? $n : false;
+	}
+
+	public function changeTTL( $key, $exptime = 0, $flags = 0 ) {
+		return $this->client->touch( $this->validateKeyEncoding( $key ),
+			$this->fixExpiry( $exptime ) );
 	}
 
 	/**
@@ -132,7 +139,7 @@ class MemcachedBagOStuff extends BagOStuff {
 		);
 
 		if ( $charsLeft < 0 ) {
-			return $keyspace . ':##' . md5( implode( ':', $args ) );
+			return $keyspace . ':BagOStuff-long-key:##' . md5( implode( ':', $args ) );
 		}
 
 		return $keyspace . ':' . implode( ':', $args );
@@ -167,21 +174,5 @@ class MemcachedBagOStuff extends BagOStuff {
 			$expiry = 2592000;
 		}
 		return (int)$expiry;
-	}
-
-	/**
-	 * Send a debug message to the log
-	 * @param string $text
-	 */
-	protected function debugLog( $text ) {
-		$this->logger->debug( $text );
-	}
-
-	public function modifySimpleRelayEvent( array $event ) {
-		if ( array_key_exists( 'val', $event ) ) {
-			$event['flg'] = 0; // data is not serialized nor gzipped (for memcached driver)
-		}
-
-		return $event;
 	}
 }

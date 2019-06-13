@@ -1,4 +1,7 @@
 <?php
+
+use MediaWiki\MediaWikiServices;
+
 /**
  * Image gallery.
  *
@@ -35,7 +38,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	function toHTML() {
 		if ( $this->mPerRow > 0 ) {
 			$maxwidth = $this->mPerRow * ( $this->mWidths + $this->getAllPadding() );
-			$oldStyle = isset( $this->mAttribs['style'] ) ? $this->mAttribs['style'] : '';
+			$oldStyle = $this->mAttribs['style'] ?? '';
 			# _width is ignored by any sane browser. IE6 doesn't know max-width
 			# so it uses _width instead
 			$this->mAttribs['style'] = "max-width: {$maxwidth}px;_width: {$maxwidth}px;" .
@@ -72,11 +75,9 @@ class TraditionalImageGallery extends ImageGalleryBase {
 		$lang = $this->getRenderLang();
 		# Output each image...
 		foreach ( $this->mImages as $pair ) {
+			// "text" means "caption" here
 			/** @var Title $nt */
-			$nt = $pair[0];
-			$text = $pair[1]; # "text" means "caption" here
-			$alt = $pair[2];
-			$link = $pair[3];
+			list( $nt, $text, $alt, $link ) = $pair;
 
 			$descQuery = false;
 			if ( $nt->getNamespace() === NS_FILE ) {
@@ -89,7 +90,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 					# Fetch and register the file (file title may be different via hooks)
 					list( $img, $nt ) = $this->mParser->fetchFileAndTitle( $nt, $options );
 				} else {
-					$img = wfFindFile( $nt );
+					$img = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $nt );
 				}
 			} else {
 				$img = false;
@@ -170,37 +171,43 @@ class TraditionalImageGallery extends ImageGalleryBase {
 			}
 
 			// @todo Code is incomplete.
-			// $linkTarget = Title::newFromText( $wgContLang->getNsText( MWNamespace::getUser() ) .
-			// ":{$ut}" );
+			// $linkTarget = Title::newFromText( MediaWikiServices::getInstance()->
+			// getContentLanguage()->getNsText( MediaWikiServices::getInstance()->
+			// getNamespaceInfo()->getUser() ) . ":{$ut}" );
 			// $ul = Linker::link( $linkTarget, $ut );
 
-			if ( $this->mShowBytes ) {
-				if ( $img ) {
-					$fileSize = htmlspecialchars( $lang->formatSize( $img->getSize() ) );
-				} else {
-					$fileSize = $this->msg( 'filemissing' )->escaped();
+			$meta = [];
+			if ( $img ) {
+				if ( $this->mShowDimensions ) {
+					$meta[] = $img->getDimensionsString();
 				}
-				$fileSize = "$fileSize<br />\n";
-			} else {
-				$fileSize = '';
+				if ( $this->mShowBytes ) {
+					$meta[] = htmlspecialchars( $lang->formatSize( $img->getSize() ) );
+				}
+			} elseif ( $this->mShowDimensions || $this->mShowBytes ) {
+				$meta[] = $this->msg( 'filemissing' )->escaped();
+			}
+			$meta = $lang->semicolonList( $meta );
+			if ( $meta ) {
+				$meta .= "<br />\n";
 			}
 
 			$textlink = $this->mShowFilename ?
-				// Preloaded into LinkCache above
-				Linker::linkKnown(
-					$nt,
-					htmlspecialchars( $lang->truncate( $nt->getText(), $this->mCaptionLength ) )
-				) . "<br />\n" :
+				$this->getCaptionHtml( $nt, $lang ) :
 				'';
 
-			$galleryText = $textlink . $text . $fileSize;
+			$galleryText = $textlink . $text . $meta;
 			$galleryText = $this->wrapGalleryText( $galleryText, $thumb );
 
+			$gbWidth = $this->getGBWidth( $thumb ) . 'px';
+			if ( $this->getGBWidthOverwrite( $thumb ) ) {
+				$gbWidth = $this->getGBWidthOverwrite( $thumb );
+			}
 			# Weird double wrapping (the extra div inside the li) needed due to FF2 bug
 			# Can be safely removed if FF2 falls completely out of existence
 			$output .= "\n\t\t" . '<li class="gallerybox" style="width: '
-				. $this->getGBWidth( $thumb ) . 'px">'
-				. '<div style="width: ' . $this->getGBWidth( $thumb ) . 'px">'
+				. $gbWidth . '">'
+				. '<div style="width: ' . $gbWidth . '">'
 				. $thumbhtml
 				. $galleryText
 				. "\n\t\t</div></li>";
@@ -208,6 +215,27 @@ class TraditionalImageGallery extends ImageGalleryBase {
 		$output .= "\n</ul>";
 
 		return $output;
+	}
+
+	/**
+	 * @param Title $nt
+	 * @param Language $lang
+	 * @return string HTML
+	 */
+	protected function getCaptionHtml( Title $nt, Language $lang ) {
+		// Preloaded into LinkCache in toHTML
+		return Linker::linkKnown(
+			$nt,
+			htmlspecialchars(
+				is_int( $this->getCaptionLength() ) ?
+					$lang->truncateForVisual( $nt->getText(), $this->getCaptionLength() ) :
+					$nt->getText()
+			),
+			[
+				'class' => 'galleryfilename' .
+					( $this->getCaptionLength() === true ? ' galleryfilename-truncate' : '' )
+			]
+		) . "\n";
 	}
 
 	/**
@@ -230,8 +258,8 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	}
 
 	/**
-	 * How much padding such the thumb have between image and inner div that
-	 * that contains the border. This is both for verical and horizontal
+	 * How much padding the thumb has between the image and the inner div
+	 * that contains the border. This is for both vertical and horizontal
 	 * padding. (However, it is cut in half in the vertical direction).
 	 * @return int
 	 */
@@ -257,6 +285,17 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	 */
 	protected function getGBBorders() {
 		return 8;
+	}
+
+	/**
+	 * Length (in characters) to truncate filename to in caption when using "showfilename" (if int).
+	 * A value of 'true' will truncate the filename to one line using CSS, while
+	 * 'false' will disable truncating.
+	 *
+	 * @return int|bool
+	 */
+	protected function getCaptionLength() {
+		return $this->mCaptionLength;
 	}
 
 	/**
@@ -306,7 +345,7 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	}
 
 	/**
-	 * Width of gallerybox <li>.
+	 * Computed width of gallerybox <li>.
 	 *
 	 * Generally is the width of the image, plus padding on image
 	 * plus padding on gallerybox.
@@ -317,6 +356,21 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	 */
 	protected function getGBWidth( $thumb ) {
 		return $this->mWidths + $this->getThumbPadding() + $this->getGBPadding();
+	}
+
+	/**
+	 * Allows overwriting the computed width of the gallerybox <li> with a string,
+	 * like '100%'.
+	 *
+	 * Generally is the width of the image, plus padding on image
+	 * plus padding on gallerybox.
+	 *
+	 * @note Important: parameter will be false if no thumb used.
+	 * @param MediaTransformOutput|bool $thumb MediaTransformObject object or false.
+	 * @return bool|string Ignored if false.
+	 */
+	protected function getGBWidthOverwrite( $thumb ) {
+		return false;
 	}
 
 	/**
@@ -335,22 +389,8 @@ class TraditionalImageGallery extends ImageGalleryBase {
 	 *
 	 * Used by a subclass to insert extra high resolution images.
 	 * @param MediaTransformOutput $thumb The thumbnail
-	 * @param array $imageParameters Array of options
+	 * @param array &$imageParameters Array of options
 	 */
 	protected function adjustImageParameters( $thumb, &$imageParameters ) {
-	}
-}
-
-/**
- * Backwards compatibility. This always uses traditional mode
- * if called the old way, for extensions that may expect traditional
- * mode.
- *
- * @deprecated since 1.22 Use ImageGalleryBase::factory instead.
- */
-class ImageGallery extends TraditionalImageGallery {
-	function __construct( $mode = 'traditional' ) {
-		wfDeprecated( __METHOD__, '1.22' );
-		parent::__construct( $mode );
 	}
 }

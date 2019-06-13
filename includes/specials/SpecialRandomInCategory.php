@@ -47,10 +47,15 @@
  * @ingroup SpecialPage
  */
 class SpecialRandomInCategory extends FormSpecialPage {
+	/** @var string[] */
 	protected $extra = []; // Extra SQL statements
+	/** @var Title|false */
 	protected $category = false; // Title object of category
+	/** @var int */
 	protected $maxOffset = 30; // Max amount to fudge randomness by.
+	/** @var int|null */
 	private $maxTimestamp = null;
+	/** @var int|null */
 	private $minTimestamp = null;
 
 	public function __construct( $name = 'RandomInCategory' ) {
@@ -214,11 +219,11 @@ class SpecialRandomInCategory extends FormSpecialPage {
 				'OFFSET' => $offset
 			],
 			'join_conds' => [
-				'page' => [ 'INNER JOIN', 'cl_from = page_id' ]
+				'page' => [ 'JOIN', 'cl_from = page_id' ]
 			]
 		];
 
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$minClTime = $this->getTimestampOffset( $rand );
 		if ( $minClTime ) {
 			$qi['conds'][] = 'cl_timestamp ' . $op . ' ' .
@@ -259,7 +264,7 @@ class SpecialRandomInCategory extends FormSpecialPage {
 	 * @throws MWException If category has no entries.
 	 */
 	protected function getMinAndMaxForCat( Title $category ) {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$res = $dbr->selectRow(
 			'categorylinks',
 			[
@@ -267,7 +272,7 @@ class SpecialRandomInCategory extends FormSpecialPage {
 				'high' => 'MAX( cl_timestamp )'
 			],
 			[
-				'cl_to' => $this->category->getDBKey(),
+				'cl_to' => $this->category->getDBkey(),
 			],
 			__METHOD__,
 			[
@@ -286,10 +291,10 @@ class SpecialRandomInCategory extends FormSpecialPage {
 	 * @param int $offset A small offset to make the result seem more "random"
 	 * @param bool $up Get the result above the random value
 	 * @param string $fname The name of the calling method
-	 * @return array Info for the title selected.
+	 * @return stdClass|false Info for the title selected.
 	 */
 	private function selectRandomPageFromDB( $rand, $offset, $up, $fname = __METHOD__ ) {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 
 		$query = $this->getQueryInfo( $rand, $offset, $up );
 		$res = $dbr->select(

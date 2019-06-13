@@ -23,6 +23,8 @@
  * @author Neil Kandalgaonkar <neilk@wikimedia.org>
  */
 
+use MediaWiki\Shell\Shell;
+
 /**
  * RandomImageGenerator: does what it says on the tin.
  * Can fetch a random image, or also write a number of them to disk with random filenames.
@@ -87,7 +89,7 @@ class RandomImageGenerator {
 					__DIR__ . '/words.txt'
 				] as $dictionaryFile
 			) {
-				if ( is_file( $dictionaryFile ) and is_readable( $dictionaryFile ) ) {
+				if ( is_file( $dictionaryFile ) && is_readable( $dictionaryFile ) ) {
 					$this->dictionaryFile = $dictionaryFile;
 					break;
 				}
@@ -105,7 +107,7 @@ class RandomImageGenerator {
 	 *
 	 * @param int $number Number of filenames to write
 	 * @param string $format Optional, must be understood by ImageMagick, such as 'jpg' or 'gif'
-	 * @param string $dir Directory, optional (will default to current working directory)
+	 * @param string|null $dir Directory, optional (will default to current working directory)
 	 * @return array Filenames we just wrote
 	 */
 	function writeImages( $number, $format = 'jpg', $dir = null ) {
@@ -187,7 +189,7 @@ class RandomImageGenerator {
 		$spec['height'] = mt_rand( $this->minHeight, $this->maxHeight );
 		$spec['fill'] = $this->getRandomColor();
 
-		$diagonalLength = sqrt( pow( $spec['width'], 2 ) + pow( $spec['height'], 2 ) );
+		$diagonalLength = sqrt( $spec['width'] ** 2 + $spec['height'] ** 2 );
 
 		$draws = [];
 		for ( $i = 0; $i <= $this->shapesToDraw; $i++ ) {
@@ -218,7 +220,7 @@ class RandomImageGenerator {
 	}
 
 	/**
-	 * Given array( array('x' => 10, 'y' => 20), array( 'x' => 30, y=> 5 ) )
+	 * Given [ [ 'x' => 10, 'y' => 20 ], [ 'x' => 30, y=> 5 ] ]
 	 * returns "10,20 30,5"
 	 * Useful for SVG and imagemagick command line arguments
 	 * @param array $shape Array of arrays, each array containing x & y keys mapped to numeric values
@@ -310,16 +312,16 @@ class RandomImageGenerator {
 		// for now (only works if you have exiv2 installed, a program to read
 		// and manipulate exif).
 		if ( $wgExiv2Command ) {
-			$cmd = wfEscapeShellArg( $wgExiv2Command )
-				. " -M "
-				. wfEscapeShellArg( "set Exif.Image.Orientation " . $orientation['exifCode'] )
-				. " "
-				. wfEscapeShellArg( $filename );
+			$command = Shell::command( $wgExiv2Command,
+				'-M',
+				"set Exif.Image.Orientation {$orientation['exifCode']}",
+				$filename
+			)->includeStderr();
 
-			$retval = 0;
-			$err = wfShellExec( $cmd, $retval );
+			$result = $command->execute();
+			$retval = $result->getExitCode();
 			if ( $retval !== 0 ) {
-				print "Error with $cmd: $retval, $err\n";
+				print "Error with $command: $retval, {$result->getStdout()}\n";
 			}
 		}
 	}
@@ -396,22 +398,25 @@ class RandomImageGenerator {
 	 */
 	public function writeImageWithCommandLine( $spec, $format, $filename ) {
 		global $wgImageMagickConvertCommand;
-		$args = [];
-		$args[] = "-size " . wfEscapeShellArg( $spec['width'] . 'x' . $spec['height'] );
-		$args[] = wfEscapeShellArg( "xc:" . $spec['fill'] );
+
+		$args = [
+			$wgImageMagickConvertCommand,
+			'-size',
+			$spec['width'] . 'x' . $spec['height'],
+			"xc:{$spec['fill']}",
+		];
 		foreach ( $spec['draws'] as $draw ) {
 			$fill = $draw['fill'];
 			$polygon = self::shapePointsToString( $draw['shape'] );
 			$drawCommand = "fill $fill  polygon $polygon";
-			$args[] = '-draw ' . wfEscapeShellArg( $drawCommand );
+			$args[] = '-draw';
+			$args[] = $drawCommand;
 		}
-		$args[] = wfEscapeShellArg( $filename );
+		$args[] = $filename;
 
-		$command = wfEscapeShellArg( $wgImageMagickConvertCommand ) . " " . implode( " ", $args );
-		$retval = null;
-		wfShellExec( $command, $retval );
+		$result = Shell::command( $args )->execute();
 
-		return ( $retval === 0 );
+		return ( $result->getExitCode() === 0 );
 	}
 
 	/**
@@ -430,7 +435,7 @@ class RandomImageGenerator {
 
 	/**
 	 * Get an array of random pairs of random words, like
-	 * array( array( 'foo', 'bar' ), array( 'quux', 'baz' ) );
+	 * [ [ 'foo', 'bar' ], [ 'quux', 'baz' ] ];
 	 *
 	 * @param int $number Number of pairs
 	 * @return array Two-element arrays

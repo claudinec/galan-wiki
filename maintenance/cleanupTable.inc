@@ -106,7 +106,7 @@ class TableCleanup extends Maintenance {
 	 * @throws MWException
 	 */
 	public function runTable( $params ) {
-		$dbr = $this->getDB( DB_SLAVE );
+		$dbr = $this->getDB( DB_REPLICA );
 
 		if ( array_diff( array_keys( $params ),
 			[ 'table', 'conds', 'index', 'callback' ] )
@@ -165,7 +165,7 @@ class TableCleanup extends Maintenance {
 	}
 
 	/**
-	 * @param array $matches
+	 * @param string[] $matches
 	 * @return string
 	 */
 	protected function hexChar( $matches ) {

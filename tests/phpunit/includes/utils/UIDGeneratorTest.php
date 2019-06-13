@@ -1,9 +1,11 @@
 <?php
 
-class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
+class UIDGeneratorTest extends PHPUnit\Framework\TestCase {
+
+	use MediaWikiCoversValidator;
 
 	protected function tearDown() {
-		// Bug: 44850
+		// T46850
 		UIDGenerator::unitTestTearDown();
 		parent::tearDown();
 	}
@@ -12,11 +14,13 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 	 * Test that generated UIDs have the expected properties
 	 *
 	 * @dataProvider provider_testTimestampedUID
-	 * @covers UIDGenerator::newTimestampedUID128
 	 * @covers UIDGenerator::newTimestampedUID88
+	 * @covers UIDGenerator::getTimestampedID88
+	 * @covers UIDGenerator::newTimestampedUID128
+	 * @covers UIDGenerator::getTimestampedID128
 	 */
 	public function testTimestampedUID( $method, $digitlen, $bits, $tbits, $hostbits ) {
-		$id = call_user_func( [ 'UIDGenerator', $method ] );
+		$id = call_user_func( [ UIDGenerator::class, $method ] );
 		$this->assertEquals( true, ctype_digit( $id ), "UID made of digit characters" );
 		$this->assertLessThanOrEqual( $digitlen, strlen( $id ),
 			"UID has the right number of digits" );
@@ -25,7 +29,7 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 
 		$ids = [];
 		for ( $i = 0; $i < 300; $i++ ) {
-			$ids[] = call_user_func( [ 'UIDGenerator', $method ] );
+			$ids[] = call_user_func( [ UIDGenerator::class, $method ] );
 		}
 
 		$lastId = array_shift( $ids );
@@ -45,7 +49,7 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 				$last_timestamp_bin,
 				$timestamp_bin,
 				"timestamp ($timestamp_bin) of current ID ($id_bin) >= timestamp ($last_timestamp_bin) " .
-				  "of prior one ($lastId_bin)" );
+					"of prior one ($lastId_bin)" );
 
 			$hostbits_bin = substr( $id_bin, -$hostbits );
 			$last_hostbits_bin = substr( $lastId_bin, -$hostbits );
@@ -55,7 +59,7 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 					$hostbits_bin,
 					$last_hostbits_bin,
 					"Host ID ($hostbits_bin) of current ID ($id_bin) is same as host ID ($last_hostbits_bin) " .
-					  "of prior one ($lastId_bin)." );
+						"of prior one ($lastId_bin)." );
 			}
 
 			$lastId = $id;
@@ -76,6 +80,7 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 
 	/**
 	 * @covers UIDGenerator::newUUIDv1
+	 * @covers UIDGenerator::getUUIDv1
 	 */
 	public function testUUIDv1() {
 		$ids = [];
@@ -155,6 +160,7 @@ class UIDGeneratorTest extends PHPUnit_Framework_TestCase {
 
 	/**
 	 * @covers UIDGenerator::newSequentialPerNodeIDs
+	 * @covers UIDGenerator::getSequentialPerNodeIDs
 	 */
 	public function testNewSequentialIDs() {
 		$ids = UIDGenerator::newSequentialPerNodeIDs( 'test', 32, 5 );

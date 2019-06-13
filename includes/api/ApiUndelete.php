@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Jul 3, 2007
- *
  * Copyright © 2007 Roan Kattouw "<Firstname>.<Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,18 +29,20 @@ class ApiUndelete extends ApiBase {
 		$this->useTransactionalTimeLimit();
 
 		$params = $this->extractRequestParams();
-		$user = $this->getUser();
-		if ( !$user->isAllowed( 'undelete' ) ) {
-			$this->dieUsageMsg( 'permdenied-undelete' );
-		}
 
-		if ( $user->isBlocked() ) {
+		$user = $this->getUser();
+		$block = $user->getBlock();
+		if ( $block && $block->isSitewide() ) {
 			$this->dieBlocked( $user->getBlock() );
 		}
 
 		$titleObj = Title::newFromText( $params['title'] );
 		if ( !$titleObj || $titleObj->isExternal() ) {
-			$this->dieUsageMsg( [ 'invalidtitle', $params['title'] ] );
+			$this->dieWithError( [ 'apierror-invalidtitle', wfEscapeWikiText( $params['title'] ) ] );
+		}
+
+		if ( !$this->getPermissionManager()->userCan( 'undelete', $this->getUser(), $titleObj ) ) {
+			$this->dieWithError( 'permdenied-undelete' );
 		}
 
 		// Check if user can add tags
@@ -68,7 +66,7 @@ class ApiUndelete extends ApiBase {
 
 		$pa = new PageArchive( $titleObj, $this->getConfig() );
 		$retval = $pa->undelete(
-			( isset( $params['timestamps'] ) ? $params['timestamps'] : [] ),
+			( $params['timestamps'] ?? [] ),
 			$params['reason'],
 			$params['fileids'],
 			false,
@@ -76,7 +74,7 @@ class ApiUndelete extends ApiBase {
 			$params['tags']
 		);
 		if ( !is_array( $retval ) ) {
-			$this->dieUsageMsg( 'cannotundelete' );
+			$this->dieWithError( 'apierror-cantundelete' );
 		}
 
 		if ( $retval[1] ) {
@@ -87,8 +85,8 @@ class ApiUndelete extends ApiBase {
 		$this->setWatch( $params['watchlist'], $titleObj );
 
 		$info['title'] = $titleObj->getPrefixedText();
-		$info['revisions'] = intval( $retval[0] );
-		$info['fileversions'] = intval( $retval[1] );
+		$info['revisions'] = (int)$retval[0];
+		$info['fileversions'] = (int)$retval[1];
 		$info['reason'] = $retval[2];
 		$this->getResult()->addValue( null, $this->getModuleName(), $info );
 	}
@@ -147,6 +145,6 @@ class ApiUndelete extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Undelete';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Undelete';
 	}
 }

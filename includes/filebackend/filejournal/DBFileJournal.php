@@ -19,8 +19,11 @@
  *
  * @file
  * @ingroup FileJournal
- * @author Aaron Schulz
  */
+
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\IDatabase;
+use Wikimedia\Rdbms\DBError;
 
 /**
  * Version of FileJournal that logs to a DB table
@@ -29,29 +32,29 @@
 class DBFileJournal extends FileJournal {
 	/** @var IDatabase */
 	protected $dbw;
-
-	protected $wiki = false; // string; wiki DB name
+	/** @var string */
+	protected $domain;
 
 	/**
 	 * Construct a new instance from configuration.
 	 *
 	 * @param array $config Includes:
-	 *     'wiki' : wiki name to use for LoadBalancer
+	 *   domain: database domain ID of the wiki
 	 */
 	protected function __construct( array $config ) {
 		parent::__construct( $config );
 
-		$this->wiki = $config['wiki'];
+		$this->domain = $config['domain'] ?? $config['wiki']; // b/c
 	}
 
 	/**
 	 * @see FileJournal::logChangeBatch()
 	 * @param array $entries
 	 * @param string $batchId
-	 * @return Status
+	 * @return StatusValue
 	 */
 	protected function doLogChangeBatch( array $entries, $batchId ) {
-		$status = Status::newGood();
+		$status = StatusValue::newGood();
 
 		try {
 			$dbw = $this->getMasterDB();
@@ -121,9 +124,9 @@ class DBFileJournal extends FileJournal {
 
 	/**
 	 * @see FileJournal::doGetChangeEntries()
-	 * @param int $start
+	 * @param int|null $start
 	 * @param int $limit
-	 * @return array
+	 * @return array[]
 	 */
 	protected function doGetChangeEntries( $start, $limit ) {
 		$dbw = $this->getMasterDB();
@@ -151,11 +154,11 @@ class DBFileJournal extends FileJournal {
 
 	/**
 	 * @see FileJournal::purgeOldLogs()
-	 * @return Status
+	 * @return StatusValue
 	 * @throws DBError
 	 */
 	protected function doPurgeOldLogs() {
-		$status = Status::newGood();
+		$status = StatusValue::newGood();
 		if ( $this->ttlDays <= 0 ) {
 			return $status; // nothing to do
 		}
@@ -180,8 +183,8 @@ class DBFileJournal extends FileJournal {
 	protected function getMasterDB() {
 		if ( !$this->dbw ) {
 			// Get a separate connection in autocommit mode
-			$lb = wfGetLBFactory()->newMainLB();
-			$this->dbw = $lb->getConnection( DB_MASTER, [], $this->wiki );
+			$lb = MediaWikiServices::getInstance()->getDBLoadBalancerFactory()->newMainLB();
+			$this->dbw = $lb->getConnection( DB_MASTER, [], $this->domain );
 			$this->dbw->clearFlag( DBO_TRX );
 		}
 

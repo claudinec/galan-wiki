@@ -23,6 +23,8 @@
  * @author <evan@wikitravel.org>
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * @ingroup Actions
  */
@@ -42,7 +44,6 @@ class CreditsAction extends FormlessAction {
 	 * @return string HTML
 	 */
 	public function onView() {
-
 		if ( $this->page->getID() == 0 ) {
 			$s = $this->msg( 'nocredits' )->parse();
 		} else {
@@ -130,7 +131,7 @@ class CreditsAction extends FormlessAction {
 		$anon_ips = [];
 
 		# Sift for real versus user names
-		/** @var $user User */
+		/** @var User $user */
 		foreach ( $contributors as $user ) {
 			$cnt--;
 			if ( $user->isLoggedIn() ) {
@@ -197,15 +198,19 @@ class CreditsAction extends FormlessAction {
 	protected function link( User $user ) {
 		if ( $this->canShowRealUserName() && !$user->isAnon() ) {
 			$real = $user->getRealName();
+			if ( $real === '' ) {
+				$real = $user->getName();
+			}
 		} else {
-			$real = false;
+			$real = $user->getName();
 		}
 
 		$page = $user->isAnon()
 			? SpecialPage::getTitleFor( 'Contributions', $user->getName() )
 			: $user->getUserPage();
 
-		return Linker::link( $page, htmlspecialchars( $real ? $real : $user->getName() ) );
+		return MediaWikiServices::getInstance()
+			->getLinkRenderer()->makeLink( $page, $real );
 	}
 
 	/**
@@ -217,12 +222,10 @@ class CreditsAction extends FormlessAction {
 		$link = $this->link( $user );
 		if ( $user->isAnon() ) {
 			return $this->msg( 'anonuser' )->rawParams( $link )->parse();
+		} elseif ( $this->canShowRealUserName() && $user->getRealName() ) {
+			return $link;
 		} else {
-			if ( $this->canShowRealUserName() && $user->getRealName() ) {
-				return $link;
-			} else {
-				return $this->msg( 'siteuser' )->rawParams( $link )->params( $user->getName() )->escaped();
-			}
+			return $this->msg( 'siteuser' )->rawParams( $link )->params( $user->getName() )->escaped();
 		}
 	}
 
@@ -231,9 +234,9 @@ class CreditsAction extends FormlessAction {
 	 * @return string HTML link
 	 */
 	protected function othersLink() {
-		return Linker::linkKnown(
+		return MediaWikiServices::getInstance()->getLinkRenderer()->makeKnownLink(
 			$this->getTitle(),
-			$this->msg( 'others' )->escaped(),
+			$this->msg( 'others' )->text(),
 			[],
 			[ 'action' => 'credits' ]
 		);

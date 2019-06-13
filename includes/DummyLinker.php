@@ -5,52 +5,6 @@
  */
 class DummyLinker {
 
-	/**
-	 * @deprecated since 1.27
-	 */
-	public function getInterwikiLinkAttributes( $title, $unused = null, $class = 'external' ) {
-		wfDeprecated( __METHOD__, '1.27' );
-		return Linker::getInterwikiLinkAttributes(
-			$title,
-			$unused,
-			$class
-		);
-	}
-
-	/**
-	 * @deprecated since 1.27
-	 */
-	public function getInternalLinkAttributes( $title, $unused = null, $class = '' ) {
-		wfDeprecated( __METHOD__, '1.27' );
-		return Linker::getInternalLinkAttributes(
-			$title,
-			$unused,
-			$class
-		);
-	}
-
-	/**
-	 * @deprecated since 1.27
-	 */
-	public function getInternalLinkAttributesObj(
-		$nt,
-		$unused = null,
-		$class = '',
-		$title = false
-	) {
-		wfDeprecated( __METHOD__, '1.27' );
-		return Linker::getInternalLinkAttributesObj(
-			$nt,
-			$unused,
-			$class,
-			$title
-		);
-	}
-
-	public function getLinkColour( $t, $threshold ) {
-		return Linker::getLinkColour( $t, $threshold );
-	}
-
 	public function link(
 		$target,
 		$html = null,
@@ -145,7 +99,7 @@ class DummyLinker {
 		Title $title,
 		$file,
 		$label = '',
-		$alt,
+		$alt = '',
 		$align = 'right',
 		$params = [],
 		$framed = false,
@@ -391,11 +345,11 @@ class DummyLinker {
 		return Linker::tocLineEnd();
 	}
 
-	public function tocList( $toc, $lang = false ) {
+	public function tocList( $toc, $lang = null ) {
 		return Linker::tocList( $toc, $lang );
 	}
 
-	public function generateTOC( $tree, $lang = false ) {
+	public function generateTOC( $tree, $lang = null ) {
 		return Linker::generateTOC( $tree, $lang );
 	}
 
@@ -449,26 +403,8 @@ class DummyLinker {
 		);
 	}
 
-	public function formatTemplates(
-		$templates,
-		$preview = false,
-		$section = false,
-		$more = null
-	) {
-		return Linker::formatTemplates(
-			$templates,
-			$preview,
-			$section,
-			$more
-		);
-	}
-
 	public function formatHiddenCategories( $hiddencats ) {
 		return Linker::formatHiddenCategories( $hiddencats );
-	}
-
-	public function formatSize( $size ) {
-		return Linker::formatSize( $size );
 	}
 
 	public function titleAttrib( $name, $options = null, array $msgParams = [] ) {

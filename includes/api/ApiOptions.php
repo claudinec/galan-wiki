@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Apr 15, 2012
- *
  * Copyright © 2012 Szymon Świerkosz beau@adres.pl
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +20,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * API module that facilitates the changing of user's preferences.
  * Requires API write mode to be enabled.
@@ -31,50 +29,58 @@
  * @ingroup API
  */
 class ApiOptions extends ApiBase {
+	/** @var User User account to modify */
+	private $userForUpdates;
+
 	/**
 	 * Changes preferences of the current user.
 	 */
 	public function execute() {
-		if ( $this->getUser()->isAnon() ) {
-			$this->dieUsage( 'Anonymous users cannot change preferences', 'notloggedin' );
-		} elseif ( !$this->getUser()->isAllowed( 'editmyoptions' ) ) {
-			$this->dieUsage( "You don't have permission to edit your options", 'permissiondenied' );
+		$user = $this->getUserForUpdates();
+		if ( !$user || $user->isAnon() ) {
+			$this->dieWithError(
+				[ 'apierror-mustbeloggedin', $this->msg( 'action-editmyoptions' ) ], 'notloggedin'
+			);
 		}
+
+		$this->checkUserRightsAny( 'editmyoptions' );
 
 		$params = $this->extractRequestParams();
 		$changed = false;
 
 		if ( isset( $params['optionvalue'] ) && !isset( $params['optionname'] ) ) {
-			$this->dieUsageMsg( [ 'missingparam', 'optionname' ] );
+			$this->dieWithError( [ 'apierror-missingparam', 'optionname' ] );
 		}
 
-		// Load the user from the master to reduce CAS errors on double post (T95839)
-		$user = $this->getUser()->getInstanceForUpdate();
-		if ( !$user ) {
-			$this->dieUsage( 'Anonymous users cannot change preferences', 'notloggedin' );
-		}
-
-		if ( $params['reset'] ) {
-			$user->resetOptions( $params['resetkinds'], $this->getContext() );
-			$changed = true;
+		$resetKinds = $params['resetkinds'];
+		if ( !$params['reset'] ) {
+			$resetKinds = [];
 		}
 
 		$changes = [];
-		if ( count( $params['change'] ) ) {
+		if ( $params['change'] ) {
 			foreach ( $params['change'] as $entry ) {
 				$array = explode( '=', $entry, 2 );
-				$changes[$array[0]] = isset( $array[1] ) ? $array[1] : null;
+				$changes[$array[0]] = $array[1] ?? null;
 			}
 		}
 		if ( isset( $params['optionname'] ) ) {
-			$newValue = isset( $params['optionvalue'] ) ? $params['optionvalue'] : null;
+			$newValue = $params['optionvalue'] ?? null;
 			$changes[$params['optionname']] = $newValue;
 		}
-		if ( !$changed && !count( $changes ) ) {
-			$this->dieUsage( 'No changes were requested', 'nochanges' );
+
+		Hooks::run( 'ApiOptions', [ $this, $user, $changes, $resetKinds ] );
+
+		if ( $resetKinds ) {
+			$this->resetPreferences( $resetKinds );
+			$changed = true;
 		}
 
-		$prefs = Preferences::getPreferences( $user, $this->getContext() );
+		if ( !$changed && !count( $changes ) ) {
+			$this->dieWithError( 'apierror-nochanges' );
+		}
+
+		$prefs = $this->getPreferences();
 		$prefsKinds = $user->getOptionKinds( $this->getContext(), $changes );
 
 		$htmlForm = null;
@@ -82,12 +88,18 @@ class ApiOptions extends ApiBase {
 			switch ( $prefsKinds[$key] ) {
 				case 'registered':
 					// Regular option.
-					if ( $htmlForm === null ) {
-						// We need a dummy HTMLForm for the validate callback...
-						$htmlForm = new HTMLForm( [], $this );
+					if ( $value === null ) {
+						// Reset it
+						$validation = true;
+					} else {
+						// Validate
+						if ( $htmlForm === null ) {
+							// We need a dummy HTMLForm for the validate callback...
+							$htmlForm = new HTMLForm( [], $this );
+						}
+						$field = HTMLForm::loadInputFromParameters( $key, $prefs[$key], $htmlForm );
+						$validation = $field->validate( $value, $user->getOptions() );
 					}
-					$field = HTMLForm::loadInputFromParameters( $key, $prefs[$key], $htmlForm );
-					$validation = $field->validate( $value, $user->getOptions() );
 					break;
 				case 'registered-multiselect':
 				case 'registered-checkmatrix':
@@ -98,35 +110,81 @@ class ApiOptions extends ApiBase {
 				case 'userjs':
 					// Allow non-default preferences prefixed with 'userjs-', to be set by user scripts
 					if ( strlen( $key ) > 255 ) {
-						$validation = 'key too long (no more than 255 bytes allowed)';
+						$validation = $this->msg( 'apiwarn-validationfailed-keytoolong', Message::numParam( 255 ) );
 					} elseif ( preg_match( '/[^a-zA-Z0-9_-]/', $key ) !== 0 ) {
-						$validation = 'invalid key (only a-z, A-Z, 0-9, _, - allowed)';
+						$validation = $this->msg( 'apiwarn-validationfailed-badchars' );
 					} else {
 						$validation = true;
 					}
 					break;
 				case 'special':
-					$validation = 'cannot be set by this module';
+					$validation = $this->msg( 'apiwarn-validationfailed-cannotset' );
 					break;
 				case 'unused':
 				default:
-					$validation = 'not a valid preference';
+					$validation = $this->msg( 'apiwarn-validationfailed-badpref' );
 					break;
 			}
 			if ( $validation === true ) {
-				$user->setOption( $key, $value );
+				$this->setPreference( $key, $value );
 				$changed = true;
 			} else {
-				$this->setWarning( "Validation error for '$key': $validation" );
+				$this->addWarning( [ 'apiwarn-validationfailed', wfEscapeWikiText( $key ), $validation ] );
 			}
 		}
 
 		if ( $changed ) {
-			// Commit changes
-			$user->saveSettings();
+			$this->commitChanges();
 		}
 
 		$this->getResult()->addValue( null, $this->getModuleName(), 'success' );
+	}
+
+	/**
+	 * Load the user from the master to reduce CAS errors on double post (T95839)
+	 *
+	 * @return null|User
+	 */
+	protected function getUserForUpdates() {
+		if ( !$this->userForUpdates ) {
+			$this->userForUpdates = $this->getUser()->getInstanceForUpdate();
+		}
+
+		return $this->userForUpdates;
+	}
+
+	/**
+	 * Returns preferences form descriptor
+	 * @return mixed[][]
+	 */
+	protected function getPreferences() {
+		$preferencesFactory = MediaWikiServices::getInstance()->getPreferencesFactory();
+		return $preferencesFactory->getFormDescriptor( $this->getUserForUpdates(),
+			$this->getContext() );
+	}
+
+	/**
+	 * @param string[] $kinds One or more types returned by User::listOptionKinds() or 'all'
+	 */
+	protected function resetPreferences( array $kinds ) {
+		$this->getUserForUpdates()->resetOptions( $kinds, $this->getContext() );
+	}
+
+	/**
+	 * Sets one user preference to be applied by commitChanges()
+	 *
+	 * @param string $preference
+	 * @param mixed $value
+	 */
+	protected function setPreference( $preference, $value ) {
+		$this->getUserForUpdates()->setOption( $preference, $value );
+	}
+
+	/**
+	 * Applies changes to user preferences
+	 */
+	protected function commitChanges() {
+		$this->getUserForUpdates()->saveSettings();
 	}
 
 	public function mustBePosted() {
@@ -165,7 +223,7 @@ class ApiOptions extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Options';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Options';
 	}
 
 	protected function getExamplesMessages() {

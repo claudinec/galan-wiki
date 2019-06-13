@@ -1,11 +1,10 @@
 <?php
 
 /**
- * Unit tests for the HTMLCheckMatrix
  * @covers HTMLCheckMatrix
  */
-class HtmlCheckMatrixTest extends MediaWikiTestCase {
-	static private $defaultOptions = [
+class HTMLCheckMatrixTest extends MediaWikiTestCase {
+	private static $defaultOptions = [
 		'rows' => [ 'r1', 'r2' ],
 		'columns' => [ 'c1', 'c2' ],
 		'fieldname' => 'test',
@@ -15,7 +14,7 @@ class HtmlCheckMatrixTest extends MediaWikiTestCase {
 		try {
 			new HTMLCheckMatrix( [] );
 		} catch ( MWException $e ) {
-			$this->assertInstanceOf( 'HTMLFormFieldRequiredOptionsException', $e );
+			$this->assertInstanceOf( HTMLFormFieldRequiredOptionsException::class, $e );
 			return;
 		}
 
@@ -51,7 +50,7 @@ class HtmlCheckMatrixTest extends MediaWikiTestCase {
 
 	public function testValidateAllowsOnlyKnownTags() {
 		$field = new HTMLCheckMatrix( self::$defaultOptions );
-		$this->assertInternalType( 'string', $this->validate( $field, [ 'foo' ] ) );
+		$this->assertInstanceOf( Message::class, $this->validate( $field, [ 'foo' ] ) );
 	}
 
 	public function testValidateAcceptsPartialTagList() {

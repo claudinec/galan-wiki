@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on July 7, 2007
- *
  * Copyright © 2006 Yuri Astrakhan "<Firstname><Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -116,9 +112,13 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 			$matches = array_intersect_key( $prop, $this->props + [ 'ids' => 1 ] );
 			if ( $matches ) {
 				$p = $this->getModulePrefix();
-				$this->dieUsage(
-					"Cannot use {$p}prop=" . implode( '|', array_keys( $matches ) ) . " with {$p}unique",
-					'params'
+				$this->dieWithError(
+					[
+						'apierror-invalidparammix-cannotusewith',
+						"{$p}prop=" . implode( '|', array_keys( $matches ) ),
+						"{$p}unique"
+					],
+					'invalidparammix'
 				);
 			}
 			$this->addOption( 'DISTINCT' );
@@ -140,7 +140,7 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 			} else {
 				$this->dieContinueUsageIf( count( $continueArr ) != 2 );
 				$continueTitle = $db->addQuotes( $continueArr[0] );
-				$continueFrom = intval( $continueArr[1] );
+				$continueFrom = (int)$continueArr[1];
 				$this->addWhere(
 					"{$pfx}{$fieldTitle} $op $continueTitle OR " .
 					"({$pfx}{$fieldTitle} = $continueTitle AND " .
@@ -150,10 +150,10 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 		}
 
 		// 'continue' always overrides 'from'
-		$from = ( $continue || $params['from'] === null ? null :
-			$this->titlePartToKey( $params['from'], $namespace ) );
-		$to = ( $params['to'] === null ? null :
-			$this->titlePartToKey( $params['to'], $namespace ) );
+		$from = $continue || $params['from'] === null ? null :
+			$this->titlePartToKey( $params['from'], $namespace );
+		$to = $params['to'] === null ? null :
+			$this->titlePartToKey( $params['to'], $namespace );
 		$this->addWhereRange( $pfx . $fieldTitle, 'newer', $from, $to );
 
 		if ( isset( $params['prefix'] ) ) {
@@ -204,7 +204,7 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 					ApiResult::META_TYPE => 'assoc',
 				];
 				if ( $fld_ids ) {
-					$vals['fromid'] = intval( $row->pl_from );
+					$vals['fromid'] = (int)$row->pl_from;
 				}
 				if ( $fld_title ) {
 					$title = Title::makeTitle( $namespace, $row->pl_title );
@@ -259,7 +259,8 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 			],
 			'namespace' => [
 				ApiBase::PARAM_DFLT => $this->dfltNamespace,
-				ApiBase::PARAM_TYPE => 'namespace'
+				ApiBase::PARAM_TYPE => 'namespace',
+				ApiBase::PARAM_EXTRA_NAMESPACES => [ NS_MEDIA, NS_SPECIAL ],
 			],
 			'limit' => [
 				ApiBase::PARAM_DFLT => 10,
@@ -290,7 +291,7 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 
 		return [
 			"action=query&list={$name}&{$p}from=B&{$p}prop=ids|title"
-				=> "apihelp-$path-example-B",
+				=> "apihelp-$path-example-b",
 			"action=query&list={$name}&{$p}unique=&{$p}from=B"
 				=> "apihelp-$path-example-unique",
 			"action=query&generator={$name}&g{$p}unique=&g{$p}from=B"
@@ -303,6 +304,6 @@ class ApiQueryAllLinks extends ApiQueryGeneratorBase {
 	public function getHelpUrls() {
 		$name = ucfirst( $this->getModuleName() );
 
-		return "https://www.mediawiki.org/wiki/API:{$name}";
+		return "https://www.mediawiki.org/wiki/Special:MyLanguage/API:{$name}";
 	}
 }

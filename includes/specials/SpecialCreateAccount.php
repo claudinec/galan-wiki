@@ -23,7 +23,7 @@
 
 use MediaWiki\Auth\AuthManager;
 use MediaWiki\Logger\LoggerFactory;
-use Psr\Log\LogLevel;
+use MediaWiki\MediaWikiServices;
 
 /**
  * Implements Special:CreateAccount
@@ -64,6 +64,10 @@ class SpecialCreateAccount extends LoginSignupSpecialPage {
 		$user = $this->getUser();
 		$status = AuthManager::singleton()->checkAccountCreatePermissions( $user );
 		if ( !$status->isGood() ) {
+			// track block with a cookie if it doesn't exists already
+			if ( $user->isBlockedFromCreateAccount() ) {
+				MediaWikiServices::getInstance()->getBlockManager()->trackBlockWithCookie( $user );
+			}
 			throw new ErrorPageError( 'createacct-error', $status->getMessage() );
 		}
 	}
@@ -120,7 +124,12 @@ class SpecialCreateAccount extends LoginSignupSpecialPage {
 				} else {
 					$out->addWikiMsg( 'accountcreatedtext', $user->getName() );
 				}
-				$out->addReturnTo( $this->getPageTitle() );
+
+				$rt = Title::newFromText( $this->mReturnTo );
+				$out->addReturnTo(
+					( $rt && !$rt->isExternal() ) ? $rt : $this->getPageTitle(),
+					wfCgiToArray( $this->mReturnToQuery )
+				);
 				return;
 			}
 		}
@@ -130,7 +139,7 @@ class SpecialCreateAccount extends LoginSignupSpecialPage {
 		# Run any hooks; display injected HTML
 		$injected_html = '';
 		$welcome_creation_msg = 'welcomecreation-msg';
-		Hooks::run( 'UserLoginComplete', [ &$user, &$injected_html ] );
+		Hooks::run( 'UserLoginComplete', [ &$user, &$injected_html, $direct ] );
 
 		/**
 		 * Let any extensions change what message is shown.
@@ -160,7 +169,7 @@ class SpecialCreateAccount extends LoginSignupSpecialPage {
 	}
 
 	protected function logAuthResult( $success, $status = null ) {
-		LoggerFactory::getInstance( 'authmanager-stats' )->info( 'Account creation attempt', [
+		LoggerFactory::getInstance( 'authevents' )->info( 'Account creation attempt', [
 			'event' => 'accountcreation',
 			'successful' => $success,
 			'status' => $status,

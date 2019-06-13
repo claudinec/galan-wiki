@@ -413,30 +413,16 @@ $bookstoreList = [
 	'Яндекс.Маркет' => 'http://market.yandex.ru/search.xml?text=$1',
 	'ОЗОН' => 'http://www.ozon.ru/?context=advsearch_book&isbn=$1',
 	'Books.Ru' => 'http://www.books.ru/shop/search?query=$1',
-	'Amazon.com' => 'http://www.amazon.com/exec/obidos/ISBN=$1'
+	'Amazon.com' => 'https://www.amazon.com/exec/obidos/ISBN=$1'
 ];
-
-/**
- * Изменения сделанные в этом файле будут потеряны при обновлении MediaWiki.
- *
- * Если необходимо внести изменения в перевод отдельных строк интерфейса,
- * сделайте это посредством редактирования страниц вида «MediaWiki:*».
- * Их список можно найти на странице «Special:Allmessages».
- */
 
 $separatorTransformTable = [
-	',' => "\xc2\xa0", # nbsp
+	',' => "\u{00A0}", # nbsp
 	'.' => ','
 ];
+$minimumGroupingDigits = 2;
 
 $fallback8bitEncoding = 'windows-1251';
 $linkPrefixExtension = false;
 
-$imageFiles = [
-	'button-bold'   => 'ru/button_bold.png',
-	'button-italic' => 'ru/button_italic.png',
-	'button-link'   => 'ru/button_link.png',
-];
-
 $linkTrail = '/^([a-zабвгдеёжзийклмнопрстуфхцчшщъыьэюя]+)(.*)$/sDu';
-

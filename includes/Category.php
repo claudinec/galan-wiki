@@ -25,8 +25,6 @@
  * Category objects are immutable, strictly speaking. If you call methods that change the database,
  * like to refresh link counts, the objects will be appropriately reinitialized.
  * Member variables are lazy-initialized.
- *
- * @todo Move some stuff from CategoryPage.php to here, and use that.
  */
 class Category {
 	/** Name of the category, normalized to DB-key form */
@@ -40,15 +38,21 @@ class Category {
 	/** Counts of membership (cat_pages, cat_subcats, cat_files) */
 	private $mPages = null, $mSubcats = null, $mFiles = null;
 
+	const LOAD_ONLY = 0;
+	const LAZY_INIT_ROW = 1;
+
+	const ROW_COUNT_SMALL = 100;
+
 	private function __construct() {
 	}
 
 	/**
 	 * Set up all member variables using a database query.
+	 * @param int $mode One of (Category::LOAD_ONLY, Category::LAZY_INIT_ROW)
 	 * @throws MWException
 	 * @return bool True on success, false on failure.
 	 */
-	protected function initialize() {
+	protected function initialize( $mode = self::LOAD_ONLY ) {
 		if ( $this->mName === null && $this->mID === null ) {
 			throw new MWException( __METHOD__ . ' has both names and IDs null' );
 		} elseif ( $this->mID === null ) {
@@ -60,7 +64,7 @@ class Category {
 			return true;
 		}
 
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$row = $dbr->selectRow(
 			'category',
 			[ 'cat_id', 'cat_title', 'cat_pages', 'cat_subcats', 'cat_files' ],
@@ -79,6 +83,11 @@ class Category {
 				$this->mSubcats = 0;
 				$this->mFiles = 0;
 
+				# If the title exists, call refreshCounts to add a row for it.
+				if ( $mode === self::LAZY_INIT_ROW && $this->mTitle->exists() ) {
+					DeferredUpdates::addCallableUpdate( [ $this, 'refreshCounts' ] );
+				}
+
 				return true;
 			} else {
 				return false; # Fail
@@ -91,11 +100,17 @@ class Category {
 		$this->mSubcats = $row->cat_subcats;
 		$this->mFiles = $row->cat_files;
 
-		# (bug 13683) If the count is negative, then 1) it's obviously wrong
+		# (T15683) If the count is negative, then 1) it's obviously wrong
 		# and should not be kept, and 2) we *probably* don't have to scan many
 		# rows to obtain the correct figure, so let's risk a one-time recount.
 		if ( $this->mPages < 0 || $this->mSubcats < 0 || $this->mFiles < 0 ) {
-			$this->refreshCounts();
+			$this->mPages = max( $this->mPages, 0 );
+			$this->mSubcats = max( $this->mSubcats, 0 );
+			$this->mFiles = max( $this->mFiles, 0 );
+
+			if ( $mode === self::LAZY_INIT_ROW ) {
+				DeferredUpdates::addCallableUpdate( [ $this, 'refreshCounts' ] );
+			}
 		}
 
 		return true;
@@ -104,9 +119,9 @@ class Category {
 	/**
 	 * Factory function.
 	 *
-	 * @param array $name A category name (no "Category:" prefix).  It need
+	 * @param string $name A category name (no "Category:" prefix).  It need
 	 *   not be normalized, with spaces replaced by underscores.
-	 * @return mixed Category, or false on a totally invalid name
+	 * @return Category|bool Category, or false on a totally invalid name
 	 */
 	public static function newFromName( $name ) {
 		$cat = new self();
@@ -156,10 +171,10 @@ class Category {
 	 *   fields are null, the resulting Category object will represent an empty
 	 *   category if a title object was given. If the fields are null and no
 	 *   title was given, this method fails and returns false.
-	 * @param Title $title Optional title object for the category represented by
+	 * @param Title|null $title Optional title object for the category represented by
 	 *   the given row. May be provided if it is already known, to avoid having
 	 *   to re-create a title object later.
-	 * @return Category
+	 * @return Category|false
 	 */
 	public static function newFromRow( $row, $title = null ) {
 		$cat = new self();
@@ -238,7 +253,7 @@ class Category {
 			return $this->mTitle;
 		}
 
-		if ( !$this->initialize() ) {
+		if ( !$this->initialize( self::LAZY_INIT_ROW ) ) {
 			return false;
 		}
 
@@ -249,13 +264,12 @@ class Category {
 	/**
 	 * Fetch a TitleArray of up to $limit category members, beginning after the
 	 * category sort key $offset.
-	 * @param int $limit
+	 * @param int|bool $limit
 	 * @param string $offset
 	 * @return TitleArray TitleArray object for category members.
 	 */
 	public function getMembers( $limit = false, $offset = '' ) {
-
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 
 		$conds = [ 'cl_to' => $this->getName(), 'cl_from = page_id' ];
 		$options = [ 'ORDER BY' => 'cl_sortkey' ];
@@ -285,10 +299,10 @@ class Category {
 	/**
 	 * Generic accessor
 	 * @param string $key
-	 * @return bool
+	 * @return mixed
 	 */
 	private function getX( $key ) {
-		if ( !$this->initialize() ) {
+		if ( $this->{$key} === null && !$this->initialize( self::LAZY_INIT_ROW ) ) {
 			return false;
 		}
 		return $this->{$key};
@@ -307,41 +321,76 @@ class Category {
 		# If we have just a category name, find out whether there is an
 		# existing row. Or if we have just an ID, get the name, because
 		# that's what categorylinks uses.
-		if ( !$this->initialize() ) {
+		if ( !$this->initialize( self::LOAD_ONLY ) ) {
 			return false;
 		}
 
 		$dbw = wfGetDB( DB_MASTER );
+		# Avoid excess contention on the same category (T162121)
+		$name = __METHOD__ . ':' . md5( $this->mName );
+		$scopedLock = $dbw->getScopedLockAndFlush( $name, __METHOD__, 0 );
+		if ( !$scopedLock ) {
+			return false;
+		}
+
 		$dbw->startAtomic( __METHOD__ );
 
-		$cond1 = $dbw->conditional( [ 'page_namespace' => NS_CATEGORY ], 1, 'NULL' );
-		$cond2 = $dbw->conditional( [ 'page_namespace' => NS_FILE ], 1, 'NULL' );
-		$result = $dbw->selectRow(
+		// Lock the `category` row before locking `categorylinks` rows to try
+		// to avoid deadlocks with LinksDeletionUpdate (T195397)
+		$dbw->lockForUpdate( 'category', [ 'cat_title' => $this->mName ], __METHOD__ );
+
+		// Lock all the `categorylinks` records and gaps for this category;
+		// this is a separate query due to postgres/oracle limitations
+		$dbw->selectRowCount(
 			[ 'categorylinks', 'page' ],
-			[ 'pages' => 'COUNT(*)',
-				'subcats' => "COUNT($cond1)",
-				'files' => "COUNT($cond2)"
-			],
+			'*',
 			[ 'cl_to' => $this->mName, 'page_id = cl_from' ],
 			__METHOD__,
 			[ 'LOCK IN SHARE MODE' ]
 		);
+		// Get the aggregate `categorylinks` row counts for this category
+		$catCond = $dbw->conditional( [ 'page_namespace' => NS_CATEGORY ], 1, 'NULL' );
+		$fileCond = $dbw->conditional( [ 'page_namespace' => NS_FILE ], 1, 'NULL' );
+		$result = $dbw->selectRow(
+			[ 'categorylinks', 'page' ],
+			[
+				'pages' => 'COUNT(*)',
+				'subcats' => "COUNT($catCond)",
+				'files' => "COUNT($fileCond)"
+			],
+			[ 'cl_to' => $this->mName, 'page_id = cl_from' ],
+			__METHOD__
+		);
+
+		$shouldExist = $result->pages > 0 || $this->getTitle()->exists();
 
 		if ( $this->mID ) {
-			# The category row already exists, so do a plain UPDATE instead
-			# of INSERT...ON DUPLICATE KEY UPDATE to avoid creating a gap
-			# in the cat_id sequence. The row may or may not be "affected".
-			$dbw->update(
-				'category',
-				[
-					'cat_pages' => $result->pages,
-					'cat_subcats' => $result->subcats,
-					'cat_files' => $result->files
-				],
-				[ 'cat_title' => $this->mName ],
-				__METHOD__
-			);
-		} else {
+			if ( $shouldExist ) {
+				# The category row already exists, so do a plain UPDATE instead
+				# of INSERT...ON DUPLICATE KEY UPDATE to avoid creating a gap
+				# in the cat_id sequence. The row may or may not be "affected".
+				$dbw->update(
+					'category',
+					[
+						'cat_pages' => $result->pages,
+						'cat_subcats' => $result->subcats,
+						'cat_files' => $result->files
+					],
+					[ 'cat_title' => $this->mName ],
+					__METHOD__
+				);
+			} else {
+				# The category is empty and has no description page, delete it
+				$dbw->delete(
+					'category',
+					[ 'cat_title' => $this->mName ],
+					__METHOD__
+				);
+				$this->mID = false;
+			}
+		} elseif ( $shouldExist ) {
+			# The category row doesn't exist but should, so create it. Use
+			# upsert in case of races.
 			$dbw->upsert(
 				'category',
 				[
@@ -358,6 +407,8 @@ class Category {
 				],
 				__METHOD__
 			);
+			// @todo: Should we update $this->mID here? Or not since Category
+			// objects tend to be short lived enough to not matter?
 		}
 
 		$dbw->endAtomic( __METHOD__ );
@@ -368,5 +419,75 @@ class Category {
 		$this->mFiles = $result->files;
 
 		return true;
+	}
+
+	/**
+	 * Call refreshCounts() if there are no entries in the categorylinks table
+	 * or if the category table has a row that states that there are no entries
+	 *
+	 * Due to lock errors or other failures, the precomputed counts can get out of sync,
+	 * making it hard to know when to delete the category row without checking the
+	 * categorylinks table.
+	 *
+	 * @return bool Whether links were refreshed
+	 * @since 1.32
+	 */
+	public function refreshCountsIfEmpty() {
+		return $this->refreshCountsIfSmall( 0 );
+	}
+
+	/**
+	 * Call refreshCounts() if there are few entries in the categorylinks table
+	 *
+	 * Due to lock errors or other failures, the precomputed counts can get out of sync,
+	 * making it hard to know when to delete the category row without checking the
+	 * categorylinks table.
+	 *
+	 * This method will do a non-locking select first to reduce contention.
+	 *
+	 * @param int $maxSize Only refresh if there are this or less many backlinks
+	 * @return bool Whether links were refreshed
+	 * @since 1.34
+	 */
+	public function refreshCountsIfSmall( $maxSize = self::ROW_COUNT_SMALL ) {
+		$dbw = wfGetDB( DB_MASTER );
+		$dbw->startAtomic( __METHOD__ );
+
+		$typeOccurances = $dbw->selectFieldValues(
+			'categorylinks',
+			'cl_type',
+			[ 'cl_to' => $this->getName() ],
+			__METHOD__,
+			[ 'LIMIT' => $maxSize + 1 ]
+		);
+
+		if ( !$typeOccurances ) {
+			$doRefresh = true; // delete any category table entry
+		} elseif ( count( $typeOccurances ) <= $maxSize ) {
+			$countByType = array_count_values( $typeOccurances );
+			$doRefresh = !$dbw->selectField(
+				'category',
+				'1',
+				[
+					'cat_title' => $this->getName(),
+					'cat_pages' => $countByType['page'] ?? 0,
+					'cat_subcats' => $countByType['subcat'] ?? 0,
+					'cat_files' => $countByType['file'] ?? 0
+				],
+				__METHOD__
+			);
+		} else {
+			$doRefresh = false; // category is too big
+		}
+
+		$dbw->endAtomic( __METHOD__ );
+
+		if ( $doRefresh ) {
+			$this->refreshCounts(); // update the row
+
+			return true;
+		}
+
+		return false;
 	}
 }

@@ -1,17 +1,20 @@
 <?php
 
 use MediaWiki\Auth\AuthManager;
+use MediaWiki\Block\DatabaseBlock;
+use MediaWiki\Block\CompositeBlock;
+use MediaWiki\Block\SystemBlock;
 
 /**
+ * @covers PasswordReset
  * @group Database
  */
-class PasswordResetTest extends PHPUnit_Framework_TestCase {
+class PasswordResetTest extends MediaWikiTestCase {
 	/**
 	 * @dataProvider provideIsAllowed
 	 */
 	public function testIsAllowed( $passwordResetRoutes, $enableEmail,
-		$allowsAuthenticationDataChange, $canEditPrivate, $canSeePassword,
-		$userIsBlocked, $isAllowed, $isAllowedToDisplayPassword
+		$allowsAuthenticationDataChange, $canEditPrivate, $block, $globalBlock, $isAllowed
 	) {
 		$config = new HashConfig( [
 			'PasswordResetRoutes' => $passwordResetRoutes,
@@ -23,15 +26,14 @@ class PasswordResetTest extends PHPUnit_Framework_TestCase {
 		$authManager->expects( $this->any() )->method( 'allowsAuthenticationDataChange' )
 			->willReturn( $allowsAuthenticationDataChange ? Status::newGood() : Status::newFatal( 'foo' ) );
 
-		$user = $this->getMock( User::class );
+		$user = $this->getMockBuilder( User::class )->getMock();
 		$user->expects( $this->any() )->method( 'getName' )->willReturn( 'Foo' );
-		$user->expects( $this->any() )->method( 'isBlocked' )->willReturn( $userIsBlocked );
+		$user->expects( $this->any() )->method( 'getBlock' )->willReturn( $block );
+		$user->expects( $this->any() )->method( 'getGlobalBlock' )->willReturn( $globalBlock );
 		$user->expects( $this->any() )->method( 'isAllowed' )
-			->will( $this->returnCallback( function ( $perm ) use ( $canEditPrivate, $canSeePassword ) {
+			->will( $this->returnCallback( function ( $perm ) use ( $canEditPrivate ) {
 				if ( $perm === 'editmyprivateinfo' ) {
 					return $canEditPrivate;
-				} elseif ( $perm === 'passwordreset' ) {
-					return $canSeePassword;
 				} else {
 					$this->fail( 'Unexpected permission check' );
 				}
@@ -40,81 +42,142 @@ class PasswordResetTest extends PHPUnit_Framework_TestCase {
 		$passwordReset = new PasswordReset( $config, $authManager );
 
 		$this->assertSame( $isAllowed, $passwordReset->isAllowed( $user )->isGood() );
-		$this->assertSame( $isAllowedToDisplayPassword,
-			$passwordReset->isAllowed( $user, true )->isGood() );
 	}
 
 	public function provideIsAllowed() {
 		return [
-			[
+			'no routes' => [
 				'passwordResetRoutes' => [],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => true,
-				'canSeePassword' => true,
-				'userIsBlocked' => false,
+				'block' => null,
+				'globalBlock' => null,
 				'isAllowed' => false,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'email disabled' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => false,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => true,
-				'canSeePassword' => true,
-				'userIsBlocked' => false,
+				'block' => null,
+				'globalBlock' => null,
 				'isAllowed' => false,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'auth data change disabled' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => false,
 				'canEditPrivate' => true,
-				'canSeePassword' => true,
-				'userIsBlocked' => false,
+				'block' => null,
+				'globalBlock' => null,
 				'isAllowed' => false,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'cannot edit private data' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => false,
-				'canSeePassword' => true,
-				'userIsBlocked' => false,
+				'block' => null,
+				'globalBlock' => null,
 				'isAllowed' => false,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'blocked with account creation disabled' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => true,
-				'canSeePassword' => true,
-				'userIsBlocked' => true,
+				'block' => new DatabaseBlock( [ 'createAccount' => true ] ),
+				'globalBlock' => null,
 				'isAllowed' => false,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'blocked w/o account creation disabled' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => true,
-				'canSeePassword' => false,
-				'userIsBlocked' => false,
+				'block' => new DatabaseBlock( [] ),
+				'globalBlock' => null,
 				'isAllowed' => true,
-				'isAllowedToDisplayPassword' => false,
 			],
-			[
+			'using blocked proxy' => [
 				'passwordResetRoutes' => [ 'username' => true ],
 				'enableEmail' => true,
 				'allowsAuthenticationDataChange' => true,
 				'canEditPrivate' => true,
-				'canSeePassword' => true,
-				'userIsBlocked' => false,
+				'block' => new SystemBlock(
+					[ 'systemBlock' => 'proxy' ]
+				),
+				'globalBlock' => null,
+				'isAllowed' => false,
+			],
+			'globally blocked with account creation not disabled' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => null,
+				'globalBlock' => new SystemBlock(
+					[ 'systemBlock' => 'global-block' ]
+				),
 				'isAllowed' => true,
-				'isAllowedToDisplayPassword' => true,
+			],
+			'blocked via wgSoftBlockRanges' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => new SystemBlock(
+					[ 'systemBlock' => 'wgSoftBlockRanges', 'anonOnly' => true ]
+				),
+				'globalBlock' => null,
+				'isAllowed' => true,
+			],
+			'blocked with an unknown system block type' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => new SystemBlock( [ 'systemBlock' => 'unknown' ] ),
+				'globalBlock' => null,
+				'isAllowed' => false,
+			],
+			'blocked with multiple blocks, all allowing password reset' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => new CompositeBlock( [
+					'originalBlocks' => [
+						new SystemBlock( [ 'systemBlock' => 'wgSoftBlockRanges', 'anonOnly' => true ] ),
+						new Block( [] ),
+					]
+				] ),
+				'globalBlock' => null,
+				'isAllowed' => true,
+			],
+			'blocked with multiple blocks, not all allowing password reset' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => new CompositeBlock( [
+					'originalBlocks' => [
+						new SystemBlock( [ 'systemBlock' => 'wgSoftBlockRanges', 'anonOnly' => true ] ),
+						new SystemBlock( [ 'systemBlock' => 'proxy' ] ),
+					]
+				] ),
+				'globalBlock' => null,
+				'isAllowed' => false,
+			],
+			'all OK' => [
+				'passwordResetRoutes' => [ 'username' => true ],
+				'enableEmail' => true,
+				'allowsAuthenticationDataChange' => true,
+				'canEditPrivate' => true,
+				'block' => null,
+				'globalBlock' => null,
+				'isAllowed' => true,
 			],
 		];
 	}
@@ -125,6 +188,12 @@ class PasswordResetTest extends PHPUnit_Framework_TestCase {
 			'EnableEmail' => true,
 		] );
 
+		// Unregister the hooks for proper unit testing
+		$this->mergeMwGlobalArrayValue( 'wgHooks', [
+			'User::mailPasswordInternal' => [],
+			'SpecialPasswordResetOnSubmit' => [],
+		] );
+
 		$authManager = $this->getMockBuilder( AuthManager::class )->disableOriginalConstructor()
 			->getMock();
 		$authManager->expects( $this->any() )->method( 'allowsAuthenticationDataChange' )
@@ -133,12 +202,13 @@ class PasswordResetTest extends PHPUnit_Framework_TestCase {
 
 		$request = new FauxRequest();
 		$request->setIP( '1.2.3.4' );
-		$performingUser = $this->getMock( User::class );
+		$performingUser = $this->getMockBuilder( User::class )->getMock();
 		$performingUser->expects( $this->any() )->method( 'getRequest' )->willReturn( $request );
 		$performingUser->expects( $this->any() )->method( 'isAllowed' )->willReturn( true );
+		$performingUser->expects( $this->any() )->method( 'getName' )->willReturn( 'Performer' );
 
-		$targetUser1 = $this->getMock( User::class );
-		$targetUser2 = $this->getMock( User::class );
+		$targetUser1 = $this->getMockBuilder( User::class )->getMock();
+		$targetUser2 = $this->getMockBuilder( User::class )->getMock();
 		$targetUser1->expects( $this->any() )->method( 'getName' )->willReturn( 'User1' );
 		$targetUser2->expects( $this->any() )->method( 'getName' )->willReturn( 'User2' );
 		$targetUser1->expects( $this->any() )->method( 'getId' )->willReturn( 1 );

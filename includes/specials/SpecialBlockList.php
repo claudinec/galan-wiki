@@ -21,6 +21,8 @@
  * @ingroup SpecialPage
  */
 
+use MediaWiki\Block\DatabaseBlock;
+
 /**
  * A special page that lists existing blocks
  *
@@ -31,28 +33,28 @@ class SpecialBlockList extends SpecialPage {
 
 	protected $options;
 
+	protected $blockType;
+
 	function __construct() {
 		parent::__construct( 'BlockList' );
 	}
 
 	/**
-	 * Main execution point
-	 *
-	 * @param string $par Title fragment
+	 * @param string|null $par Title fragment
 	 */
 	public function execute( $par ) {
 		$this->setHeaders();
 		$this->outputHeader();
 		$out = $this->getOutput();
-		$lang = $this->getLanguage();
 		$out->setPageTitle( $this->msg( 'ipblocklist' ) );
-		$out->addModuleStyles( [ 'mediawiki.special', 'mediawiki.special.blocklist' ] );
+		$out->addModuleStyles( [ 'mediawiki.special' ] );
 
 		$request = $this->getRequest();
 		$par = $request->getVal( 'ip', $par );
 		$this->target = trim( $request->getVal( 'wpTarget', $par ) );
 
 		$this->options = $request->getArray( 'wpOptions', [] );
+		$this->blockType = $request->getVal( 'blockType' );
 
 		$action = $request->getText( 'action' );
 
@@ -86,30 +88,44 @@ class SpecialBlockList extends SpecialPage {
 				],
 				'flatlist' => true,
 			],
-			'Limit' => [
-				'type' => 'limitselect',
-				'label-message' => 'table_pager_limit_label',
-				'options' => [
-					$lang->formatNum( 20 ) => 20,
-					$lang->formatNum( 50 ) => 50,
-					$lang->formatNum( 100 ) => 100,
-					$lang->formatNum( 250 ) => 250,
-					$lang->formatNum( 500 ) => 500,
-				],
-				'name' => 'limit',
-				'default' => $pager->getLimit(),
-			],
 		];
+
+		if ( $this->getConfig()->get( 'EnablePartialBlocks' ) ) {
+			$fields['BlockType'] = [
+				'type' => 'select',
+				'label-message' => 'blocklist-type',
+				'options' => [
+					$this->msg( 'blocklist-type-opt-all' )->escaped() => '',
+					$this->msg( 'blocklist-type-opt-sitewide' )->escaped() => 'sitewide',
+					$this->msg( 'blocklist-type-opt-partial' )->escaped() => 'partial',
+				],
+				'name' => 'blockType',
+				'cssclass' => 'mw-field-block-type',
+			];
+		}
+
+		$fields['Limit'] = [
+			'type' => 'limitselect',
+			'label-message' => 'table_pager_limit_label',
+			'options' => $pager->getLimitSelectList(),
+			'name' => 'limit',
+			'default' => $pager->getLimit(),
+			'cssclass' => $this->getConfig()->get( 'EnablePartialBlocks' ) ?
+				'mw-field-limit mw-has-field-block-type' :
+				'mw-field-limit',
+		];
+
 		$context = new DerivativeContext( $this->getContext() );
 		$context->setTitle( $this->getPageTitle() ); // Remove subpage
 		$form = HTMLForm::factory( 'ooui', $fields, $context );
-		$form->setMethod( 'get' );
-		$form->setWrapperLegendMsg( 'ipblocklist-legend' );
-		$form->setSubmitTextMsg( 'ipblocklist-submit' );
-		$form->setSubmitProgressive();
-		$form->prepareForm();
+		$form
+			->setMethod( 'get' )
+			->setFormIdentifier( 'blocklist' )
+			->setWrapperLegendMsg( 'ipblocklist-legend' )
+			->setSubmitTextMsg( 'ipblocklist-submit' )
+			->prepareForm()
+			->displayForm( false );
 
-		$form->displayForm( '' );
 		$this->showList( $pager );
 	}
 
@@ -125,29 +141,28 @@ class SpecialBlockList extends SpecialPage {
 		}
 
 		if ( $this->target !== '' ) {
-			list( $target, $type ) = Block::parseTarget( $this->target );
+			list( $target, $type ) = DatabaseBlock::parseTarget( $this->target );
 
 			switch ( $type ) {
-				case Block::TYPE_ID:
-				case Block::TYPE_AUTO:
+				case DatabaseBlock::TYPE_ID:
+				case DatabaseBlock::TYPE_AUTO:
 					$conds['ipb_id'] = $target;
 					break;
 
-				case Block::TYPE_IP:
-				case Block::TYPE_RANGE:
+				case DatabaseBlock::TYPE_IP:
+				case DatabaseBlock::TYPE_RANGE:
 					list( $start, $end ) = IP::parseRange( $target );
-					$dbr = wfGetDB( DB_SLAVE );
-					$conds[] = $dbr->makeList(
+					$conds[] = wfGetDB( DB_REPLICA )->makeList(
 						[
 							'ipb_address' => $target,
-							Block::getRangeCond( $start, $end )
+							DatabaseBlock::getRangeCond( $start, $end )
 						],
 						LIST_OR
 					);
 					$conds['ipb_auto'] = 0;
 					break;
 
-				case Block::TYPE_USER:
+				case DatabaseBlock::TYPE_USER:
 					$conds['ipb_address'] = $target->getName();
 					$conds['ipb_auto'] = 0;
 					break;
@@ -166,6 +181,12 @@ class SpecialBlockList extends SpecialPage {
 		}
 		if ( in_array( 'rangeblocks', $this->options ) ) {
 			$conds[] = "ipb_range_end = ipb_range_start";
+		}
+
+		if ( $this->blockType === 'sitewide' ) {
+			$conds[] = 'ipb_sitewide = 1';
+		} elseif ( $this->blockType === 'partial' ) {
+			$conds[] = 'ipb_sitewide = 0';
 		}
 
 		return new BlockListPager( $this, $conds );

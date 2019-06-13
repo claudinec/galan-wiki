@@ -21,9 +21,8 @@
  */
 
 // This endpoint is supposed to be independent of request cookies and other
-// details of the session. Log warnings for violations of the no-session
-// constraint.
-define( 'MW_NO_SESSION', 'warn' );
+// details of the session. Enforce this constraint with respect to session use.
+define( 'MW_NO_SESSION', 1 );
 
 require_once __DIR__ . '/includes/WebStart.php';
 
@@ -37,7 +36,7 @@ if ( $wgRequest->getVal( 'ctype' ) == 'application/xml' ) {
 $response = $wgRequest->response();
 $response->header( "Content-type: $ctype" );
 
-// Set an Expires header so that squid can cache it for a short time
+// Set an Expires header so that CDN can cache it for a short time
 // Short enough so that the sysadmin barely notices when $wgSitename is changed
 $expiryTime = 600; # 10 minutes
 $response->header( 'Expires: ' . gmdate( 'D, d M Y H:i:s', time() + $expiryTime ) . ' GMT' );
@@ -85,7 +84,7 @@ $urls[] = [
 	'template' => $searchPage->getCanonicalURL( 'search={searchTerms}' ) ];
 
 foreach ( $wgOpenSearchTemplates as $type => $template ) {
-	if ( !$template && $wgEnableAPI ) {
+	if ( !$template ) {
 		$template = ApiOpenSearch::getOpenSearchTemplate( $type );
 	}
 

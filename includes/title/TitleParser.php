@@ -18,7 +18,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @license GPL 2+
  * @author Daniel Kinzler
  */
 
@@ -33,8 +32,7 @@
  */
 interface TitleParser {
 	/**
-	 * Parses the given text and constructs a TitleValue. Normalization
-	 * is applied according to the rules appropriate for the form specified by $form.
+	 * Parses the given text and constructs a TitleValue.
 	 *
 	 * @note this only parses local page links, interwiki-prefixes etc. are not considered!
 	 *
@@ -44,5 +42,5 @@ interface TitleParser {
 	 * @throws MalformedTitleException If the text is not a valid representation of a page title.
 	 * @return TitleValue
 	 */
-	public function parseTitle( $text, $defaultNamespace );
+	public function parseTitle( $text, $defaultNamespace = NS_MAIN );
 }

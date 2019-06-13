@@ -23,6 +23,9 @@
  */
 
 use MediaWiki\Logger\LegacyLogger;
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Shell\Shell;
+use Wikimedia\Rdbms\IDatabase;
 
 $optionsWithArgs = RecompressTracked::getOptionsWithArgs();
 require __DIR__ . '/../commandLine.inc';
@@ -60,17 +63,17 @@ class RecompressTracked {
 	public $numProcs = 1;
 	public $numBatches = 0;
 	public $pageBlobClass, $orphanBlobClass;
-	public $slavePipes, $slaveProcs, $prevSlaveId;
+	public $replicaPipes, $replicaProcs, $prevReplicaId;
 	public $copyOnly = false;
 	public $isChild = false;
-	public $slaveId = false;
+	public $replicaId = false;
 	public $noCount = false;
 	public $debugLog, $infoLog, $criticalLog;
 	public $store;
 
 	private static $optionsWithArgs = [
 		'procs',
-		'slave-id',
+		'replica-id',
 		'debug-log',
 		'info-log',
 		'critical-log'
@@ -81,7 +84,7 @@ class RecompressTracked {
 		'procs' => 'numProcs',
 		'copy-only' => 'copyOnly',
 		'child' => 'isChild',
-		'slave-id' => 'slaveId',
+		'replica-id' => 'replicaId',
 		'debug-log' => 'debugLog',
 		'info-log' => 'infoLog',
 		'critical-log' => 'criticalLog',
@@ -109,12 +112,12 @@ class RecompressTracked {
 		$this->store = new ExternalStoreDB;
 		if ( !$this->isChild ) {
 			$GLOBALS['wgDebugLogPrefix'] = "RCT M: ";
-		} elseif ( $this->slaveId !== false ) {
-			$GLOBALS['wgDebugLogPrefix'] = "RCT {$this->slaveId}: ";
+		} elseif ( $this->replicaId !== false ) {
+			$GLOBALS['wgDebugLogPrefix'] = "RCT {$this->replicaId}: ";
 		}
 		$this->pageBlobClass = function_exists( 'xdiff_string_bdiff' ) ?
-			'DiffHistoryBlob' : 'ConcatenatedGzipHistoryBlob';
-		$this->orphanBlobClass = 'ConcatenatedGzipHistoryBlob';
+			DiffHistoryBlob::class : ConcatenatedGzipHistoryBlob::class;
+		$this->orphanBlobClass = ConcatenatedGzipHistoryBlob::class;
 	}
 
 	function debug( $msg ) {
@@ -140,21 +143,21 @@ class RecompressTracked {
 
 	function logToFile( $msg, $file ) {
 		$header = '[' . date( 'd\TH:i:s' ) . '] ' . wfHostname() . ' ' . posix_getpid();
-		if ( $this->slaveId !== false ) {
-			$header .= "({$this->slaveId})";
+		if ( $this->replicaId !== false ) {
+			$header .= "({$this->replicaId})";
 		}
 		$header .= ' ' . wfWikiID();
 		LegacyLogger::emit( sprintf( "%-50s %s\n", $header, $msg ), $file );
 	}
 
 	/**
-	 * Wait until the selected slave has caught up to the master.
-	 * This allows us to use the slave for things that were committed in a
+	 * Wait until the selected replica DB has caught up to the master.
+	 * This allows us to use the replica DB for things that were committed in a
 	 * previous part of this batch process.
 	 */
 	function syncDBs() {
 		$dbw = wfGetDB( DB_MASTER );
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$pos = $dbw->getMasterPos();
 		$dbr->masterPosWait( $pos, 100000 );
 	}
@@ -179,10 +182,10 @@ class RecompressTracked {
 		}
 
 		$this->syncDBs();
-		$this->startSlaveProcs();
+		$this->startReplicaProcs();
 		$this->doAllPages();
 		$this->doAllOrphans();
-		$this->killSlaveProcs();
+		$this->killReplicaProcs();
 	}
 
 	/**
@@ -190,7 +193,7 @@ class RecompressTracked {
 	 * @return bool
 	 */
 	function checkTrackingTable() {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		if ( !$dbr->tableExists( 'blob_tracking' ) ) {
 			$this->critical( "Error: blob_tracking table does not exist" );
 
@@ -212,22 +215,22 @@ class RecompressTracked {
 	 * This necessary because text recompression is slow: loading, compressing and
 	 * writing are all slow.
 	 */
-	function startSlaveProcs() {
-		$cmd = 'php ' . wfEscapeShellArg( __FILE__ );
+	function startReplicaProcs() {
+		$cmd = 'php ' . Shell::escape( __FILE__ );
 		foreach ( self::$cmdLineOptionMap as $cmdOption => $classOption ) {
-			if ( $cmdOption == 'slave-id' ) {
+			if ( $cmdOption == 'replica-id' ) {
 				continue;
 			} elseif ( in_array( $cmdOption, self::$optionsWithArgs ) && isset( $this->$classOption ) ) {
-				$cmd .= " --$cmdOption " . wfEscapeShellArg( $this->$classOption );
+				$cmd .= " --$cmdOption " . Shell::escape( $this->$classOption );
 			} elseif ( $this->$classOption ) {
 				$cmd .= " --$cmdOption";
 			}
 		}
 		$cmd .= ' --child' .
-			' --wiki ' . wfEscapeShellArg( wfWikiID() ) .
-			' ' . call_user_func_array( 'wfEscapeShellArg', $this->destClusters );
+			' --wiki ' . Shell::escape( wfWikiID() ) .
+			' ' . Shell::escape( ...$this->destClusters );
 
-		$this->slavePipes = $this->slaveProcs = [];
+		$this->replicaPipes = $this->replicaProcs = [];
 		for ( $i = 0; $i < $this->numProcs; $i++ ) {
 			$pipes = [];
 			$spec = [
@@ -235,29 +238,29 @@ class RecompressTracked {
 				[ 'file', 'php://stdout', 'w' ],
 				[ 'file', 'php://stderr', 'w' ]
 			];
-			MediaWiki\suppressWarnings();
-			$proc = proc_open( "$cmd --slave-id $i", $spec, $pipes );
-			MediaWiki\restoreWarnings();
+			Wikimedia\suppressWarnings();
+			$proc = proc_open( "$cmd --replica-id $i", $spec, $pipes );
+			Wikimedia\restoreWarnings();
 			if ( !$proc ) {
-				$this->critical( "Error opening slave process: $cmd" );
+				$this->critical( "Error opening replica DB process: $cmd" );
 				exit( 1 );
 			}
-			$this->slaveProcs[$i] = $proc;
-			$this->slavePipes[$i] = $pipes[0];
+			$this->replicaProcs[$i] = $proc;
+			$this->replicaPipes[$i] = $pipes[0];
 		}
-		$this->prevSlaveId = -1;
+		$this->prevReplicaId = -1;
 	}
 
 	/**
 	 * Gracefully terminate the child processes
 	 */
-	function killSlaveProcs() {
-		$this->info( "Waiting for slave processes to finish..." );
+	function killReplicaProcs() {
+		$this->info( "Waiting for replica DB processes to finish..." );
 		for ( $i = 0; $i < $this->numProcs; $i++ ) {
-			$this->dispatchToSlave( $i, 'quit' );
+			$this->dispatchToReplica( $i, 'quit' );
 		}
 		for ( $i = 0; $i < $this->numProcs; $i++ ) {
-			$status = proc_close( $this->slaveProcs[$i] );
+			$status = proc_close( $this->replicaProcs[$i] );
 			if ( $status ) {
 				$this->critical( "Warning: child #$i exited with status $status" );
 			}
@@ -266,22 +269,23 @@ class RecompressTracked {
 	}
 
 	/**
-	 * Dispatch a command to the next available slave.
-	 * This may block until a slave finishes its work and becomes available.
+	 * Dispatch a command to the next available replica DB.
+	 * This may block until a replica DB finishes its work and becomes available.
 	 */
-	function dispatch( /*...*/ ) {
-		$args = func_get_args();
-		$pipes = $this->slavePipes;
-		$numPipes = stream_select( $x = [], $pipes, $y = [], 3600 );
+	function dispatch( ...$args ) {
+		$pipes = $this->replicaPipes;
+		$x = [];
+		$y = [];
+		$numPipes = stream_select( $x, $pipes, $y, 3600 );
 		if ( !$numPipes ) {
-			$this->critical( "Error waiting to write to slaves. Aborting" );
+			$this->critical( "Error waiting to write to replica DBs. Aborting" );
 			exit( 1 );
 		}
 		for ( $i = 0; $i < $this->numProcs; $i++ ) {
-			$slaveId = ( $i + $this->prevSlaveId + 1 ) % $this->numProcs;
-			if ( isset( $pipes[$slaveId] ) ) {
-				$this->prevSlaveId = $slaveId;
-				$this->dispatchToSlave( $slaveId, $args );
+			$replicaId = ( $i + $this->prevReplicaId + 1 ) % $this->numProcs;
+			if ( isset( $pipes[$replicaId] ) ) {
+				$this->prevReplicaId = $replicaId;
+				$this->dispatchToReplica( $replicaId, $args );
 
 				return;
 			}
@@ -291,21 +295,21 @@ class RecompressTracked {
 	}
 
 	/**
-	 * Dispatch a command to a specified slave
-	 * @param int $slaveId
+	 * Dispatch a command to a specified replica DB
+	 * @param int $replicaId
 	 * @param array|string $args
 	 */
-	function dispatchToSlave( $slaveId, $args ) {
+	function dispatchToReplica( $replicaId, $args ) {
 		$args = (array)$args;
 		$cmd = implode( ' ', $args );
-		fwrite( $this->slavePipes[$slaveId], "$cmd\n" );
+		fwrite( $this->replicaPipes[$replicaId], "$cmd\n" );
 	}
 
 	/**
 	 * Move all tracked pages to the new clusters
 	 */
 	function doAllPages() {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$i = 0;
 		$startId = 0;
 		if ( $this->noCount ) {
@@ -366,7 +370,7 @@ class RecompressTracked {
 		if ( $current == $end || $this->numBatches >= $this->reportingInterval ) {
 			$this->numBatches = 0;
 			$this->info( "$label: $current / $end" );
-			wfWaitForSlaves();
+			MediaWikiServices::getInstance()->getDBLoadBalancerFactory()->waitForReplication();
 		}
 	}
 
@@ -374,7 +378,7 @@ class RecompressTracked {
 	 * Move all orphan text to the new clusters
 	 */
 	function doAllOrphans() {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$startId = 0;
 		$i = 0;
 		if ( $this->noCount ) {
@@ -425,12 +429,12 @@ class RecompressTracked {
 				$args = array_slice( $ids, 0, $this->orphanBatchSize );
 				$ids = array_slice( $ids, $this->orphanBatchSize );
 				array_unshift( $args, 'doOrphanList' );
-				call_user_func_array( [ $this, 'dispatch' ], $args );
+				$this->dispatch( ...$args );
 			}
 			if ( count( $ids ) ) {
 				$args = $ids;
 				array_unshift( $args, 'doOrphanList' );
-				call_user_func_array( [ $this, 'dispatch' ], $args );
+				$this->dispatch( ...$args );
 			}
 
 			$this->report( 'orphans', $i, $numOrphans );
@@ -464,7 +468,7 @@ class RecompressTracked {
 				case 'quit':
 					return;
 			}
-			wfWaitForSlaves();
+			MediaWikiServices::getInstance()->getDBLoadBalancerFactory()->waitForReplication();
 		}
 	}
 
@@ -480,7 +484,7 @@ class RecompressTracked {
 		} else {
 			$titleText = '[deleted]';
 		}
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 
 		// Finish any incomplete transactions
 		if ( !$this->copyOnly ) {
@@ -491,6 +495,7 @@ class RecompressTracked {
 		$startId = 0;
 		$trx = new CgzCopyTransaction( $this, $this->pageBlobClass );
 
+		$lbFactory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
 		while ( true ) {
 			$res = $dbr->select(
 				[ 'blob_tracking', 'text' ],
@@ -532,7 +537,7 @@ class RecompressTracked {
 					$this->debug( "$titleText: committing blob with " . $trx->getSize() . " items" );
 					$trx->commit();
 					$trx = new CgzCopyTransaction( $this, $this->pageBlobClass );
-					wfWaitForSlaves();
+					$lbFactory->waitForReplication();
 				}
 			}
 		}
@@ -590,7 +595,8 @@ class RecompressTracked {
 	 * @param array $conds
 	 */
 	function finishIncompleteMoves( $conds ) {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
+		$lbFactory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
 
 		$startId = 0;
 		$conds = array_merge( $conds, [
@@ -615,7 +621,7 @@ class RecompressTracked {
 				$startId = $row->bt_text_id;
 				$this->moveTextRow( $row->bt_text_id, $row->bt_new_url );
 				if ( $row->bt_text_id % 10 == 0 ) {
-					wfWaitForSlaves();
+					$lbFactory->waitForReplication();
 				}
 			}
 		}
@@ -637,10 +643,11 @@ class RecompressTracked {
 	/**
 	 * Gets a DB master connection for the given external cluster name
 	 * @param string $cluster
-	 * @return DatabaseBase
+	 * @return IDatabase
 	 */
 	function getExtDB( $cluster ) {
-		$lb = wfGetLBFactory()->getExternalLB( $cluster );
+		$lbFactory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
+		$lb = $lbFactory->getExternalLB( $cluster );
 
 		return $lb->getConnection( DB_MASTER );
 	}
@@ -659,7 +666,8 @@ class RecompressTracked {
 
 		$trx = new CgzCopyTransaction( $this, $this->orphanBlobClass );
 
-		$res = wfGetDB( DB_SLAVE )->select(
+		$lbFactory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
+		$res = wfGetDB( DB_REPLICA )->select(
 			[ 'text', 'blob_tracking' ],
 			[ 'old_id', 'old_text', 'old_flags' ],
 			[
@@ -682,7 +690,7 @@ class RecompressTracked {
 				$this->debug( "[orphan]: committing blob with " . $trx->getSize() . " rows" );
 				$trx->commit();
 				$trx = new CgzCopyTransaction( $this, $this->orphanBlobClass );
-				wfWaitForSlaves();
+				$lbFactory->waitForReplication();
 			}
 		}
 		$this->debug( "[orphan]: committing blob with " . $trx->getSize() . " rows" );
@@ -762,7 +770,7 @@ class CgzCopyTransaction {
 
 		/* Check to see if the target text_ids have been moved already.
 		 *
-		 * We originally read from the slave, so this can happen when a single
+		 * We originally read from the replica DB, so this can happen when a single
 		 * text_id is shared between multiple pages. It's rare, but possible
 		 * if a delete/move/undelete cycle splits up a null edit.
 		 *

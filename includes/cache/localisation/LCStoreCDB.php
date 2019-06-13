@@ -22,16 +22,14 @@ use Cdb\Reader;
 use Cdb\Writer;
 
 /**
- * LCStore implementation which stores data as a collection of CDB files in the
- * directory given by $wgCacheDirectory. If $wgCacheDirectory is not set, this
- * will throw an exception.
+ * LCStore implementation which stores data as a collection of CDB files.
  *
  * Profiling indicates that on Linux, this implementation outperforms MySQL if
  * the directory is on a local filesystem and there is ample kernel cache
  * space. The performance advantage is greater when the DBA extension is
  * available than it is with the PHP port.
  *
- * See Cdb.php and http://cr.yp.to/cdb.html
+ * See Cdb.php and https://cr.yp.to/cdb.html
  */
 class LCStoreCDB implements LCStore {
 
@@ -44,17 +42,11 @@ class LCStoreCDB implements LCStore {
 	/** @var string Current language code */
 	private $currentLang;
 
-	/** @var bool|string Cache directory. False if not set */
+	/** @var string Cache directory */
 	private $directory;
 
 	function __construct( $conf = [] ) {
-		global $wgCacheDirectory;
-
-		if ( isset( $conf['directory'] ) ) {
-			$this->directory = $conf['directory'];
-		} else {
-			$this->directory = $wgCacheDirectory;
-		}
+		$this->directory = $conf['directory'];
 	}
 
 	public function get( $code, $key ) {
@@ -90,11 +82,9 @@ class LCStoreCDB implements LCStore {
 	}
 
 	public function startWrite( $code ) {
-		if ( !file_exists( $this->directory ) ) {
-			if ( !wfMkdirParents( $this->directory, null, __METHOD__ ) ) {
-				throw new MWException( "Unable to create the localisation store " .
-					"directory \"{$this->directory}\"" );
-			}
+		if ( !file_exists( $this->directory ) && !wfMkdirParents( $this->directory, null, __METHOD__ ) ) {
+			throw new MWException( "Unable to create the localisation store " .
+				"directory \"{$this->directory}\"" );
 		}
 
 		// Close reader to stop permission errors on write

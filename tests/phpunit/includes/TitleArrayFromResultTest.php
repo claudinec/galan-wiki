@@ -4,10 +4,12 @@
  * @author Addshore
  * @covers TitleArrayFromResult
  */
-class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
+class TitleArrayFromResultTest extends PHPUnit\Framework\TestCase {
+
+	use MediaWikiCoversValidator;
 
 	private function getMockResultWrapper( $row = null, $numRows = 1 ) {
-		$resultWrapper = $this->getMockBuilder( 'ResultWrapper' )
+		$resultWrapper = $this->getMockBuilder( Wikimedia\Rdbms\ResultWrapper::class )
 			->disableOriginalConstructor();
 
 		$resultWrapper = $resultWrapper->getMock();
@@ -28,10 +30,6 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 		return $row;
 	}
 
-	private function getTitleArrayFromResult( $resultWrapper ) {
-		return new TitleArrayFromResult( $resultWrapper );
-	}
-
 	/**
 	 * @covers TitleArrayFromResult::__construct
 	 */
@@ -39,7 +37,7 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 		$row = false;
 		$resultWrapper = $this->getMockResultWrapper( $row );
 
-		$object = $this->getTitleArrayFromResult( $resultWrapper );
+		$object = new TitleArrayFromResult( $resultWrapper );
 
 		$this->assertEquals( $resultWrapper, $object->res );
 		$this->assertSame( 0, $object->key );
@@ -55,11 +53,11 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 		$row = $this->getRowWithTitle( $namespace, $title );
 		$resultWrapper = $this->getMockResultWrapper( $row );
 
-		$object = $this->getTitleArrayFromResult( $resultWrapper );
+		$object = new TitleArrayFromResult( $resultWrapper );
 
 		$this->assertEquals( $resultWrapper, $object->res );
 		$this->assertSame( 0, $object->key );
-		$this->assertInstanceOf( 'Title', $object->current );
+		$this->assertInstanceOf( Title::class, $object->current );
 		$this->assertEquals( $namespace, $object->current->mNamespace );
 		$this->assertEquals( $title, $object->current->mTextform );
 	}
@@ -77,7 +75,7 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 	 * @covers TitleArrayFromResult::count
 	 */
 	public function testCountWithVaryingValues( $numRows ) {
-		$object = $this->getTitleArrayFromResult( $this->getMockResultWrapper(
+		$object = new TitleArrayFromResult( $this->getMockResultWrapper(
 			$this->getRowWithTitle(),
 			$numRows
 		) );
@@ -91,8 +89,8 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 		$namespace = 0;
 		$title = 'foo';
 		$row = $this->getRowWithTitle( $namespace, $title );
-		$object = $this->getTitleArrayFromResult( $this->getMockResultWrapper( $row ) );
-		$this->assertInstanceOf( 'Title', $object->current() );
+		$object = new TitleArrayFromResult( $this->getMockResultWrapper( $row ) );
+		$this->assertInstanceOf( Title::class, $object->current() );
 		$this->assertEquals( $namespace, $object->current->mNamespace );
 		$this->assertEquals( $title, $object->current->mTextform );
 	}
@@ -109,7 +107,7 @@ class TitleArrayFromResultTest extends PHPUnit_Framework_TestCase {
 	 * @covers TitleArrayFromResult::valid
 	 */
 	public function testValid( $input, $expected ) {
-		$object = $this->getTitleArrayFromResult( $this->getMockResultWrapper( $input ) );
+		$object = new TitleArrayFromResult( $this->getMockResultWrapper( $input ) );
 		$this->assertEquals( $expected, $object->valid() );
 	}
 

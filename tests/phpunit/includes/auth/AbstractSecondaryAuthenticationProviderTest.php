@@ -4,18 +4,9 @@ namespace MediaWiki\Auth;
 
 /**
  * @group AuthManager
- * @covers MediaWiki\Auth\AbstractSecondaryAuthenticationProvider
+ * @covers \MediaWiki\Auth\AbstractSecondaryAuthenticationProvider
  */
 class AbstractSecondaryAuthenticationProviderTest extends \MediaWikiTestCase {
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
-
 	public function testAbstractSecondaryAuthenticationProvider() {
 		$user = \User::newFromName( 'UTSysop' );
 
@@ -64,7 +55,7 @@ class AbstractSecondaryAuthenticationProviderTest extends \MediaWikiTestCase {
 	public function testProviderRevokeAccessForUser() {
 		$reqs = [];
 		for ( $i = 0; $i < 3; $i++ ) {
-			$reqs[$i] = $this->getMock( AuthenticationRequest::class );
+			$reqs[$i] = $this->createMock( AuthenticationRequest::class );
 			$reqs[$i]->done = false;
 		}
 

@@ -50,7 +50,7 @@ $namespaceNames = [
 $namespaceAliases = [
 	'సభ్యులు' => NS_USER,
 	'సభ్యులపై_చర్చ' => NS_USER_TALK,
-	'సభ్యుడు' => NS_USER, # set for bug 11615
+	'సభ్యుడు' => NS_USER, # set for T13615
 	'సభ్యునిపై_చర్చ' => NS_USER_TALK,
 	'బొమ్మ' => NS_FILE,
 	'బొమ్మపై_చర్చ' => NS_FILE_TALK,
@@ -144,7 +144,6 @@ $magicWords = [
 	'special'                   => [ '0', 'ప్రత్యేక', 'special' ],
 ];
 
-$linkTrail = "/^([\xE0\xB0\x81-\xE0\xB1\xAF]+)(.*)$/sDu";
+$linkTrail = "/^([\u{0C01}-\u{0C6F}]+)(.*)$/sDu";
 
 $digitGroupingPattern = "##,##,###";
-

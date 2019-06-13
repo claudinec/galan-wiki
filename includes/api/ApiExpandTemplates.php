@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Oct 05, 2007
- *
  * Copyright © 2007 Yuri Astrakhan "<Firstname><Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +20,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * API module that functions as a shortcut to the wikitext preprocessor. Expands
  * any templates in a provided string, and returns the result of this expansion
@@ -34,54 +32,77 @@
 class ApiExpandTemplates extends ApiBase {
 
 	public function execute() {
-		// Cache may vary on $wgUser because ParserOptions gets data from it
+		// Cache may vary on the user because ParserOptions gets data from it
 		$this->getMain()->setCacheMode( 'anon-public-user-private' );
 
 		// Get parameters
 		$params = $this->extractRequestParams();
 		$this->requireMaxOneParameter( $params, 'prop', 'generatexml' );
 
+		$title = $params['title'];
+		if ( $title === null ) {
+			$titleProvided = false;
+			// A title is needed for parsing, so arbitrarily choose one
+			$title = 'API';
+		} else {
+			$titleProvided = true;
+		}
+
 		if ( $params['prop'] === null ) {
-			$this->logFeatureUsage( 'action=expandtemplates&!prop' );
-			$this->setWarning( 'Because no values have been specified for the prop parameter, a ' .
-				'legacy format has been used for the output. This format is deprecated, and in ' .
-				'the future, a default value will be set for the prop parameter, causing the new' .
-				'format to always be used.' );
+			$this->addDeprecation(
+				[ 'apiwarn-deprecation-missingparam', 'prop' ], 'action=expandtemplates&!prop'
+			);
 			$prop = [];
 		} else {
 			$prop = array_flip( $params['prop'] );
 		}
 
+		$titleObj = Title::newFromText( $title );
+		if ( !$titleObj || $titleObj->isExternal() ) {
+			$this->dieWithError( [ 'apierror-invalidtitle', wfEscapeWikiText( $params['title'] ) ] );
+		}
+
 		// Get title and revision ID for parser
 		$revid = $params['revid'];
 		if ( $revid !== null ) {
-			$rev = Revision::newFromId( $revid );
+			$rev = MediaWikiServices::getInstance()->getRevisionStore()->getRevisionById( $revid );
 			if ( !$rev ) {
-				$this->dieUsage( "There is no revision ID $revid", 'missingrev' );
+				$this->dieWithError( [ 'apierror-nosuchrevid', $revid ] );
 			}
-			$title_obj = $rev->getTitle();
-		} else {
-			$title_obj = Title::newFromText( $params['title'] );
-			if ( !$title_obj || $title_obj->isExternal() ) {
-				$this->dieUsageMsg( [ 'invalidtitle', $params['title'] ] );
+			$pTitleObj = $titleObj;
+			$titleObj = Title::newFromLinkTarget( $rev->getPageAsLinkTarget() );
+			if ( $titleProvided ) {
+				if ( !$titleObj->equals( $pTitleObj ) ) {
+					$this->addWarning( [ 'apierror-revwrongpage', $rev->getId(),
+						wfEscapeWikiText( $pTitleObj->getPrefixedText() ) ] );
+				}
+			} else {
+				// Consider the title derived from the revid as having
+				// been provided.
+				$titleProvided = true;
 			}
 		}
 
 		$result = $this->getResult();
 
 		// Parse text
-		global $wgParser;
 		$options = ParserOptions::newFromContext( $this->getContext() );
 
 		if ( $params['includecomments'] ) {
 			$options->setRemoveComments( false );
 		}
 
+		$reset = null;
+		$suppressCache = false;
+		Hooks::run( 'ApiMakeParserOptions',
+			[ $options, $titleObj, $params, $this, &$reset, &$suppressCache ] );
+
 		$retval = [];
 
+		$parser = MediaWikiServices::getInstance()->getParser();
 		if ( isset( $prop['parsetree'] ) || $params['generatexml'] ) {
-			$wgParser->startExternalParse( $title_obj, $options, Parser::OT_PREPROCESS );
-			$dom = $wgParser->preprocessToDom( $params['text'] );
+			$parser->startExternalParse( $titleObj, $options, Parser::OT_PREPROCESS );
+			$dom = $parser->preprocessToDom( $params['text'] );
 			if ( is_callable( [ $dom, 'saveXML' ] ) ) {
 				$xml = $dom->saveXML();
 			} else {
@@ -100,14 +121,14 @@ class ApiExpandTemplates extends ApiBase {
 		// if they didn't want any output except (probably) the parse tree,
 		// then don't bother actually fully expanding it
 		if ( $prop || $params['prop'] === null ) {
-			$wgParser->startExternalParse( $title_obj, $options, Parser::OT_PREPROCESS );
-			$frame = $wgParser->getPreprocessor()->newFrame();
-			$wikitext = $wgParser->preprocess( $params['text'], $title_obj, $options, $revid, $frame );
+			$parser->startExternalParse( $titleObj, $options, Parser::OT_PREPROCESS );
+			$frame = $parser->getPreprocessor()->newFrame();
+			$wikitext = $parser->preprocess( $params['text'], $titleObj, $options, $revid, $frame );
 			if ( $params['prop'] === null ) {
 				// the old way
 				ApiResult::setContentValue( $retval, 'wikitext', $wikitext );
 			} else {
-				$p_output = $wgParser->getOutput();
+				$p_output = $parser->getOutput();
 				if ( isset( $prop['categories'] ) ) {
 					$categories = $p_output->getCategories();
 					if ( $categories ) {
@@ -141,7 +162,8 @@ class ApiExpandTemplates extends ApiBase {
 				}
 				if ( isset( $prop['modules'] ) ) {
 					$retval['modules'] = array_values( array_unique( $p_output->getModules() ) );
-					$retval['modulescripts'] = array_values( array_unique( $p_output->getModuleScripts() ) );
+					// Deprecated since 1.32 (T188689)
+					$retval['modulescripts'] = [];
 					$retval['modulestyles'] = array_values( array_unique( $p_output->getModuleStyles() ) );
 				}
 				if ( isset( $prop['jsconfigvars'] ) ) {
@@ -156,9 +178,7 @@ class ApiExpandTemplates extends ApiBase {
 				}
 				if ( isset( $prop['modules'] ) &&
 					!isset( $prop['jsconfigvars'] ) && !isset( $prop['encodedjsconfigvars'] ) ) {
-					$this->setWarning( "Property 'modules' was set but not 'jsconfigvars' " .
-						"or 'encodedjsconfigvars'. Configuration variables are necessary " .
-						'for proper module usage.' );
+					$this->addWarning( 'apiwarn-moduleswithoutvars' );
 				}
 			}
 		}
@@ -168,9 +188,7 @@ class ApiExpandTemplates extends ApiBase {
 
 	public function getAllowedParams() {
 		return [
-			'title' => [
-				ApiBase::PARAM_DFLT => 'API',
-			],
+			'title' => null,
 			'text' => [
 				ApiBase::PARAM_TYPE => 'text',
 				ApiBase::PARAM_REQUIRED => true,
@@ -209,6 +227,6 @@ class ApiExpandTemplates extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Parsing_wikitext#expandtemplates';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Parsing_wikitext#expandtemplates';
 	}
 }

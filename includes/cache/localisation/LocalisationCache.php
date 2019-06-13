@@ -20,9 +20,8 @@
  * @file
  */
 
-use Cdb\Reader as CdbReader;
-use Cdb\Writer as CdbWriter;
 use CLDRPluralRuleParser\Evaluator;
+use CLDRPluralRuleParser\Error as CLDRPluralRuleError;
 use MediaWiki\MediaWikiServices;
 
 /**
@@ -107,57 +106,59 @@ class LocalisationCache {
 	/**
 	 * All item keys
 	 */
-	static public $allKeys = [
+	public static $allKeys = [
 		'fallback', 'namespaceNames', 'bookstoreList',
-		'magicWords', 'messages', 'rtl', 'capitalizeAllNouns', 'digitTransformTable',
-		'separatorTransformTable', 'fallback8bitEncoding', 'linkPrefixExtension',
-		'linkTrail', 'linkPrefixCharset', 'namespaceAliases',
-		'dateFormats', 'datePreferences', 'datePreferenceMigrationMap',
-		'defaultDateFormat', 'extraUserToggles', 'specialPageAliases',
-		'imageFiles', 'preloadedMessages', 'namespaceGenderAliases',
-		'digitGroupingPattern', 'pluralRules', 'pluralRuleTypes', 'compiledPluralRules',
+		'magicWords', 'messages', 'rtl', 'capitalizeAllNouns',
+		'digitTransformTable', 'separatorTransformTable',
+		'minimumGroupingDigits', 'fallback8bitEncoding',
+		'linkPrefixExtension', 'linkTrail', 'linkPrefixCharset',
+		'namespaceAliases', 'dateFormats', 'datePreferences',
+		'datePreferenceMigrationMap', 'defaultDateFormat',
+		'specialPageAliases', 'imageFiles', 'preloadedMessages',
+		'namespaceGenderAliases', 'digitGroupingPattern', 'pluralRules',
+		'pluralRuleTypes', 'compiledPluralRules',
 	];
 
 	/**
 	 * Keys for items which consist of associative arrays, which may be merged
 	 * by a fallback sequence.
 	 */
-	static public $mergeableMapKeys = [ 'messages', 'namespaceNames',
+	public static $mergeableMapKeys = [ 'messages', 'namespaceNames',
 		'namespaceAliases', 'dateFormats', 'imageFiles', 'preloadedMessages'
 	];
 
 	/**
 	 * Keys for items which are a numbered array.
 	 */
-	static public $mergeableListKeys = [ 'extraUserToggles' ];
+	public static $mergeableListKeys = [];
 
 	/**
 	 * Keys for items which contain an array of arrays of equivalent aliases
 	 * for each subitem. The aliases may be merged by a fallback sequence.
 	 */
-	static public $mergeableAliasListKeys = [ 'specialPageAliases' ];
+	public static $mergeableAliasListKeys = [ 'specialPageAliases' ];
 
 	/**
 	 * Keys for items which contain an associative array, and may be merged if
 	 * the primary value contains the special array key "inherit". That array
 	 * key is removed after the first merge.
 	 */
-	static public $optionalMergeKeys = [ 'bookstoreList' ];
+	public static $optionalMergeKeys = [ 'bookstoreList' ];
 
 	/**
 	 * Keys for items that are formatted like $magicWords
 	 */
-	static public $magicWordKeys = [ 'magicWords' ];
+	public static $magicWordKeys = [ 'magicWords' ];
 
 	/**
 	 * Keys for items where the subitems are stored in the backend separately.
 	 */
-	static public $splitKeys = [ 'messages' ];
+	public static $splitKeys = [ 'messages' ];
 
 	/**
 	 * Keys which are loaded automatically by initLanguage()
 	 */
-	static public $preloadedKeys = [ 'dateFormats', 'namespaceNames' ];
+	public static $preloadedKeys = [ 'dateFormats', 'namespaceNames' ];
 
 	/**
 	 * Associative array of cached plural rules. The key is the language code,
@@ -182,7 +183,6 @@ class LocalisationCache {
 	private $mergeableKeys = null;
 
 	/**
-	 * Constructor.
 	 * For constructor parameters, see the documentation in DefaultSettings.php
 	 * for $wgLocalisationCacheConf.
 	 *
@@ -193,46 +193,44 @@ class LocalisationCache {
 		global $wgCacheDirectory;
 
 		$this->conf = $conf;
-		$storeConf = [];
+
+		$directory = !empty( $conf['storeDirectory'] ) ? $conf['storeDirectory'] : $wgCacheDirectory;
+		$storeArg = [];
+		$storeArg['directory'] = $directory;
+
 		if ( !empty( $conf['storeClass'] ) ) {
 			$storeClass = $conf['storeClass'];
 		} else {
 			switch ( $conf['store'] ) {
 				case 'files':
 				case 'file':
-					$storeClass = 'LCStoreCDB';
+					$storeClass = LCStoreCDB::class;
 					break;
 				case 'db':
-					$storeClass = 'LCStoreDB';
+					$storeClass = LCStoreDB::class;
+					$storeArg['server'] = $conf['storeServer'] ?? [];
 					break;
 				case 'array':
-					$storeClass = 'LCStoreStaticArray';
+					$storeClass = LCStoreStaticArray::class;
 					break;
 				case 'detect':
-					if ( !empty( $conf['storeDirectory'] ) ) {
-						$storeClass = 'LCStoreCDB';
+					if ( $directory ) {
+						$storeClass = LCStoreCDB::class;
 					} else {
-						$cacheDir = $wgCacheDirectory ?: wfTempDir();
-						if ( $cacheDir ) {
-							$storeConf['directory'] = $cacheDir;
-							$storeClass = 'LCStoreCDB';
-						} else {
-							$storeClass = 'LCStoreDB';
-						}
+						$storeClass = LCStoreDB::class;
+						$storeArg['server'] = $conf['storeServer'] ?? [];
 					}
 					break;
 				default:
 					throw new MWException(
-						'Please set $wgLocalisationCacheConf[\'store\'] to something sensible.' );
+						'Please set $wgLocalisationCacheConf[\'store\'] to something sensible.'
+					);
 			}
 		}
 
-		wfDebugLog( 'caches', get_class( $this ) . ": using store $storeClass" );
-		if ( !empty( $conf['storeDirectory'] ) ) {
-			$storeConf['directory'] = $conf['storeDirectory'];
-		}
+		wfDebugLog( 'caches', static::class . ": using store $storeClass" );
 
-		$this->store = new $storeClass( $storeConf );
+		$this->store = new $storeClass( $storeArg );
 		foreach ( [ 'manualRecache', 'forceRecache' ] as $var ) {
 			if ( isset( $conf[$var] ) ) {
 				$this->$var = $conf[$var];
@@ -295,11 +293,7 @@ class LocalisationCache {
 			$this->loadSubitem( $code, $key, $subkey );
 		}
 
-		if ( isset( $this->data[$code][$key][$subkey] ) ) {
-			return $this->data[$code][$key][$subkey];
-		} else {
-			return null;
-		}
+		return $this->data[$code][$key][$subkey] ?? null;
 	}
 
 	/**
@@ -312,7 +306,7 @@ class LocalisationCache {
 	 * array.
 	 * @param string $code
 	 * @param string $key
-	 * @return bool|null|string
+	 * @return bool|null|string|string[]
 	 */
 	public function getSubitemList( $code, $key ) {
 		if ( in_array( $key, self::$splitKeys ) ) {
@@ -520,20 +514,29 @@ class LocalisationCache {
 	 */
 	protected function readPHPFile( $_fileName, $_fileType ) {
 		// Disable APC caching
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 		$_apcEnabled = ini_set( 'apc.cache_by_default', '0' );
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
 		include $_fileName;
 
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 		ini_set( 'apc.cache_by_default', $_apcEnabled );
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
+		$data = [];
 		if ( $_fileType == 'core' || $_fileType == 'extension' ) {
-			$data = compact( self::$allKeys );
+			foreach ( self::$allKeys as $key ) {
+				// Not all keys are set in language files, so
+				// check they exist first
+				if ( isset( $$key ) ) {
+					$data[$key] = $$key;
+				}
+			}
 		} elseif ( $_fileType == 'aliases' ) {
-			$data = compact( 'aliases' );
+			if ( isset( $aliases ) ) {
+				$data['aliases'] = $aliases;
+			}
 		} else {
 			throw new MWException( __METHOD__ . ": Invalid file type: $_fileType" );
 		}
@@ -548,7 +551,6 @@ class LocalisationCache {
 	 * @return array Array with a 'messages' key, or empty array if the file doesn't exist
 	 */
 	public function readJSONFile( $fileName ) {
-
 		if ( !is_readable( $fileName ) ) {
 			return [];
 		}
@@ -560,7 +562,6 @@ class LocalisationCache {
 
 		$data = FormatJson::decode( $json, true );
 		if ( $data === null ) {
-
 			throw new MWException( __METHOD__ . ": Invalid JSON file: $fileName" );
 		}
 
@@ -608,11 +609,7 @@ class LocalisationCache {
 		if ( $this->pluralRules === null ) {
 			$this->loadPluralFiles();
 		}
-		if ( !isset( $this->pluralRules[$code] ) ) {
-			return null;
-		} else {
-			return $this->pluralRules[$code];
-		}
+		return $this->pluralRules[$code] ?? null;
 	}
 
 	/**
@@ -626,11 +623,7 @@ class LocalisationCache {
 		if ( $this->pluralRuleTypes === null ) {
 			$this->loadPluralFiles();
 		}
-		if ( !isset( $this->pluralRuleTypes[$code] ) ) {
-			return null;
-		} else {
-			return $this->pluralRuleTypes[$code];
-		}
+		return $this->pluralRuleTypes[$code] ?? null;
 	}
 
 	/**
@@ -691,7 +684,7 @@ class LocalisationCache {
 	 * exists, the data array is returned, otherwise false is returned.
 	 *
 	 * @param string $code
-	 * @param array $deps
+	 * @param array &$deps
 	 * @return array
 	 */
 	protected function readSourceFilesAndRegisterDeps( $code, &$deps ) {
@@ -723,7 +716,7 @@ class LocalisationCache {
 	 * Merge two localisation values, a primary and a fallback, overwriting the
 	 * primary value in place.
 	 * @param string $key
-	 * @param mixed $value
+	 * @param mixed &$value
 	 * @param mixed $fallbackValue
 	 */
 	protected function mergeItem( $key, &$value, $fallbackValue ) {
@@ -753,7 +746,7 @@ class LocalisationCache {
 	}
 
 	/**
-	 * @param mixed $value
+	 * @param mixed &$value
 	 * @param mixed $fallbackValue
 	 */
 	protected function mergeMagicWords( &$value, $fallbackValue ) {
@@ -779,7 +772,7 @@ class LocalisationCache {
 	 * otherwise.
 	 * @param array $codeSequence
 	 * @param string $key
-	 * @param mixed $value
+	 * @param mixed &$value
 	 * @param mixed $fallbackValue
 	 * @return bool
 	 */
@@ -809,8 +802,9 @@ class LocalisationCache {
 		$messagesDirs = $config->get( 'MessagesDirs' );
 		return [
 			'core' => "$IP/languages/i18n",
+			'exif' => "$IP/languages/i18n/exif",
 			'api' => "$IP/includes/api/i18n",
-			'oojs-ui' => "$IP/resources/lib/oojs-ui/i18n",
+			'oojs-ui' => "$IP/resources/lib/ooui/i18n",
 		] + $messagesDirs;
 	}
 
@@ -848,17 +842,23 @@ class LocalisationCache {
 		}
 
 		# Fill in the fallback if it's not there already
-		if ( is_null( $coreData['fallback'] ) ) {
-			$coreData['fallback'] = $code === 'en' ? false : 'en';
-		}
-		if ( $coreData['fallback'] === false ) {
-			$coreData['fallbackSequence'] = [];
+		if ( ( is_null( $coreData['fallback'] ) || $coreData['fallback'] === false ) && $code === 'en' ) {
+			$coreData['fallback'] = false;
+			$coreData['originalFallbackSequence'] = $coreData['fallbackSequence'] = [];
 		} else {
-			$coreData['fallbackSequence'] = array_map( 'trim', explode( ',', $coreData['fallback'] ) );
+			if ( !is_null( $coreData['fallback'] ) ) {
+				$coreData['fallbackSequence'] = array_map( 'trim', explode( ',', $coreData['fallback'] ) );
+			} else {
+				$coreData['fallbackSequence'] = [];
+			}
 			$len = count( $coreData['fallbackSequence'] );
 
-			# Ensure that the sequence ends at en
-			if ( $coreData['fallbackSequence'][$len - 1] !== 'en' ) {
+			# Before we add the 'en' fallback for messages, keep a copy of
+			# the original fallback sequence
+			$coreData['originalFallbackSequence'] = $coreData['fallbackSequence'];
+
+			# Ensure that the sequence ends at 'en' for messages
+			if ( !$len || $coreData['fallbackSequence'][$len - 1] !== 'en' ) {
 				$coreData['fallbackSequence'][] = 'en';
 			}
 		}
@@ -1032,10 +1032,9 @@ class LocalisationCache {
 		# HACK: If using a null (i.e. disabled) storage backend, we
 		# can't write to the MessageBlobStore either
 		if ( $purgeBlobs && !$this->store instanceof LCStoreNull ) {
-			$blobStore = new MessageBlobStore();
+			$blobStore = MediaWikiServices::getInstance()->getResourceLoader()->getMessageBlobStore();
 			$blobStore->clear();
 		}
-
 	}
 
 	/**
@@ -1053,11 +1052,7 @@ class LocalisationCache {
 		}
 
 		foreach ( $data['preloadedMessages'] as $subkey ) {
-			if ( isset( $data['messages'][$subkey] ) ) {
-				$subitem = $data['messages'][$subkey];
-			} else {
-				$subitem = null;
-			}
+			$subitem = $data['messages'][$subkey] ?? null;
 			$preload['messages'][$subkey] = $subitem;
 		}
 

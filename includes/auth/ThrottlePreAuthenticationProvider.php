@@ -58,20 +58,25 @@ class ThrottlePreAuthenticationProvider extends AbstractPreAuthenticationProvide
 	public function __construct( $params = [] ) {
 		$this->throttleSettings = array_intersect_key( $params,
 			[ 'accountCreationThrottle' => true, 'passwordAttemptThrottle' => true ] );
-		$this->cache = isset( $params['cache'] ) ? $params['cache'] :
-			\ObjectCache::getLocalClusterInstance();
+		$this->cache = $params['cache'] ?? \ObjectCache::getLocalClusterInstance();
 	}
 
 	public function setConfig( Config $config ) {
 		parent::setConfig( $config );
 
+		$accountCreationThrottle = $this->config->get( 'AccountCreationThrottle' );
+		// Handle old $wgAccountCreationThrottle format (number of attempts per 24 hours)
+		if ( !is_array( $accountCreationThrottle ) ) {
+			$accountCreationThrottle = [ [
+				'count' => $accountCreationThrottle,
+				'seconds' => 86400,
+			] ];
+		}
+
 		// @codeCoverageIgnoreStart
 		$this->throttleSettings += [
 		// @codeCoverageIgnoreEnd
-			'accountCreationThrottle' => [ [
-				'count' => $this->config->get( 'AccountCreationThrottle' ),
-				'seconds' => 86400,
-			] ],
+			'accountCreationThrottle' => $accountCreationThrottle,
 			'passwordAttemptThrottle' => $this->config->get( 'PasswordAttemptThrottle' ),
 		];
 
@@ -107,7 +112,9 @@ class ThrottlePreAuthenticationProvider extends AbstractPreAuthenticationProvide
 
 		$result = $this->accountCreationThrottle->increase( null, $ip, __METHOD__ );
 		if ( $result ) {
-			return \StatusValue::newFatal( 'acct_creation_throttle_hit', $result['count'] );
+			$message = wfMessage( 'acct_creation_throttle_hit' )->params( $result['count'] )
+				->durationParams( $result['wait'] );
+			return \StatusValue::newFatal( $message );
 		}
 
 		return \StatusValue::newGood();
@@ -159,7 +166,9 @@ class ThrottlePreAuthenticationProvider extends AbstractPreAuthenticationProvide
 
 		$data = $this->manager->getAuthenticationSessionData( 'LoginThrottle' );
 		if ( !$data ) {
-			$this->logger->error( 'throttler data not found for {user}', [ 'user' => $user->getName() ] );
+			// this can occur when login is happening via AuthenticationRequest::$loginRequest
+			// so testForAuthentication is skipped
+			$this->logger->info( 'throttler data not found for {user}', [ 'user' => $user->getName() ] );
 			return;
 		}
 

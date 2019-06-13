@@ -19,6 +19,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Generates a colourful notification intended for humans on IRC.
  *
@@ -28,6 +30,10 @@
 class IRCColourfulRCFeedFormatter implements RCFeedFormatter {
 	/**
 	 * @see RCFeedFormatter::getLine
+	 * @param array $feed
+	 * @param RecentChange $rc
+	 * @param string|null $actionComment
+	 * @return string|null
 	 */
 	public function getLine( array $feed, RecentChange $rc, $actionComment ) {
 		global $wgUseRCPatrol, $wgUseNPPatrol, $wgLocalInterwikis,
@@ -89,7 +95,10 @@ class IRCColourfulRCFeedFormatter implements RCFeedFormatter {
 			) );
 			$flag = $attribs['rc_log_action'];
 		} else {
-			$comment = self::cleanupForIRC( $attribs['rc_comment'] );
+			$store = MediaWikiServices::getInstance()->getCommentStore();
+			$comment = self::cleanupForIRC(
+				$store->getComment( 'rc_comment', $attribs )->text
+			);
 			$flag = '';
 			if ( !$attribs['rc_patrolled']
 				&& ( $wgUseRCPatrol || $attribs['rc_type'] == RC_NEW && $wgUseNPPatrol )

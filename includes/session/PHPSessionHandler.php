@@ -37,6 +37,8 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 
 	/** @var bool Whether PHP session handling is enabled */
 	protected $enable = false;
+
+	/** @var bool */
 	protected $warn = true;
 
 	/** @var SessionManager|null */
@@ -122,22 +124,28 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 		// Close any auto-started session, before we replace it
 		session_write_close();
 
-		// Tell PHP not to mess with cookies itself
-		ini_set( 'session.use_cookies', 0 );
-		ini_set( 'session.use_trans_sid', 0 );
+		try {
+			\Wikimedia\suppressWarnings();
 
-		// T124510: Disable automatic PHP session related cache headers.
-		// MediaWiki adds it's own headers and the default PHP behavior may
-		// set headers such as 'Pragma: no-cache' that cause problems with
-		// some user agents.
-		session_cache_limiter( '' );
+			// Tell PHP not to mess with cookies itself
+			ini_set( 'session.use_cookies', 0 );
+			ini_set( 'session.use_trans_sid', 0 );
 
-		// Also set a sane serialization handler
-		\Wikimedia\PhpSessionSerializer::setSerializeHandler();
+			// T124510: Disable automatic PHP session related cache headers.
+			// MediaWiki adds it's own headers and the default PHP behavior may
+			// set headers such as 'Pragma: no-cache' that cause problems with
+			// some user agents.
+			session_cache_limiter( '' );
 
-		// Register this as the save handler, and register an appropriate
-		// shutdown function.
-		session_set_save_handler( self::$instance, true );
+			// Also set a sane serialization handler
+			\Wikimedia\PhpSessionSerializer::setSerializeHandler();
+
+			// Register this as the save handler, and register an appropriate
+			// shutdown function.
+			session_set_save_handler( self::$instance, true );
+		} finally {
+			\Wikimedia\restoreWarnings();
+		}
 	}
 
 	/**
@@ -145,7 +153,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	 * @private Use self::install().
 	 * @param SessionManager $manager
 	 * @param BagOStuff $store
-	 * @param LoggerInterface $store
+	 * @param LoggerInterface $logger
 	 */
 	public function setManager(
 		SessionManager $manager, BagOStuff $store, LoggerInterface $logger
@@ -167,7 +175,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	 * @private For internal use only
 	 * @param string $save_path Path used to store session files (ignored)
 	 * @param string $session_name Session name (ignored)
-	 * @return bool Success
+	 * @return true
 	 */
 	public function open( $save_path, $session_name ) {
 		if ( self::$instance !== $this ) {
@@ -182,7 +190,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	/**
 	 * Close the session (handler)
 	 * @private For internal use only
-	 * @return bool Success
+	 * @return true
 	 */
 	public function close() {
 		if ( self::$instance !== $this ) {
@@ -224,7 +232,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	 * @param string $dataStr Session data. Not that you should ever call this
 	 *   directly, but note that this has the same issues with code injection
 	 *   via user-controlled data as does PHP's unserialize function.
-	 * @return bool Success
+	 * @return bool
 	 */
 	public function write( $id, $dataStr ) {
 		if ( self::$instance !== $this ) {
@@ -256,7 +264,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 
 		// Now merge the data into the Session object.
 		$changed = false;
-		$cache = isset( $this->sessionFieldCache[$id] ) ? $this->sessionFieldCache[$id] : [];
+		$cache = $this->sessionFieldCache[$id] ?? [];
 		foreach ( $data as $key => $value ) {
 			if ( !array_key_exists( $key, $cache ) ) {
 				if ( $session->exists( $key ) ) {
@@ -330,7 +338,7 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	 * Destroy a session
 	 * @private For internal use only
 	 * @param string $id Session id
-	 * @return bool Success
+	 * @return true
 	 */
 	public function destroy( $id ) {
 		if ( self::$instance !== $this ) {
@@ -350,7 +358,8 @@ class PHPSessionHandler implements \SessionHandlerInterface {
 	 * Execute garbage collection.
 	 * @private For internal use only
 	 * @param int $maxlifetime Maximum session life time (ignored)
-	 * @return bool Success
+	 * @return true
+	 * @codeCoverageIgnore See T135576
 	 */
 	public function gc( $maxlifetime ) {
 		if ( self::$instance !== $this ) {

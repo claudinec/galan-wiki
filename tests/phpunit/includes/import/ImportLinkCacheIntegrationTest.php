@@ -1,10 +1,15 @@
 <?php
+
+use MediaWiki\MediaWikiServices;
+
 /**
  * Integration test that checks import success and
  * LinkCache integration.
  *
- * @group medium
+ * @group large
  * @group Database
+ * @covers ImportStreamSource
+ * @covers ImportReporter
  *
  * @author mwjames
  */
@@ -25,7 +30,6 @@ class ImportLinkCacheIntegrationTest extends MediaWikiTestCase {
 	}
 
 	public function testImportForImportSource() {
-
 		$this->doImport( $this->importStreamSource );
 
 		// Imported title
@@ -54,7 +58,6 @@ class ImportLinkCacheIntegrationTest extends MediaWikiTestCase {
 	 * @depends testImportForImportSource
 	 */
 	public function testReImportForImportSource() {
-
 		$this->doImport( $this->importStreamSource );
 
 		// ReImported title
@@ -74,10 +77,9 @@ class ImportLinkCacheIntegrationTest extends MediaWikiTestCase {
 	}
 
 	private function doImport( $importStreamSource ) {
-
 		$importer = new WikiImporter(
 			$importStreamSource->value,
-			ConfigFactory::getDefaultInstance()->makeConfig( 'main' )
+			MediaWikiServices::getInstance()->getMainConfig()
 		);
 		$importer->setDebug( true );
 
@@ -90,19 +92,10 @@ class ImportLinkCacheIntegrationTest extends MediaWikiTestCase {
 
 		$reporter->setContext( new RequestContext() );
 		$reporter->open();
-		$exception = false;
 
-		try {
-			$importer->doImport();
-		} catch ( Exception $e ) {
-			$exception = $e;
-		}
+		$importer->doImport();
 
 		$result = $reporter->close();
-
-		$this->assertFalse(
-			$exception
-		);
 
 		$this->assertTrue(
 			$result->isGood()

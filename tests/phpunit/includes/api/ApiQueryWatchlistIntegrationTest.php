@@ -2,11 +2,12 @@
 
 use MediaWiki\Linker\LinkTarget;
 use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\SlotRecord;
 
 /**
+ * @group medium
  * @group API
  * @group Database
- * @group medium
  *
  * @covers ApiQueryWatchlist
  */
@@ -23,7 +24,6 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		parent::setUp();
 		self::$users['ApiQueryWatchlistIntegrationTestUser'] = $this->getMutableTestUser();
 		self::$users['ApiQueryWatchlistIntegrationTestUser2'] = $this->getMutableTestUser();
-		$this->doLogin( 'ApiQueryWatchlistIntegrationTestUser' );
 	}
 
 	private function getLoggedInTestUser() {
@@ -90,17 +90,14 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		User $patrollingUser
 	) {
 		$title = Title::newFromLinkTarget( $target );
+		$summary = CommentStoreComment::newUnsavedComment( trim( $summary ) );
 		$page = WikiPage::factory( $title );
-		$status = $page->doEditContent(
-			ContentHandler::makeContent( $content, $title ),
-			$summary,
-			0,
-			false,
-			$user
-		);
-		/** @var Revision $rev */
-		$rev = $status->value['revision'];
-		$rc = $rev->getRecentChange();
+
+		$updater = $page->newPageUpdater( $user );
+		$updater->setContent( SlotRecord::MAIN, ContentHandler::makeContent( $content, $title ) );
+		$rev = $updater->saveRevision( $summary );
+
+		$rc = MediaWikiServices::getInstance()->getRevisionStore()->getRecentChange( $rev );
 		$rc->doMarkPatrolled( $patrollingUser, false, [] );
 	}
 
@@ -163,6 +160,9 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 	}
 
 	private function doListWatchlistRequest( array $params = [], $user = null ) {
+		if ( $user === null ) {
+			$user = $this->getLoggedInTestUser();
+		}
 		return $this->doApiRequest(
 			array_merge(
 				[ 'action' => 'query', 'list' => 'watchlist' ],
@@ -176,7 +176,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 			array_merge(
 				[ 'action' => 'query', 'generator' => 'watchlist' ],
 				$params
-			)
+			), null, false, $this->getLoggedInTestUser()
 		);
 	}
 
@@ -210,7 +210,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 
 		// not checking values of all keys of the actual item, so removing unwanted keys from comparison
 		$actualItemsOnlyComparedValues = array_map(
-			function( array $item ) use ( $keysUsedInValueComparison ) {
+			function ( array $item ) use ( $keysUsedInValueComparison ) {
 				return array_intersect_key( $item, array_flip( $keysUsedInValueComparison ) );
 			},
 			$actualItems
@@ -228,13 +228,8 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		}
 	}
 
-	private function getTitleFormatter() {
-		return new MediaWikiTitleCodec( Language::factory( 'en' ), GenderCache::singleton() );
-	}
-
 	private function getPrefixedText( LinkTarget $target ) {
-		$formatter = $this->getTitleFormatter();
-		return $formatter->getPrefixedText( $target );
+		return MediaWikiServices::getInstance()->getTitleFormatter()->getPrefixedText( $target );
 	}
 
 	private function cleanTestUsersWatchlist() {
@@ -626,6 +621,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 					'type' => 'new',
 					'patrolled' => true,
 					'unpatrolled' => false,
+					'autopatrolled' => false,
 				]
 			],
 			$this->getItemsFromApiResponse( $result )
@@ -818,8 +814,13 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		);
 		$this->watchPages( $user, [ $target ] );
 
-		$resultMinor = $this->doListWatchlistRequest( [ 'wlshow' => 'minor', 'wlprop' => 'flags' ] );
-		$resultNotMinor = $this->doListWatchlistRequest( [ 'wlshow' => '!minor', 'wlprop' => 'flags' ] );
+		$resultMinor = $this->doListWatchlistRequest( [
+			'wlshow' => WatchedItemQueryService::FILTER_MINOR,
+			'wlprop' => 'flags'
+		] );
+		$resultNotMinor = $this->doListWatchlistRequest( [
+			'wlshow' => WatchedItemQueryService::FILTER_NOT_MINOR, 'wlprop' => 'flags'
+		] );
 
 		$this->assertArraySubsetsEqual(
 			$this->getItemsFromApiResponse( $resultMinor ),
@@ -842,8 +843,12 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		);
 		$this->watchPages( $user, [ $target ] );
 
-		$resultBot = $this->doListWatchlistRequest( [ 'wlshow' => 'bot' ] );
-		$resultNotBot = $this->doListWatchlistRequest( [ 'wlshow' => '!bot' ] );
+		$resultBot = $this->doListWatchlistRequest( [
+			'wlshow' => WatchedItemQueryService::FILTER_BOT
+		] );
+		$resultNotBot = $this->doListWatchlistRequest( [
+			'wlshow' => WatchedItemQueryService::FILTER_NOT_BOT
+		] );
 
 		$this->assertArraySubsetsEqual(
 			$this->getItemsFromApiResponse( $resultBot ),
@@ -867,11 +872,11 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 
 		$resultAnon = $this->doListWatchlistRequest( [
 			'wlprop' => 'user',
-			'wlshow' => 'anon'
+			'wlshow' => WatchedItemQueryService::FILTER_ANON
 		] );
 		$resultNotAnon = $this->doListWatchlistRequest( [
 			'wlprop' => 'user',
-			'wlshow' => '!anon'
+			'wlshow' => WatchedItemQueryService::FILTER_NOT_ANON
 		] );
 
 		$this->assertArraySubsetsEqual(
@@ -911,11 +916,11 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 
 		$resultUnread = $this->doListWatchlistRequest( [
 			'wlprop' => 'notificationtimestamp|title',
-			'wlshow' => 'unread'
+			'wlshow' => WatchedItemQueryService::FILTER_UNREAD
 		] );
 		$resultNotUnread = $this->doListWatchlistRequest( [
 			'wlprop' => 'notificationtimestamp|title',
-			'wlshow' => '!unread'
+			'wlshow' => WatchedItemQueryService::FILTER_NOT_UNREAD
 		] );
 
 		$this->assertEquals(
@@ -948,11 +953,11 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 
 		$resultPatrolled = $this->doListWatchlistRequest( [
 			'wlprop' => 'patrol',
-			'wlshow' => 'patrolled'
+			'wlshow' => WatchedItemQueryService::FILTER_PATROLLED
 		], $user );
 		$resultNotPatrolled = $this->doListWatchlistRequest( [
 			'wlprop' => 'patrol',
-			'wlshow' => '!patrolled'
+			'wlshow' => WatchedItemQueryService::FILTER_NOT_PATROLLED
 		], $user );
 
 		$this->assertEquals(
@@ -961,6 +966,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 					'type' => 'new',
 					'patrolled' => true,
 					'unpatrolled' => false,
+					'autopatrolled' => false,
 				]
 			],
 			$this->getItemsFromApiResponse( $resultPatrolled )
@@ -1060,8 +1066,10 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 			'rc_minor' => 0,
 			'rc_cur_id' => $title->getArticleID(),
 			'rc_user' => 0,
-			'rc_user_text' => 'External User',
+			'rc_user_text' => 'ext>External User',
 			'rc_comment' => '',
+			'rc_comment_text' => '',
+			'rc_comment_data' => null,
 			'rc_this_oldid' => $title->getLatestRevID(),
 			'rc_last_oldid' => $title->getLatestRevID(),
 			'rc_bot' => 0,
@@ -1463,6 +1471,9 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 
 		$this->watchPages( $otherUser, [ $target ] );
 
+		$reloadedUser = User::newFromName( $otherUser->getName() );
+		$this->assertEquals( '1234567890', $reloadedUser->getOption( 'watchlisttoken' ) );
+
 		$result = $this->doListWatchlistRequest( [
 			'wlowner' => $otherUser->getName(),
 			'wltoken' => '1234567890',
@@ -1486,7 +1497,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 		$otherUser->setOption( 'watchlisttoken', '1234567890' );
 		$otherUser->saveSettings();
 
-		$this->setExpectedException( UsageException::class, 'Incorrect watchlist token provided' );
+		$this->setExpectedException( ApiUsageException::class, 'Incorrect watchlist token provided' );
 
 		$this->doListWatchlistRequest( [
 			'wlowner' => $otherUser->getName(),
@@ -1495,7 +1506,7 @@ class ApiQueryWatchlistIntegrationTest extends ApiTestCase {
 	}
 
 	public function testOwnerAndTokenParams_noWatchlistTokenSet() {
-		$this->setExpectedException( UsageException::class, 'Incorrect watchlist token provided' );
+		$this->setExpectedException( ApiUsageException::class, 'Incorrect watchlist token provided' );
 
 		$this->doListWatchlistRequest( [
 			'wlowner' => $this->getNonLoggedInTestUser()->getName(),

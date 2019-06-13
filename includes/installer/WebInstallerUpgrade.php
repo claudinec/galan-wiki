@@ -39,14 +39,13 @@ class WebInstallerUpgrade extends WebInstallerPage {
 			if ( $this->parent->request->wasPosted() && !$this->getVar( '_ExistingDBSettings' ) ) {
 				// Done message acknowledged
 				return 'continue';
-			} else {
-				// Back button click
-				// Show the done message again
-				// Make them click back again if they want to do the upgrade again
-				$this->showDoneMessage();
-
-				return 'output';
 			}
+			// Back button click
+			// Show the done message again
+			// Make them click back again if they want to do the upgrade again
+			$this->showDoneMessage();
+
+			return 'output';
 		}
 
 		// wgDBtype is generally valid here because otherwise the previous page
@@ -67,15 +66,19 @@ class WebInstallerUpgrade extends WebInstallerPage {
 
 			if ( $result ) {
 				// If they're going to possibly regenerate LocalSettings, we
-				// need to create the upgrade/secret keys. Bug 26481
+				// need to create the upgrade/secret keys. T28481
 				if ( !$this->getVar( '_ExistingDBSettings' ) ) {
 					$this->parent->generateKeys();
 				}
 				$this->setVar( '_UpgradeDone', true );
 				$this->showDoneMessage();
-
-				return 'output';
+			} else {
+				$this->startForm();
+				$this->parent->showError( 'config-upgrade-error' );
+				$this->endForm();
 			}
+
+			return 'output';
 		}
 
 		$this->startForm();

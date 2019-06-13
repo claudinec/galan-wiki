@@ -1,23 +1,5 @@
 <?php
 /**
- * APC-backed function memoization
- *
- * This class provides memoization for pure functions. A function is pure
- * if its result value depends on nothing other than its input parameters
- * and if invoking it does not cause any side-effects.
- *
- * The first invocation of the memoized callable with a particular set of
- * arguments will be delegated to the underlying callable. Repeat invocations
- * with the same input parameters will be served from APC.
- *
- * @par Example:
- * @code
- * $memoizedStrrev = new MemoizedCallable( 'range' );
- * $memoizedStrrev->invoke( 5, 8 );  // result: array( 5, 6, 7, 8 )
- * $memoizedStrrev->invokeArgs( array( 5, 8 ) );  // same
- * MemoizedCallable::call( 'range', array( 5, 8 ) );  // same
- * @endcode
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -35,6 +17,27 @@
  *
  * @file
  * @author Ori Livneh
+ */
+
+/**
+ * APC-backed and APCu-backed function memoization
+ *
+ * This class provides memoization for pure functions. A function is pure
+ * if its result value depends on nothing other than its input parameters
+ * and if invoking it does not cause any side-effects.
+ *
+ * The first invocation of the memoized callable with a particular set of
+ * arguments will be delegated to the underlying callable. Repeat invocations
+ * with the same input parameters will be served from APC or APCu.
+ *
+ * @par Example:
+ * @code
+ * $memoizedStrrev = new MemoizedCallable( 'range' );
+ * $memoizedStrrev->invoke( 5, 8 );  // result: array( 5, 6, 7, 8 )
+ * $memoizedStrrev->invokeArgs( array( 5, 8 ) );  // same
+ * MemoizedCallable::call( 'range', array( 5, 8 ) );  // same
+ * @endcode
+ *
  * @since 1.27
  */
 class MemoizedCallable {
@@ -46,8 +49,6 @@ class MemoizedCallable {
 	private $callableName;
 
 	/**
-	 * Constructor.
-	 *
 	 * @throws InvalidArgumentException if $callable is not a callable.
 	 * @param callable $callable Function or method to memoize.
 	 * @param int $ttl TTL in seconds. Defaults to 3600 (1hr). Capped at 86400 (24h).
@@ -70,21 +71,24 @@ class MemoizedCallable {
 	}
 
 	/**
-	 * Fetch the result of a previous invocation from APC.
+	 * Fetch the result of a previous invocation from APC or APCu.
 	 *
 	 * @param string $key
 	 * @param bool &$success
+	 * @return bool
 	 */
 	protected function fetchResult( $key, &$success ) {
 		$success = false;
 		if ( function_exists( 'apc_fetch' ) ) {
 			return apc_fetch( $key, $success );
+		} elseif ( function_exists( 'apcu_fetch' ) ) {
+			return apcu_fetch( $key, $success );
 		}
 		return false;
 	}
 
 	/**
-	 * Store the result of an invocation in APC.
+	 * Store the result of an invocation in APC or APCu.
 	 *
 	 * @param string $key
 	 * @param mixed $result
@@ -92,6 +96,8 @@ class MemoizedCallable {
 	protected function storeResult( $key, $result ) {
 		if ( function_exists( 'apc_store' ) ) {
 			apc_store( $key, $result, $this->ttl );
+		} elseif ( function_exists( 'apcu_store' ) ) {
+			apcu_store( $key, $result, $this->ttl );
 		}
 	}
 
@@ -117,7 +123,7 @@ class MemoizedCallable {
 		$success = false;
 		$result = $this->fetchResult( $key, $success );
 		if ( !$success ) {
-			$result = call_user_func_array( $this->callable, $args );
+			$result = ( $this->callable )( ...$args );
 			$this->storeResult( $key, $result );
 		}
 
@@ -132,8 +138,8 @@ class MemoizedCallable {
 	 * @param mixed ...$params Parameters for memoized function or method.
 	 * @return mixed The memoized callable's return value.
 	 */
-	public function invoke() {
-		return $this->invokeArgs( func_get_args() );
+	public function invoke( ...$params ) {
+		return $this->invokeArgs( $params );
 	}
 
 	/**
@@ -143,6 +149,7 @@ class MemoizedCallable {
 	 * @param callable $callable
 	 * @param array $args
 	 * @param int $ttl
+	 * @return mixed
 	 */
 	public static function call( $callable, array $args = [], $ttl = 3600 ) {
 		$instance = new self( $callable, $ttl );

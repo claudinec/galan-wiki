@@ -22,6 +22,7 @@
  * @author Pitr2311
  * @author Ragimiri
  * @author Reedy
+ * @author Robertvazan
  * @author Rudko
  * @author Sp5uhe
  * @author Sudo77(new)
@@ -30,27 +31,39 @@
  * @author Urhixidur
  * @author Valasek
  * @author Wizzard
+ * @author Zoranzoki21
  * @author לערי ריינהארט
  */
+
+$fallback = 'cs';
 
 $specialPageAliases = [
 	'Activeusers'               => [ 'AktívniPoužívatelia' ],
 	'Allmessages'               => [ 'VšetkySprávy' ],
 	'Allpages'                  => [ 'VšetkyStránky' ],
 	'Ancientpages'              => [ 'StaréStránky' ],
+	'ApiSandbox'                => [ 'APIPieskovisko' ],
+	'AutoblockList'             => [ 'AutomatickéBlokovania' ],
 	'Blankpage'                 => [ 'PrázdnaStránka' ],
 	'Block'                     => [ 'Blokovanie' ],
 	'Booksources'               => [ 'KnižnéZdroje' ],
+	'BotPasswords'              => [ 'HesláPreBotov' ],
 	'BrokenRedirects'           => [ 'PokazenéPresmerovania' ],
 	'Categories'                => [ 'Kategórie' ],
+	'ChangeCredentials'         => [ 'ZmenaPrihlasovacíchÚdajov' ],
+	'ChangeEmail'               => [ 'ZmenaEmailu' ],
 	'ChangePassword'            => [ 'ZmenaHesla' ],
+	'ComparePages'              => [ 'PorovnaťStránky' ],
 	'Confirmemail'              => [ 'PotvrdiťEmail' ],
 	'Contributions'             => [ 'Príspevky' ],
 	'CreateAccount'             => [ 'VytvorenieÚčtu' ],
 	'Deadendpages'              => [ 'StránkyBezOdkazov' ],
 	'DeletedContributions'      => [ 'ZmazanéPríspevky' ],
+	'Diff'                      => [ 'Rozdiel' ],
 	'DoubleRedirects'           => [ 'DvojitéPresmerovania' ],
 	'Emailuser'                 => [ 'EmailPoužívateľovi' ],
+	'ExpandTemplates'           => [ 'SubstituovaťŠablóny' ],
+	'Export'                    => [ 'ExportovaťStránky' ],
 	'Fewestrevisions'           => [ 'NajmenejRevízií' ],
 	'FileDuplicateSearch'       => [ 'HľadanieDuplicitnýchSúborov' ],
 	'Filepath'                  => [ 'CestaKSúboru' ],
@@ -59,7 +72,9 @@ $specialPageAliases = [
 	'LinkSearch'                => [ 'HľadanieOdkazov' ],
 	'Listadmins'                => [ 'ZoznamSprávcov' ],
 	'Listbots'                  => [ 'ZoznamBotov' ],
+	'ListDuplicatedFiles'       => [ 'ZoznamDuplicitnýchSúborov' ],
 	'Listfiles'                 => [ 'ZoznamSúborov' ],
+	'Listgrants'                => [ 'SkupinyOprávnení' ],
 	'Listgrouprights'           => [ 'ZoznamSkupinovýchPráv' ],
 	'Listredirects'             => [ 'ZoznamPresmerovaní' ],
 	'Listusers'                 => [ 'ZoznamPoužívateľov' ],
@@ -67,10 +82,12 @@ $specialPageAliases = [
 	'Log'                       => [ 'Záznamy' ],
 	'Lonelypages'               => [ 'OsirotenéStránky' ],
 	'Longpages'                 => [ 'DlhéStránky' ],
+	'MediaStatistics'           => [ 'ŠtatistikaSúborov' ],
 	'MergeHistory'              => [ 'HistóriaZlúčení' ],
 	'MIMEsearch'                => [ 'HľadanieMIME' ],
 	'Mostcategories'            => [ 'NajviacKategórií' ],
 	'Mostimages'                => [ 'NajodkazovanejšieSúbory' ],
+	'MostInterwikis'            => [ 'NajviacInterwiki' ],
 	'Mostlinked'                => [ 'NajodkazovanejšieStránky' ],
 	'Mostlinkedcategories'      => [ 'NajodkazovanejšieKategórie' ],
 	'Mostlinkedtemplates'       => [ 'NajodkazovanejšieŠablóny' ],
@@ -81,20 +98,30 @@ $specialPageAliases = [
 	'Mytalk'                    => [ 'MojaDiskusia' ],
 	'Newimages'                 => [ 'NovéSúbory' ],
 	'Newpages'                  => [ 'NovéStránky' ],
+	'PagesWithProp'             => [ 'StránkySVlastnosťou' ],
+	'PasswordPolicies'          => [ 'PravidláPreHeslá' ],
+	'PasswordReset'             => [ 'ObnovaHesla' ],
+	'PermanentLink'             => [ 'TrvalýOdkaz' ],
 	'Preferences'               => [ 'Nastavenia' ],
-	'Prefixindex'               => [ 'IndexPredpon' ],
+	'Prefixindex'               => [ 'StránkyZačínajúceNa', 'IndexPredpon' ],
 	'Protectedpages'            => [ 'ZamknutéStránky' ],
 	'Protectedtitles'           => [ 'ZamknutéNázvy' ],
+	'RandomInCategory'          => [ 'NáhodnáVKategórii' ],
 	'Randompage'                => [ 'Náhodná', 'NáhodnáStránka' ],
 	'Randomredirect'            => [ 'NáhodnéPresmerovanie' ],
+	'Randomrootpage'            => [ 'NáhodnáKoreňováStránka' ],
 	'Recentchanges'             => [ 'PoslednéÚpravy' ],
 	'Recentchangeslinked'       => [ 'SúvisiacePoslednéÚpravy' ],
+	'Redirect'                  => [ 'Presmerovanie' ],
+	'RemoveCredentials'         => [ 'OdstráneniePrihlasovacíchÚdajov' ],
+	'ResetTokens'               => [ 'ObnovaKľúčov' ],
 	'Revisiondelete'            => [ 'ZmazaťRevíziu' ],
 	'Search'                    => [ 'Hľadanie' ],
 	'Shortpages'                => [ 'KrátkeStránky' ],
 	'Specialpages'              => [ 'ŠpeciálneStránky' ],
 	'Statistics'                => [ 'Štatistika' ],
 	'Tags'                      => [ 'Značky' ],
+	'TrackingCategories'        => [ 'SledovacieKategórie' ],
 	'Uncategorizedcategories'   => [ 'NekategorizovanéKategórie' ],
 	'Uncategorizedimages'       => [ 'NekategorizovanéSúbory' ],
 	'Uncategorizedpages'        => [ 'NekategorizovanéStránky' ],
@@ -136,6 +163,8 @@ $datePreferenceMigrationMap = [
 	'short tdmy',
 ];
 
+$defaultDateFormat = 'dmy';
+
 $dateFormats = [
 	/*
 	'Default',
@@ -173,9 +202,9 @@ $bookstoreList = [
 	'Haugenbok' => 'http://www.haugenbok.no/searchresults.cfm?searchtype=simple&isbn=$1',
 	'Akademika' => 'http://www.akademika.no/sok.php?isbn=$1',
 	'Gnist' => 'http://www.gnist.no/sok.php?isbn=$1',
-	'Amazon.co.uk' => 'http://www.amazon.co.uk/exec/obidos/ISBN=$1',
-	'Amazon.de' => 'http://www.amazon.de/exec/obidos/ISBN=$1',
-	'Amazon.com' => 'http://www.amazon.com/exec/obidos/ISBN=$1'
+	'Amazon.co.uk' => 'https://www.amazon.co.uk/exec/obidos/ISBN=$1',
+	'Amazon.de' => 'https://www.amazon.de/exec/obidos/ISBN=$1',
+	'Amazon.com' => 'https://www.amazon.com/exec/obidos/ISBN=$1'
 ];
 
 $magicWords = [
@@ -248,8 +277,8 @@ $namespaceNames = [
 	NS_MEDIA            => 'Médiá',
 	NS_SPECIAL          => 'Špeciálne',
 	NS_TALK             => 'Diskusia',
-	NS_USER             => 'Redaktor',
-	NS_USER_TALK        => 'Diskusia_s_redaktorom',
+	NS_USER             => 'Užívateľ',
+	NS_USER_TALK        => 'Diskusia_s_užívateľom',
 	NS_PROJECT_TALK     => 'Diskusia_k_{{GRAMMAR:datív|$1}}',
 	NS_FILE             => 'Súbor',
 	NS_FILE_TALK        => 'Diskusia_k_súboru',
@@ -265,6 +294,8 @@ $namespaceNames = [
 
 $namespaceAliases = [
 	"Komentár"               => NS_TALK,
+	'Redaktor'               => NS_USER,
+	'Diskusia_s_redaktorom'  => NS_USER_TALK,
 	"Komentár_k_redaktorovi" => NS_USER_TALK,
 	"Komentár_k_Wikipédii"   => NS_PROJECT_TALK,
 	'Obrázok' => NS_FILE,
@@ -273,10 +304,14 @@ $namespaceAliases = [
 	"Komentár_k_MediaWiki"   => NS_MEDIAWIKI_TALK,
 ];
 
+$namespaceGenderAliases = [
+	NS_USER => [ 'male' => 'Užívateľ', 'female' => 'Užívateľka' ],
+	NS_USER_TALK => [ 'male' => 'Diskusia_s_užívateľom', 'female' => 'Diskusia_s_užívateľkou' ],
+];
+
 $separatorTransformTable = [
-	',' => "\xc2\xa0",
+	',' => "\u{00A0}",
 	'.' => ','
 ];
 
 $linkTrail = '/^([a-záäčďéíľĺňóôŕšťúýž]+)(.*)$/sDu';
-

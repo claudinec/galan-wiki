@@ -1,30 +1,26 @@
 <?php
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Wraps the user object, so we can also retain full access to properties
  * like password if we log in via the API.
  */
 class TestUser {
 	/**
-	 * @deprecated Since 1.25. Use TestUser::getUser()->getName()
-	 * @private
 	 * @var string
 	 */
-	public $username;
+	private $username;
 
 	/**
-	 * @deprecated Since 1.25. Use TestUser::getPassword()
-	 * @private
 	 * @var string
 	 */
-	public $password;
+	private $password;
 
 	/**
-	 * @deprecated Since 1.25. Use TestUser::getUser()
-	 * @private
 	 * @var User
 	 */
-	public $user;
+	private $user;
 
 	private function assertNotReal() {
 		global $wgDBprefix;
@@ -146,9 +142,8 @@ class TestUser {
 			throw new MWException( "Passed User has an ID but is not in the database?" );
 		}
 
-		$passwordFactory = new PasswordFactory();
-		$passwordFactory->init( RequestContext::getMain()->getConfig() );
-		if ( !$passwordFactory->newFromCiphertext( $row->user_password )->equals( $password ) ) {
+		$passwordFactory = MediaWikiServices::getInstance()->getPasswordFactory();
+		if ( !$passwordFactory->newFromCiphertext( $row->user_password )->verify( $password ) ) {
 			$passwordHash = $passwordFactory->newFromPlaintext( $password );
 			$dbw->update(
 				'user',

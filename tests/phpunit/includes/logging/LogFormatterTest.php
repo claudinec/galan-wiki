@@ -4,6 +4,7 @@
  * @group Database
  */
 class LogFormatterTest extends MediaWikiLangTestCase {
+	private static $oldExtMsgFiles;
 
 	/**
 	 * @var User
@@ -30,20 +31,32 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 	 */
 	protected $user_comment;
 
+	public static function setUpBeforeClass() {
+		parent::setUpBeforeClass();
+
+		global $wgExtensionMessagesFiles;
+		self::$oldExtMsgFiles = $wgExtensionMessagesFiles;
+		$wgExtensionMessagesFiles['LogTests'] = __DIR__ . '/LogTests.i18n.php';
+		Language::getLocalisationCache()->recache( 'en' );
+	}
+
+	public static function tearDownAfterClass() {
+		global $wgExtensionMessagesFiles;
+		$wgExtensionMessagesFiles = self::$oldExtMsgFiles;
+		Language::getLocalisationCache()->recache( 'en' );
+
+		parent::tearDownAfterClass();
+	}
+
 	protected function setUp() {
 		parent::setUp();
 
-		global $wgLang;
-
 		$this->setMwGlobals( [
 			'wgLogTypes' => [ 'phpunit' ],
-			'wgLogActionsHandlers' => [ 'phpunit/test' => 'LogFormatter',
-				'phpunit/param' => 'LogFormatter' ],
+			'wgLogActionsHandlers' => [ 'phpunit/test' => LogFormatter::class,
+				'phpunit/param' => LogFormatter::class ],
 			'wgUser' => User::newFromName( 'Testuser' ),
-			'wgExtensionMessagesFiles' => [ 'LogTests' => __DIR__ . '/LogTests.i18n.php' ],
 		] );
-
-		Language::getLocalisationCache()->recache( $wgLang->getCode() );
 
 		$this->user = User::newFromName( 'Testuser' );
 		$this->title = Title::newFromText( 'SomeTitle' );
@@ -52,16 +65,9 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 		$this->context = new RequestContext();
 		$this->context->setUser( $this->user );
 		$this->context->setTitle( $this->title );
-		$this->context->setLanguage( $wgLang );
+		$this->context->setLanguage( RequestContext::getMain()->getLanguage() );
 
 		$this->user_comment = '<User comment about action>';
-	}
-
-	protected function tearDown() {
-		parent::tearDown();
-
-		global $wgLang;
-		Language::getLocalisationCache()->recache( $wgLang->getCode() );
 	}
 
 	public function newLogEntry( $action, $params ) {
@@ -85,10 +91,11 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 
 		$formatter->setShowUserToolLinks( false );
 		$paramsWithoutTools = $formatter->getMessageParametersForTesting();
-		unset( $formatter->parsedParameters );
 
-		$formatter->setShowUserToolLinks( true );
-		$paramsWithTools = $formatter->getMessageParametersForTesting();
+		$formatter2 = LogFormatter::newFromEntry( $entry );
+		$formatter2->setContext( $this->context );
+		$formatter2->setShowUserToolLinks( true );
+		$paramsWithTools = $formatter2->getMessageParametersForTesting();
 
 		$userLink = Linker::userLink(
 			$this->user->getId(),
@@ -98,7 +105,8 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 		$userTools = Linker::userToolLinksRedContribs(
 			$this->user->getId(),
 			$this->user->getName(),
-			$this->user->getEditCount()
+			$this->user->getEditCount(),
+			false
 		);
 
 		$titleLink = Linker::link( $this->title, null, [], [] );
@@ -302,6 +310,10 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 				'key_ns' => NS_PROJECT,
 				'key_title' => Title::newFromText( 'project:foo' )->getFullText(),
 			] ],
+			[ '4:title-link:key', '<invalid>', [
+				'key_ns' => NS_SPECIAL,
+				'key_title' => SpecialPage::getTitleFor( 'Badtitle', '<invalid>' )->getFullText(),
+			] ],
 			[ '4:user:key', 'foo', [ 'key' => 'Foo' ] ],
 			[ '4:user-link:key', 'foo', [ 'key' => 'Foo' ] ],
 		];
@@ -309,7 +321,7 @@ class LogFormatterTest extends MediaWikiLangTestCase {
 
 	/**
 	 * The testIrcMsgForAction* tests are supposed to cover the hacky
-	 * LogFormatter::getIRCActionText / bug 34508
+	 * LogFormatter::getIRCActionText / T36508
 	 *
 	 * Third parties bots listen to those messages. They are clever enough
 	 * to fetch the i18n messages from the wiki and then analyze the IRC feed

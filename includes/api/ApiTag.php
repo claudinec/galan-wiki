@@ -19,24 +19,39 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\RevisionStore;
+
 /**
  * @ingroup API
  * @since 1.25
  */
 class ApiTag extends ApiBase {
 
+	/** @var RevisionStore */
+	private $revisionStore;
+
 	public function execute() {
+		$this->revisionStore = MediaWikiServices::getInstance()->getRevisionStore();
+
 		$params = $this->extractRequestParams();
 		$user = $this->getUser();
 
 		// make sure the user is allowed
-		if ( !$user->isAllowed( 'changetags' ) ) {
-			$this->dieUsage( "You don't have permission to add or remove change tags from individual edits",
-				'permissiondenied' );
+		$this->checkUserRightsAny( 'changetags' );
+
+		// @TODO Use PermissionManager::isBlockedFrom() instead.
+		$block = $user->getBlock();
+		if ( $block ) {
+			$this->dieBlocked( $block );
 		}
 
-		if ( $user->isBlocked() ) {
-			$this->dieBlocked( $user->getBlock() );
+		// Check if user can add tags
+		if ( $params['tags'] ) {
+			$ableToTag = ChangeTags::canAddTagsAccompanyingChange( $params['tags'], $user );
+			if ( !$ableToTag->isOK() ) {
+				$this->dieStatus( $ableToTag );
+			}
 		}
 
 		// validate and process each revid, rcid and logid
@@ -63,7 +78,7 @@ class ApiTag extends ApiBase {
 	}
 
 	protected static function validateLogId( $logid ) {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$result = $dbr->selectField( 'logging', 'log_id', [ 'log_id' => $logid ],
 			__METHOD__ );
 		return (bool)$result;
@@ -79,7 +94,7 @@ class ApiTag extends ApiBase {
 				$valid = RecentChange::newFromId( $id );
 				break;
 			case 'revid':
-				$valid = Revision::newFromId( $id );
+				$valid = $this->revisionStore->getRevisionById( $id );
 				break;
 			case 'logid':
 				$valid = self::validateLogId( $id );
@@ -88,7 +103,8 @@ class ApiTag extends ApiBase {
 
 		if ( !$valid ) {
 			$idResult['status'] = 'error';
-			$idResult += $this->parseMsg( [ "nosuch$type", $id ] );
+			// Messages: apierror-nosuchrcid apierror-nosuchrevid apierror-nosuchlogid
+			$idResult += $this->getErrorFormatter()->formatMessage( [ "apierror-nosuch$type", $id ] );
 			return $idResult;
 		}
 
@@ -111,13 +127,17 @@ class ApiTag extends ApiBase {
 		} else {
 			$idResult['status'] = 'success';
 			if ( is_null( $status->value->logId ) ) {
-				$idResult['noop'] = '';
+				$idResult['noop'] = true;
 			} else {
 				$idResult['actionlogid'] = $status->value->logId;
 				$idResult['added'] = $status->value->addedTags;
 				ApiResult::setIndexedTagName( $idResult['added'], 't' );
 				$idResult['removed'] = $status->value->removedTags;
 				ApiResult::setIndexedTagName( $idResult['removed'], 't' );
+
+				if ( $params['tags'] ) {
+					ChangeTags::addTags( $params['tags'], null, null, $status->value->logId );
+				}
 			}
 		}
 		return $idResult;
@@ -156,6 +176,10 @@ class ApiTag extends ApiBase {
 			'reason' => [
 				ApiBase::PARAM_DFLT => '',
 			],
+			'tags' => [
+				ApiBase::PARAM_TYPE => 'tags',
+				ApiBase::PARAM_ISMULTI => true,
+			],
 		];
 	}
 
@@ -173,6 +197,6 @@ class ApiTag extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Tag';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Tag';
 	}
 }
