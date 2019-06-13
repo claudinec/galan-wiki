@@ -1,9 +1,9 @@
-( function ( $, mw ) {
+( function () {
 
 	/**
 	 * DateTimeInputWidgets can be used to input a date, a time, or a date and
 	 * time, in either UTC or the user's local timezone.
-	 * Please see the [OOjs UI documentation on MediaWiki] [1] for more information and examples.
+	 * Please see the [OOUI documentation on MediaWiki] [1] for more information and examples.
 	 *
 	 * This widget can be used inside a HTML form, such as a OO.ui.FormLayout.
 	 *
@@ -12,13 +12,14 @@
 	 *     var dateTimeInput = new mw.widgets.datetime.DateTimeInputWidget( {} )
 	 *     $( 'body' ).append( dateTimeInput.$element );
 	 *
-	 * [1]: https://www.mediawiki.org/wiki/OOjs_UI/Widgets/Inputs
+	 * [1]: https://www.mediawiki.org/wiki/OOUI/Widgets/Inputs
 	 *
 	 * @class
 	 * @extends OO.ui.InputWidget
 	 * @mixins OO.ui.mixin.IconElement
 	 * @mixins OO.ui.mixin.IndicatorElement
 	 * @mixins OO.ui.mixin.PendingElement
+	 * @mixins OO.ui.mixin.FlaggedElement
 	 *
 	 * @constructor
 	 * @param {Object} [config] Configuration options
@@ -51,6 +52,11 @@
 			calendar: {}
 		}, config );
 
+		// See InputWidget#reusePreInfuseDOM about config.$input
+		if ( config.$input ) {
+			config.$input.addClass( 'oo-ui-element-hidden' );
+		}
+
 		if ( $.isPlainObject( config.formatter ) && config.formatter.format === undefined ) {
 			config.formatter.format = '@' + config.type;
 		}
@@ -59,12 +65,13 @@
 		this.type = config.type;
 
 		// Parent constructor
-		mw.widgets.datetime.DateTimeInputWidget[ 'super' ].call( this, config );
+		mw.widgets.datetime.DateTimeInputWidget.super.call( this, config );
 
 		// Mixin constructors
 		OO.ui.mixin.IconElement.call( this, config );
 		OO.ui.mixin.IndicatorElement.call( this, config );
 		OO.ui.mixin.PendingElement.call( this, config );
+		OO.ui.mixin.FlaggedElement.call( this, config );
 
 		// Properties
 		this.$handle = $( '<span>' );
@@ -169,14 +176,25 @@
 	OO.mixinClass( mw.widgets.datetime.DateTimeInputWidget, OO.ui.mixin.IconElement );
 	OO.mixinClass( mw.widgets.datetime.DateTimeInputWidget, OO.ui.mixin.IndicatorElement );
 	OO.mixinClass( mw.widgets.datetime.DateTimeInputWidget, OO.ui.mixin.PendingElement );
+	OO.mixinClass( mw.widgets.datetime.DateTimeInputWidget, OO.ui.mixin.FlaggedElement );
 
 	/* Static properties */
 
-	mw.widgets.datetime.DateTimeInputWidget[ 'static' ].supportsSimpleLabel = false;
+	mw.widgets.datetime.DateTimeInputWidget.static.supportsSimpleLabel = false;
 
 	/* Events */
 
 	/* Methods */
+
+	/**
+	 * Get the currently focused field, if any
+	 *
+	 * @private
+	 * @return {jQuery}
+	 */
+	mw.widgets.datetime.DateTimeInputWidget.prototype.getFocusedField = function () {
+		return this.$fields.find( this.getElementDocument().activeElement );
+	};
 
 	/**
 	 * Convert a date string to a Date
@@ -338,7 +356,7 @@
 				sz = ( spec.size * 1.15 ) + 'ch';
 			} else {
 				// Add a little for padding
-				sz = ( spec.size * 1.15 ) + 'ch';
+				sz = ( spec.size * 1.25 ) + 'ch';
 			}
 			if ( spec.editable && spec.type !== 'static' ) {
 				if ( spec.type === 'boolean' || spec.type === 'toggleLocal' ) {
@@ -358,6 +376,7 @@
 				} else {
 					maxlength = spec.size;
 					if ( spec.intercalarySize ) {
+						// eslint-disable-next-line no-jquery/no-each-util
 						$.each( spec.intercalarySize, reduceFunc );
 					}
 					$field = $( '<input>' ).attr( 'type', 'text' )
@@ -385,6 +404,10 @@
 				$field = $( '<span>' )
 					.width( sz )
 					.data( 'mw-widgets-datetime-dateTimeInputWidget-placeholder', placeholder );
+				if ( spec.type !== 'static' ) {
+					$field.prop( 'tabIndex', -1 );
+					$field.on( 'focus', this.onFieldFocus.bind( this, $field ) );
+				}
 				if ( spec.type === 'static' ) {
 					$field.text( spec.value );
 				} else {
@@ -403,7 +426,7 @@
 			this.clearButton = new OO.ui.ButtonWidget( {
 				classes: [ 'mw-widgets-datetime-dateTimeInputWidget-field', 'mw-widgets-datetime-dateTimeInputWidget-clearButton' ],
 				framed: false,
-				icon: 'remove',
+				icon: 'clear',
 				disabled: disabled
 			} ).connect( this, {
 				click: 'onClearClick'
@@ -578,6 +601,7 @@
 	 * @private
 	 * @param {jQuery} $field
 	 * @param {jQuery.Event} e Key down event
+	 * @return {boolean} False to cancel the default event
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.onFieldKeyDown = function ( $field, e ) {
 		var spec = $field.data( 'mw-widgets-datetime-dateTimeInputWidget-fieldSpec' );
@@ -607,7 +631,7 @@
 						);
 					}
 					if ( $field.is( ':input' ) ) {
-						$field.select();
+						$field.trigger( 'select' );
 					}
 					return false;
 			}
@@ -622,16 +646,18 @@
 	 * @param {jQuery.Event} e Focus event
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.onFieldFocus = function ( $field ) {
+		var spec = $field.data( 'mw-widgets-datetime-dateTimeInputWidget-fieldSpec' );
+
 		if ( !this.isDisabled() ) {
 			if ( this.getValueAsDate() === null ) {
 				this.setValue( this.formatter.getDefaultDate() );
 			}
 			if ( $field.is( ':input' ) ) {
-				$field.select();
+				$field.trigger( 'select' );
 			}
 
 			if ( this.calendar ) {
-				this.calendar.toggle( true );
+				this.calendar.toggle( !!spec.calendarComponent );
 			}
 		}
 	};
@@ -699,12 +725,13 @@
 	 * @private
 	 * @param {jQuery} $field
 	 * @param {jQuery.Event} e Change event
+	 * @return {boolean} False to cancel the default event
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.onFieldWheel = function ( $field, e ) {
 		var delta = 0,
 			spec = $field.data( 'mw-widgets-datetime-dateTimeInputWidget-fieldSpec' );
 
-		if ( this.isDisabled() ) {
+		if ( this.isDisabled() || !this.getFocusedField().length ) {
 			return;
 		}
 
@@ -771,7 +798,7 @@
 	 * @inheritdoc
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.setDisabled = function ( disabled ) {
-		mw.widgets.datetime.DateTimeInputWidget[ 'super' ].prototype.setDisabled.call( this, disabled );
+		mw.widgets.datetime.DateTimeInputWidget.super.prototype.setDisabled.call( this, disabled );
 
 		// Flag all our fields as disabled
 		if ( this.$fields ) {
@@ -790,8 +817,8 @@
 	 * @inheritdoc
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.focus = function () {
-		if ( !this.$fields.find( document.activeElement ).length ) {
-			this.$fields.find( '.mw-widgets-datetime-dateTimeInputWidget-editField' ).first().focus();
+		if ( !this.getFocusedField().length ) {
+			this.$fields.find( '.mw-widgets-datetime-dateTimeInputWidget-editField' ).first().trigger( 'focus' );
 		}
 		return this;
 	};
@@ -800,7 +827,7 @@
 	 * @inheritdoc
 	 */
 	mw.widgets.datetime.DateTimeInputWidget.prototype.blur = function () {
-		this.$fields.find( document.activeElement ).blur();
+		this.getFocusedField().blur();
 		return this;
 	};
 
@@ -811,4 +838,4 @@
 		this.focus();
 	};
 
-}( jQuery, mediaWiki ) );
+}() );

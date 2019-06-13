@@ -22,6 +22,10 @@
  * @file
  * @ingroup DifferenceEngine
  */
+use MediaWiki\Diff\ComplexityException;
+
+// FIXME: Don't use assert() in this file
+// phpcs:disable MediaWiki.Usage.ForbiddenFunctions.assert
 
 /**
  * This diff implementation is mainly lifted from the LCS algorithm of the Eclipse project which
@@ -51,6 +55,8 @@ class DiffEngine {
 	private $tooLong;
 	private $powLimit;
 
+	protected $bailoutComplexity = 0;
+
 	// State variables
 	private $maxDifferences;
 	private $lcsLengthCorrectedForHeuristic = false;
@@ -71,11 +77,11 @@ class DiffEngine {
 	 *
 	 * @param string[] $from_lines
 	 * @param string[] $to_lines
+	 * @throws ComplexityException
 	 *
 	 * @return DiffOp[]
 	 */
 	public function diff( $from_lines, $to_lines ) {
-
 		// Diff and store locally
 		$this->diffInternal( $from_lines, $to_lines );
 
@@ -129,6 +135,14 @@ class DiffEngine {
 	}
 
 	/**
+	 * Sets the complexity (in comparison operations) that can't be exceeded
+	 * @param int $value
+	 */
+	public function setBailoutComplexity( $value ) {
+		$this->bailoutComplexity = $value;
+	}
+
+	/**
 	 * Adjust inserts/deletes of identical lines to join changes
 	 * as much as possible.
 	 *
@@ -170,7 +184,7 @@ class DiffEngine {
 			}
 
 			while ( $i < $len && !$changed[$i] ) {
-				assert( $j < $other_len && ! $other_changed[$j] );
+				assert( $j < $other_len && !$other_changed[$j] );
 				$i++;
 				$j++;
 				while ( $j < $other_len && $other_changed[$j] ) {
@@ -235,7 +249,7 @@ class DiffEngine {
 						$i++;
 					}
 
-					assert( $j < $other_len && ! $other_changed[$j] );
+					assert( $j < $other_len && !$other_changed[$j] );
 					$j++;
 					if ( $j < $other_len && $other_changed[$j] ) {
 						$corresponding = $i;
@@ -265,6 +279,7 @@ class DiffEngine {
 	/**
 	 * @param string[] $from
 	 * @param string[] $to
+	 * @throws ComplexityException
 	 */
 	protected function diffInternal( array $from, array $to ) {
 		// remember initial lengths
@@ -323,6 +338,10 @@ class DiffEngine {
 		$this->m = count( $this->from );
 		$this->n = count( $this->to );
 
+		if ( $this->bailoutComplexity > 0 && $this->m * $this->n > $this->bailoutComplexity ) {
+			throw new ComplexityException();
+		}
+
 		$this->removed = $this->m > 0 ? array_fill( 0, $this->m, true ) : [];
 		$this->added = $this->n > 0 ? array_fill( 0, $this->n, true ) : [];
 
@@ -332,7 +351,7 @@ class DiffEngine {
 			$this->maxDifferences = ceil( ( $this->m + $this->n ) / 2.0 );
 			if ( $this->m * $this->n > $this->tooLong ) {
 				// limit complexity to D^POW_LIMIT for long sequences
-				$this->maxDifferences = floor( pow( $this->maxDifferences, $this->powLimit - 1.0 ) );
+				$this->maxDifferences = floor( $this->maxDifferences ** ( $this->powLimit - 1.0 ) );
 				wfDebug( "Limiting max number of differences to $this->maxDifferences\n" );
 			}
 
@@ -437,9 +456,7 @@ class DiffEngine {
 
 		// need to store these so we don't lose them when they're
 		// overwritten by the recursion
-		$len = $snake[2];
-		$startx = $snake[0];
-		$starty = $snake[1];
+		list( $startx, $starty, $len ) = $snake;
 
 		// the middle snake is part of the LCS, store it
 		for ( $i = 0; $i < $len; ++$i ) {
@@ -489,13 +506,13 @@ class DiffEngine {
 
 		// value_to_add_forward: a 0 or 1 that we add to the start
 		// offset to make it odd/even
-		if ( ( $M & 1 ) == 1 ) {
+		if ( $M & 1 ) {
 			$value_to_add_forward = 1;
 		} else {
 			$value_to_add_forward = 0;
 		}
 
-		if ( ( $N & 1 ) == 1 ) {
+		if ( $N & 1 ) {
 			$value_to_add_backward = 1;
 		} else {
 			$value_to_add_backward = 0;
@@ -513,7 +530,7 @@ class DiffEngine {
 		$V1[$limit_min_1] = $N;
 		$limit = min( $this->maxDifferences, ceil( ( $N + $M ) / 2 ) );
 
-		if ( ( $delta & 1 ) == 1 ) {
+		if ( $delta & 1 ) {
 			for ( $d = 0; $d <= $limit; ++$d ) {
 				$start_diag = max( $value_to_add_forward + $start_forward, -$d );
 				$end_diag = min( $end_forward, $d );
@@ -783,43 +800,6 @@ class DiffEngine {
 		}
 
 		return $this->length;
-	}
-
-}
-
-/**
- * Alternative representation of a set of changes, by the index
- * ranges that are changed.
- *
- * @ingroup DifferenceEngine
- */
-class RangeDifference {
-
-	/** @var int */
-	public $leftstart;
-
-	/** @var int */
-	public $leftend;
-
-	/** @var int */
-	public $leftlength;
-
-	/** @var int */
-	public $rightstart;
-
-	/** @var int */
-	public $rightend;
-
-	/** @var int */
-	public $rightlength;
-
-	function __construct( $leftstart, $leftend, $rightstart, $rightend ) {
-		$this->leftstart = $leftstart;
-		$this->leftend = $leftend;
-		$this->leftlength = $leftend - $leftstart;
-		$this->rightstart = $rightstart;
-		$this->rightend = $rightend;
-		$this->rightlength = $rightend - $rightstart;
 	}
 
 }

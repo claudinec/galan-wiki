@@ -1,7 +1,5 @@
 <?php
 /**
- * ResourceLoader module for user customizations.
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -23,7 +21,7 @@
  */
 
 /**
- * Module for user customizations
+ * Module for user customizations scripts
  */
 class ResourceLoaderUserModule extends ResourceLoaderWikiModule {
 
@@ -31,8 +29,6 @@ class ResourceLoaderUserModule extends ResourceLoaderWikiModule {
 	protected $targets = [ 'desktop', 'mobile' ];
 
 	/**
-	 * Get list of pages used by this module
-	 *
 	 * @param ResourceLoaderContext $context
 	 * @return array List of pages
 	 */
@@ -52,35 +48,21 @@ class ResourceLoaderUserModule extends ResourceLoaderWikiModule {
 			$pages["$userPage/" . $context->getSkin() . '.js'] = [ 'type' => 'script' ];
 		}
 
-		if ( $config->get( 'AllowUserCss' ) ) {
-			$pages["$userPage/common.css"] = [ 'type' => 'style' ];
-			$pages["$userPage/" . $context->getSkin() . '.css'] = [ 'type' => 'style' ];
-		}
-
-		$useSiteJs = $config->get( 'UseSiteJs' );
-		$useSiteCss = $config->get( 'UseSiteCss' );
 		// User group pages are maintained site-wide and enabled with site JS/CSS.
-		if ( $useSiteJs || $useSiteCss ) {
+		if ( $config->get( 'UseSiteJs' ) ) {
 			foreach ( $user->getEffectiveGroups() as $group ) {
 				if ( $group == '*' ) {
 					continue;
 				}
-				if ( $useSiteJs ) {
-					$pages["MediaWiki:Group-$group.js"] = [ 'type' => 'script' ];
-				}
-				if ( $useSiteCss ) {
-					$pages["MediaWiki:Group-$group.css"] = [ 'type' => 'style' ];
-				}
+				$pages["MediaWiki:Group-$group.js"] = [ 'type' => 'script' ];
 			}
 		}
 
-		// Hack for bug 26283: if we're on a preview page for a CSS/JS page,
-		// we need to exclude that page from this module. In that case, the excludepage
-		// parameter will be set to the name of the page we need to exclude.
+		// This is obsolete since 1.32 (T112474). It was formerly used by
+		// OutputPage to implement previewing of user CSS and JS.
+		// @todo: Remove it once we're sure nothing else is using the parameter
 		$excludepage = $context->getRequest()->getVal( 'excludepage' );
 		if ( isset( $pages[$excludepage] ) ) {
-			// This works because $excludepage is generated with getPrefixedDBkey(),
-			// just like the keys in $pages[] above
 			unset( $pages[$excludepage] );
 		}
 

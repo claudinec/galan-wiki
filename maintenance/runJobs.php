@@ -21,6 +21,12 @@
  * @ingroup Maintenance
  */
 
+if ( !defined( 'MEDIAWIKI' ) ) {
+	// So extensions (and other code) can check whether they're running in job mode.
+	// This is not defined if this script is included from installer/updater or phpunit.
+	define( 'MEDIAWIKI_JOB_RUNNER', true );
+}
+
 require_once __DIR__ . '/Maintenance.php';
 
 use MediaWiki\Logger\LoggerFactory;
@@ -39,7 +45,7 @@ class RunJobs extends Maintenance {
 		$this->addOption( 'type', 'Type of job to run', false, true );
 		$this->addOption( 'procs', 'Number of processes to use', false, true );
 		$this->addOption( 'nothrottle', 'Ignore job throttling configuration', false, false );
-		$this->addOption( 'result', 'Set to JSON to print only a JSON response', false, true );
+		$this->addOption( 'result', 'Set to "json" to print only a JSON response', false, true );
 		$this->addOption( 'wait', 'Wait for new jobs instead of exiting', false, false );
 	}
 
@@ -53,12 +59,10 @@ class RunJobs extends Maintenance {
 	}
 
 	public function execute() {
-		global $wgCommandLineMode;
-
 		if ( $this->hasOption( 'procs' ) ) {
 			$procs = intval( $this->getOption( 'procs' ) );
 			if ( $procs < 1 || $procs > 1000 ) {
-				$this->error( "Invalid argument to --procs", true );
+				$this->fatalError( "Invalid argument to --procs" );
 			} elseif ( $procs != 1 ) {
 				$fc = new ForkController( $procs );
 				if ( $fc->start() != 'child' ) {
@@ -69,10 +73,6 @@ class RunJobs extends Maintenance {
 
 		$outputJSON = ( $this->getOption( 'result' ) === 'json' );
 		$wait = $this->hasOption( 'wait' );
-
-		// Enable DBO_TRX for atomicity; JobRunner manages transactions
-		// and works well in web server mode already (@TODO: this is a hack)
-		$wgCommandLineMode = false;
 
 		$runner = new JobRunner( LoggerFactory::getInstance( 'runJobs' ) );
 		if ( !$outputJSON ) {
@@ -102,6 +102,10 @@ class RunJobs extends Maintenance {
 				$response['reached'] === 'job-limit' ||
 				$response['reached'] === 'memory-limit'
 			) {
+				// If job queue is empty, output it
+				if ( !$outputJSON && $response['jobs'] === [] ) {
+					$this->output( "Job queue is empty.\n" );
+				}
 				break;
 			}
 
@@ -111,8 +115,6 @@ class RunJobs extends Maintenance {
 
 			sleep( 1 );
 		}
-
-		$wgCommandLineMode = true;
 	}
 
 	/**
@@ -123,5 +125,5 @@ class RunJobs extends Maintenance {
 	}
 }
 
-$maintClass = "RunJobs";
+$maintClass = RunJobs::class;
 require_once RUN_MAINTENANCE_IF_MAIN;

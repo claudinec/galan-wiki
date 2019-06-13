@@ -38,13 +38,6 @@ $digitTransformTable = null;
 $separatorTransformTable = null;
 
 /**
- * Extra user preferences, which will be shown in Special:Preferences as
- * checkboxes. Extra settings in derived languages will automatically be
- * appended to the array of the fallback languages.
- */
-$extraUserToggles = [];
-
-/**
  * URLs do not specify their encoding. UTF-8 is used by default, but if the
  * URL is not a valid UTF-8 sequence, we have to try to guess what the real
  * encoding is. The encoding used in this case is defined below, and must be
@@ -104,9 +97,9 @@ $namespaceAliases = [];
  * Mapping NS_xxx to array of GENDERKEY to alias.
  * Example:
  * @code
- * $namespaceGenderAliases = array(
- * 	NS_USER => array( 'male' => 'Male_user', 'female' => 'Female_user' ),
- * );
+ * $namespaceGenderAliases = [
+ *   NS_USER => [ 'male' => 'Male_user', 'female' => 'Female_user' ],
+ * ];
  * @endcode
  */
 $namespaceGenderAliases = [];
@@ -187,7 +180,7 @@ $dateFormats = [
 $bookstoreList = [
 	'AddALL' => 'http://www.addall.com/New/Partner.cgi?query=$1&type=ISBN',
 	'Barnes & Noble' => 'http://search.barnesandnoble.com/bookSearch/isbnInquiry.asp?isbn=$1',
-	'Amazon.com' => 'http://www.amazon.com/gp/search/?field-isbn=$1'
+	'Amazon.com' => 'https://www.amazon.com/gp/search/?field-isbn=$1'
 ];
 
 /**
@@ -207,8 +200,6 @@ $bookstoreList = [
  *     used aliases. The aliases SHOULD be sorted by the following convention:
  *     1. Local first, English last, then
  *     2. Most common first, least common last.
- *
- * This array can be modified at runtime with the LanguageGetMagic hook
  */
 $magicWords = [
 #   ID                               CASE  SYNONYMS
@@ -349,6 +340,7 @@ $magicWords = [
 	'directionmark'           => [ 1, 'DIRECTIONMARK', 'DIRMARK' ],
 	'language'                => [ 0, '#LANGUAGE:' ],
 	'contentlanguage'         => [ 1, 'CONTENTLANGUAGE', 'CONTENTLANG' ],
+	'pagelanguage'            => [ 1, 'PAGELANGUAGE' ],
 	'pagesinnamespace'        => [ 1, 'PAGESINNAMESPACE:', 'PAGESINNS:' ],
 	'numberofadmins'          => [ 1, 'NUMBEROFADMINS' ],
 	'formatnum'               => [ 0, 'FORMATNUM' ],
@@ -360,6 +352,7 @@ $magicWords = [
 	'filepath'                => [ 0, 'FILEPATH:' ],
 	'tag'                     => [ 0, 'tag' ],
 	'hiddencat'               => [ 1, '__HIDDENCAT__' ],
+	'expectunusedcategory'    => [ 1, '__EXPECTUNUSEDCATEGORY__', ],
 	'pagesincategory'         => [ 1, 'PAGESINCATEGORY', 'PAGESINCAT' ],
 	'pagesize'                => [ 1, 'PAGESIZE' ],
 	'index'                   => [ 1, '__INDEX__' ],
@@ -387,9 +380,6 @@ $magicWords = [
  * Alternate names of special pages. All names are case-insensitive. The first
  * listed alias will be used as the default. Aliases from the fallback
  * localisation (usually English) will be included by default.
- *
- * This array may be altered at runtime using the LanguageGetSpecialPageAliases
- * hook.
  */
 $specialPageAliases = [
 	'Activeusers'               => [ 'ActiveUsers' ],
@@ -399,9 +389,11 @@ $specialPageAliases = [
 	'ApiHelp'                   => [ 'ApiHelp' ],
 	'ApiSandbox'                => [ 'ApiSandbox' ],
 	'Ancientpages'              => [ 'AncientPages' ],
+	'AutoblockList'             => [ 'AutoblockList', 'ListAutoblocks' ],
 	'Badtitle'                  => [ 'Badtitle' ],
 	'Blankpage'                 => [ 'BlankPage' ],
 	'Block'                     => [ 'Block', 'BlockIP', 'BlockUser' ],
+	'BlockList'                 => [ 'BlockList', 'ListBlocks', 'IPBlockList' ],
 	'Booksources'               => [ 'BookSources' ],
 	'BotPasswords'              => [ 'BotPasswords' ],
 	'BrokenRedirects'           => [ 'BrokenRedirects' ],
@@ -426,10 +418,10 @@ $specialPageAliases = [
 	'Fewestrevisions'           => [ 'FewestRevisions' ],
 	'FileDuplicateSearch'       => [ 'FileDuplicateSearch' ],
 	'Filepath'                  => [ 'FilePath' ],
+	'GoToInterwiki'             => [ 'GoToInterwiki' ],
 	'Import'                    => [ 'Import' ],
 	'Invalidateemail'           => [ 'InvalidateEmail' ],
 	'JavaScriptTest'            => [ 'JavaScriptTest' ],
-	'BlockList'                 => [ 'BlockList', 'ListBlocks', 'IPBlockList' ],
 	'LinkSearch'                => [ 'LinkSearch' ],
 	'LinkAccounts'              => [ 'LinkAccounts' ],
 	'Listadmins'                => [ 'ListAdmins' ],
@@ -439,7 +431,7 @@ $specialPageAliases = [
 	'Listgrants'                => [ 'ListGrants' ],
 	'Listredirects'             => [ 'ListRedirects' ],
 	'ListDuplicatedFiles'       => [ 'ListDuplicatedFiles', 'ListFileDuplicates' ],
-	'Listusers'                 => [ 'ListUsers', 'UserList' ],
+	'Listusers'                 => [ 'ListUsers', 'UserList', 'Users' ],
 	'Lockdb'                    => [ 'LockDB' ],
 	'Log'                       => [ 'Log', 'Logs' ],
 	'Lonelypages'               => [ 'LonelyPages', 'OrphanedPages' ],
@@ -463,7 +455,9 @@ $specialPageAliases = [
 	'Newimages'                 => [ 'NewFiles', 'NewImages' ],
 	'Newpages'                  => [ 'NewPages' ],
 	'PagesWithProp'             => [ 'PagesWithProp', 'Pageswithprop', 'PagesByProp', 'Pagesbyprop' ],
+	'PageData'                  => [ 'PageData' ],
 	'PageLanguage'              => [ 'PageLanguage' ],
+	'PasswordPolicies'          => [ 'PasswordPolicies' ],
 	'PasswordReset'             => [ 'PasswordReset' ],
 	'PermanentLink'             => [ 'PermanentLink', 'PermaLink' ],
 	'Preferences'               => [ 'Preferences' ],
@@ -484,7 +478,7 @@ $specialPageAliases = [
 	'Search'                    => [ 'Search' ],
 	'Shortpages'                => [ 'ShortPages' ],
 	'Specialpages'              => [ 'SpecialPages' ],
-	'Statistics'                => [ 'Statistics' ],
+	'Statistics'                => [ 'Statistics', 'Stats' ],
 	'Tags'                      => [ 'Tags' ],
 	'TrackingCategories'        => [ 'TrackingCategories' ],
 	'Unblock'                   => [ 'Unblock' ],
@@ -525,23 +519,6 @@ $linkTrail = '/^([a-z]+)(.*)$/sD';
  * foo[[bar]]. UTF-8 characters may be used.
  */
 $linkPrefixCharset = 'a-zA-Z\\x{80}-\\x{10ffff}';
-
-/**
- * List of filenames for some ui images that can be overridden per language
- * basis if needed.
- */
-$imageFiles = [
-	'button-bold'     => 'en/button_bold.png',
-	'button-italic'   => 'en/button_italic.png',
-	'button-link'     => 'en/button_link.png',
-	'button-extlink'  => 'en/button_extlink.png',
-	'button-headline' => 'en/button_headline.png',
-	'button-image'    => 'en/button_image.png',
-	'button-media'    => 'en/button_media.png',
-	'button-nowiki'   => 'en/button_nowiki.png',
-	'button-sig'      => 'en/button_sig.png',
-	'button-hr'       => 'en/button_hr.png',
-];
 
 /**
  * A list of messages to preload for each request.

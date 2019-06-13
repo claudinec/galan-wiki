@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Sep 7, 2007
- *
  * Copyright © 2007 Roan Kattouw "<Firstname>.<Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +20,8 @@
  * @file
  */
 
+use MediaWiki\Block\DatabaseBlock;
+
 /**
  * API module that facilitates the unblocking of users. Requires API write mode
  * to be enabled.
@@ -32,6 +30,8 @@
  */
 class ApiUnblock extends ApiBase {
 
+	use ApiBlockInfoTrait;
+
 	/**
 	 * Unblocks the specified user or provides the reason the unblock failed.
 	 */
@@ -39,26 +39,20 @@ class ApiUnblock extends ApiBase {
 		$user = $this->getUser();
 		$params = $this->extractRequestParams();
 
-		if ( is_null( $params['id'] ) && is_null( $params['user'] ) ) {
-			$this->dieUsageMsg( 'unblock-notarget' );
-		}
-		if ( !is_null( $params['id'] ) && !is_null( $params['user'] ) ) {
-			$this->dieUsageMsg( 'unblock-idanduser' );
-		}
+		$this->requireOnlyOneParameter( $params, 'id', 'user', 'userid' );
 
 		if ( !$user->isAllowed( 'block' ) ) {
-			$this->dieUsageMsg( 'cantunblock' );
+			$this->dieWithError( 'apierror-permissiondenied-unblock', 'permissiondenied' );
 		}
-		# bug 15810: blocked admins should have limited access here
-		if ( $user->isBlocked() ) {
+		# T17810: blocked admins should have limited access here
+		$block = $user->getBlock();
+		if ( $block ) {
 			$status = SpecialBlock::checkUnblockSelf( $params['user'], $user );
 			if ( $status !== true ) {
-				$msg = $this->parseMsg( $status );
-				$this->dieUsage(
-					$msg['info'],
-					$msg['code'],
-					0,
-					[ 'blockinfo' => ApiQueryUserInfo::getBlockInfo( $user->getBlock() ) ]
+				$this->dieWithError(
+					$status,
+					null,
+					[ 'blockinfo' => $this->getBlockDetails( $block ) ]
 				);
 			}
 		}
@@ -71,19 +65,29 @@ class ApiUnblock extends ApiBase {
 			}
 		}
 
+		if ( $params['userid'] !== null ) {
+			$username = User::whoIs( $params['userid'] );
+
+			if ( $username === false ) {
+				$this->dieWithError( [ 'apierror-nosuchuserid', $params['userid'] ], 'nosuchuserid' );
+			} else {
+				$params['user'] = $username;
+			}
+		}
+
 		$data = [
 			'Target' => is_null( $params['id'] ) ? $params['user'] : "#{$params['id']}",
 			'Reason' => $params['reason'],
 			'Tags' => $params['tags']
 		];
-		$block = Block::newFromTarget( $data['Target'] );
+		$block = DatabaseBlock::newFromTarget( $data['Target'] );
 		$retval = SpecialUnblock::processUnblock( $data, $this->getContext() );
 		if ( $retval !== true ) {
-			$this->dieUsageMsg( $retval[0] );
+			$this->dieStatus( $this->errorArrayToStatus( $retval ) );
 		}
 
 		$res['id'] = $block->getId();
-		$target = $block->getType() == Block::TYPE_AUTO ? '' : $block->getTarget();
+		$target = $block->getType() == DatabaseBlock::TYPE_AUTO ? '' : $block->getTarget();
 		$res['user'] = $target instanceof User ? $target->getName() : $target;
 		$res['userid'] = $target instanceof User ? $target->getId() : 0;
 		$res['reason'] = $params['reason'];
@@ -104,6 +108,9 @@ class ApiUnblock extends ApiBase {
 				ApiBase::PARAM_TYPE => 'integer',
 			],
 			'user' => null,
+			'userid' => [
+				ApiBase::PARAM_TYPE => 'integer'
+			],
 			'reason' => '',
 			'tags' => [
 				ApiBase::PARAM_TYPE => 'tags',
@@ -126,6 +133,6 @@ class ApiUnblock extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Block';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Block';
 	}
 }

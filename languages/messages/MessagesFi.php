@@ -245,7 +245,7 @@ $magicWords = [
 	'protectionlevel'           => [ '1', 'SUOJAUSTASO', 'PROTECTIONLEVEL' ],
 ];
 
-$separatorTransformTable = [ ',' => "\xc2\xa0", '.' => ',' ];
+$separatorTransformTable = [ ',' => "\u{00A0}", '.' => ',' ];
 
 $datePreferences = [
 	'default',
@@ -286,4 +286,3 @@ $bookstoreList = [
 ];
 
 $linkTrail = '/^([a-zäö]+)(.*)$/sDu';
-

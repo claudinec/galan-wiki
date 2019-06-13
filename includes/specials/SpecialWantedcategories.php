@@ -23,6 +23,8 @@
  * @ingroup SpecialPage
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * A querypage to list the most wanted categories - implements Special:Wantedcategories
  *
@@ -88,27 +90,21 @@ class WantedCategoriesPage extends WantedQueryPage {
 	 * @return string
 	 */
 	function formatResult( $skin, $result ) {
-		global $wgContLang;
-
 		$nt = Title::makeTitle( $result->namespace, $result->title );
-		$text = htmlspecialchars( $wgContLang->convert( $nt->getText() ) );
+		$text = new HtmlArmor( MediaWikiServices::getInstance()->getContentLanguage()
+			->convert( htmlspecialchars( $nt->getText() ) ) );
 
 		if ( !$this->isCached() ) {
 			// We can assume the freshest data
-			$plink = Linker::link(
+			$plink = $this->getLinkRenderer()->makeBrokenLink(
 				$nt,
-				$text,
-				[],
-				[],
-				[ 'broken' ]
+				$text
 			);
 			$nlinks = $this->msg( 'nmembers' )->numParams( $result->value )->escaped();
 		} else {
-			$plink = Linker::link( $nt, $text );
+			$plink = $this->getLinkRenderer()->makeLink( $nt, $text );
 
-			$currentValue = isset( $this->currentCategoryCounts[$result->title] )
-				? $this->currentCategoryCounts[$result->title]
-				: 0;
+			$currentValue = $this->currentCategoryCounts[$result->title] ?? 0;
 			$cachedValue = intval( $result->value ); // T76910
 
 			// If the category has been created or emptied since the list was refreshed, strike it

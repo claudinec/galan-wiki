@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2016 Brad Jorsch <bjorsch@wikimedia.org>
+ * Copyright © 2016 Wikimedia Foundation and contributors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,7 +43,6 @@ class ApiQueryAuthManagerInfo extends ApiQueryBase {
 			'canauthenticatenow' => $manager->canAuthenticateNow(),
 			'cancreateaccounts' => $manager->canCreateAccounts(),
 			'canlinkaccounts' => $manager->canLinkAccounts(),
-			'haspreservedstate' => $helper->getPreservedRequest() !== null,
 		];
 
 		if ( $params['securitysensitiveoperation'] !== null ) {
@@ -53,10 +52,27 @@ class ApiQueryAuthManagerInfo extends ApiQueryBase {
 		}
 
 		if ( $params['requestsfor'] ) {
-			$reqs = $manager->getAuthenticationRequests( $params['requestsfor'], $this->getUser() );
+			$action = $params['requestsfor'];
+
+			$preservedReq = $helper->getPreservedRequest();
+			if ( $preservedReq ) {
+				$ret += [
+					'haspreservedstate' => $preservedReq->hasStateForAction( $action ),
+					'hasprimarypreservedstate' => $preservedReq->hasPrimaryStateForAction( $action ),
+					'preservedusername' => (string)$preservedReq->username,
+				];
+			} else {
+				$ret += [
+					'haspreservedstate' => false,
+					'hasprimarypreservedstate' => false,
+					'preservedusername' => '',
+				];
+			}
+
+			$reqs = $manager->getAuthenticationRequests( $action, $this->getUser() );
 
 			// Filter out blacklisted requests, depending on the action
-			switch ( $params['requestsfor'] ) {
+			switch ( $action ) {
 				case AuthManager::ACTION_CHANGE:
 					$reqs = ApiAuthManagerHelper::blacklistAuthenticationRequests(
 						$reqs, $this->getConfig()->get( 'ChangeCredentialsBlacklist' )
@@ -75,8 +91,8 @@ class ApiQueryAuthManagerInfo extends ApiQueryBase {
 		$this->getResult()->addValue( [ 'query' ], $this->getModuleName(), $ret );
 	}
 
-	public function getCacheMode( $params ) {
-		return 'public';
+	public function isReadMode() {
+		return false;
 	}
 
 	public function getAllowedParams() {
@@ -95,22 +111,22 @@ class ApiQueryAuthManagerInfo extends ApiQueryBase {
 					AuthManager::ACTION_UNLINK,
 				],
 			],
-		] + ApiAuthManagerHelper::getStandardParams( '', 'mergerequestfields' );
+		] + ApiAuthManagerHelper::getStandardParams( '', 'mergerequestfields', 'messageformat' );
 	}
 
 	protected function getExamplesMessages() {
 		return [
 			'action=query&meta=authmanagerinfo&amirequestsfor=' . urlencode( AuthManager::ACTION_LOGIN )
-				=> 'apihelp-query+filerepoinfo-example-login',
+				=> 'apihelp-query+authmanagerinfo-example-login',
 			'action=query&meta=authmanagerinfo&amirequestsfor=' . urlencode( AuthManager::ACTION_LOGIN ) .
 				'&amimergerequestfields=1'
-				=> 'apihelp-query+filerepoinfo-example-login-merged',
+				=> 'apihelp-query+authmanagerinfo-example-login-merged',
 			'action=query&meta=authmanagerinfo&amisecuritysensitiveoperation=foo'
-				=> 'apihelp-query+filerepoinfo-example-securitysensitiveoperation',
+				=> 'apihelp-query+authmanagerinfo-example-securitysensitiveoperation',
 		];
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Authmanagerinfo';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Authmanagerinfo';
 	}
 }

@@ -49,10 +49,9 @@ class EmailConfirmation extends UnlistedSpecialPage {
 	function execute( $code ) {
 		// Ignore things like master queries/connections on GET requests.
 		// It's very convenient to just allow formless link usage.
-		Profiler::instance()->getTransactionProfiler()->resetExpectations();
+		$trxProfiler = Profiler::instance()->getTransactionProfiler();
 
 		$this->setHeaders();
-
 		$this->checkReadOnly();
 		$this->checkPermissions();
 
@@ -70,7 +69,9 @@ class EmailConfirmation extends UnlistedSpecialPage {
 				$this->getOutput()->addWikiMsg( 'confirmemail_noemail' );
 			}
 		} else {
+			$old = $trxProfiler->setSilenced( true );
 			$this->attemptConfirm( $code );
+			$trxProfiler->setSilenced( $old );
 		}
 	}
 
@@ -109,7 +110,7 @@ class EmailConfirmation extends UnlistedSpecialPage {
 				// should never happen, but if so, don't let the user without any message
 				$out->addWikiMsg( 'confirmemail_sent' );
 			} elseif ( $retval instanceof Status && $retval->isGood() ) {
-				$out->addWikiText( $retval->getValue() );
+				$out->addWikiTextAsInterface( $retval->getValue() );
 			}
 		} else {
 			// date and time are separate parameters to facilitate localisation.
@@ -146,8 +147,8 @@ class EmailConfirmation extends UnlistedSpecialPage {
 	 *
 	 * @param string $code Confirmation code
 	 */
-	function attemptConfirm( $code ) {
-		$user = User::newFromConfirmationCode( $code, User::READ_LATEST );
+	private function attemptConfirm( $code ) {
+		$user = User::newFromConfirmationCode( $code, User::READ_EXCLUSIVE );
 		if ( !is_object( $user ) ) {
 			$this->getOutput()->addWikiMsg( 'confirmemail_invalid' );
 

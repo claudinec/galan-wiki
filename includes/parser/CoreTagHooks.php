@@ -46,6 +46,10 @@ class CoreTagHooks {
 	 * Text is treated roughly as 'nowiki' wrapped in an HTML 'pre' tag;
 	 * valid HTML attributes are passed on.
 	 *
+	 * Uses custom html escaping which phan-taint-check won't recognize
+	 * hence we suppress the error.
+	 * @suppress SecurityCheck-XSS
+	 *
 	 * @param string $text
 	 * @param array $attribs
 	 * @param Parser $parser
@@ -75,16 +79,30 @@ class CoreTagHooks {
 	 *
 	 * Uses undocumented extended tag hook return values, introduced in r61913.
 	 *
+	 * @suppress SecurityCheck-XSS
 	 * @param string $content
 	 * @param array $attributes
 	 * @param Parser $parser
 	 * @throws MWException
-	 * @return array
+	 * @return array|string Output of tag hook
 	 */
 	public static function html( $content, $attributes, $parser ) {
 		global $wgRawHtml;
 		if ( $wgRawHtml ) {
-			return [ $content, 'markerType' => 'nowiki' ];
+			if ( $parser->getOptions()->getAllowUnsafeRawHtml() ) {
+				return [ $content, 'markerType' => 'nowiki' ];
+			} else {
+				// In a system message where raw html is
+				// not allowed (but it is allowed in other
+				// contexts).
+				return Html::rawElement(
+					'span',
+					[ 'class' => 'error' ],
+					// Using ->text() not ->parse() as
+					// a paranoia measure against a loop.
+					wfMessage( 'rawhtml-notallowed' )->escaped()
+				);
+			}
 		} else {
 			throw new MWException( '<html> extension tag encountered unexpectedly' );
 		}
@@ -96,6 +114,10 @@ class CoreTagHooks {
 	 * references, and wiki markup within it will not be expanded.
 	 *
 	 * Uses undocumented extended tag hook return values, introduced in r61913.
+	 *
+	 * Uses custom html escaping which phan-taint-check won't recognize
+	 * hence we suppress the error.
+	 * @suppress SecurityCheck-XSS
 	 *
 	 * @param string $content
 	 * @param array $attributes

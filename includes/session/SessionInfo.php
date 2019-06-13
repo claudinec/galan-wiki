@@ -50,10 +50,19 @@ class SessionInfo {
 	/** @var UserInfo|null */
 	private $userInfo = null;
 
+	/** @var bool */
 	private $persisted = false;
+
+	/** @var bool */
 	private $remembered = false;
+
+	/** @var bool */
 	private $forceHTTPS = false;
+
+	/** @var bool */
 	private $idIsSafe = false;
+
+	/** @var bool */
 	private $forceUse = false;
 
 	/** @var array|null */
@@ -73,7 +82,8 @@ class SessionInfo {
 	 *    Defaults to true.
 	 *  - forceHTTPS: (bool) Whether to force HTTPS for this session
 	 *  - metadata: (array) Provider metadata, to be returned by
-	 *    Session::getProviderMetadata().
+	 *    Session::getProviderMetadata(). See SessionProvider::mergeMetadata()
+	 *    and SessionProvider::refreshSessionInfo().
 	 *  - idIsSafe: (bool) Set true if the 'id' did not come from the user.
 	 *    Generally you'll use this from SessionProvider::newEmptySession(),
 	 *    and not from any other method.
@@ -200,7 +210,8 @@ class SessionInfo {
 	 * The normal behavior is to discard the SessionInfo if validation against
 	 * the data stored in the session store fails. If this returns true,
 	 * SessionManager will instead delete the session store data so this
-	 * SessionInfo may still be used.
+	 * SessionInfo may still be used. This is important for providers which use
+	 * deterministic IDs and so cannot just generate a random new one.
 	 *
 	 * @return bool
 	 */
@@ -280,7 +291,7 @@ class SessionInfo {
 	 * @return int Negative if $a < $b, positive if $a > $b, zero if equal
 	 */
 	public static function compare( $a, $b ) {
-		return $a->getPriority() - $b->getPriority();
+		return $a->getPriority() <=> $b->getPriority();
 	}
 
 }

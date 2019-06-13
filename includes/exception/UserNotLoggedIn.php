@@ -32,7 +32,7 @@
  * @par Example:
  * @code
  * if( $user->isAnon() ) {
- * 	throw new UserNotLoggedIn();
+ *   throw new UserNotLoggedIn();
  * }
  * @endcode
  *
@@ -42,27 +42,26 @@
  * @par Example:
  * @code
  * if( $user->isAnon() ) {
- * 	throw new UserNotLoggedIn( 'action-require-loggedin' );
+ *   throw new UserNotLoggedIn( 'action-require-loggedin' );
  * }
  * @endcode
  *
- * @see bug 37627
+ * @see T39627
  * @since 1.20
  * @ingroup Exception
  */
 class UserNotLoggedIn extends ErrorPageError {
 
 	/**
-	 * @note The value of the $reasonMsg parameter must be put into LoginForm::validErrorMessages or
-	 * set with the LoginFormValidErrorMessages Hook.
-	 * if you want the user to be automatically redirected to the login form.
+	 * @note The value of the $reasonMsg parameter must be set with the LoginFormValidErrorMessages
+	 * hook if you want the user to be automatically redirected to the login form.
 	 *
 	 * @param string $reasonMsg A message key containing the reason for the error.
 	 *        Optional, default: 'exception-nologin-text'
 	 * @param string $titleMsg A message key to set the page title.
 	 *        Optional, default: 'exception-nologin'
 	 * @param array $params Parameters to wfMessage().
-	 *        Optional, default: array()
+	 *        Optional, default: []
 	 */
 	public function __construct(
 		$reasonMsg = 'exception-nologin-text',

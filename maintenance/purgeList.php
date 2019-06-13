@@ -1,6 +1,6 @@
 <?php
 /**
- * Send purge requests for listed pages to squid
+ * Send purge requests for listed pages to CDN
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,14 +24,14 @@
 require_once __DIR__ . '/Maintenance.php';
 
 /**
- * Maintenance script that sends purge requests for listed pages to squid.
+ * Maintenance script that sends purge requests for listed pages to CDN.
  *
  * @ingroup Maintenance
  */
 class PurgeList extends Maintenance {
 	public function __construct() {
 		parent::__construct();
-		$this->addDescription( 'Send purge requests for listed pages to squid' );
+		$this->addDescription( 'Send purge requests for listed pages to CDN' );
 		$this->addOption( 'purge', 'Whether to update page_touched.', false, false );
 		$this->addOption( 'namespace', 'Namespace number', false, true );
 		$this->addOption( 'all', 'Purge all pages', false, false );
@@ -86,7 +86,7 @@ class PurgeList extends Maintenance {
 	 * @param int|bool $namespace
 	 */
 	private function purgeNamespace( $namespace = false ) {
-		$dbr = $this->getDB( DB_SLAVE );
+		$dbr = $this->getDB( DB_REPLICA );
 		$startId = 0;
 		if ( $namespace === false ) {
 			$conds = [];
@@ -99,7 +99,7 @@ class PurgeList extends Maintenance {
 				$conds + [ 'page_id > ' . $dbr->addQuotes( $startId ) ],
 				__METHOD__,
 				[
-					'LIMIT' => $this->mBatchSize,
+					'LIMIT' => $this->getBatchSize(),
 					'ORDER BY' => 'page_id'
 
 				]
@@ -120,7 +120,7 @@ class PurgeList extends Maintenance {
 
 	/**
 	 * Helper to purge an array of $urls
-	 * @param array $urls List of URLS to purge from squids
+	 * @param array $urls List of URLS to purge from CDNs
 	 */
 	private function sendPurgeRequest( $urls ) {
 		if ( $this->hasOption( 'delay' ) ) {
@@ -143,5 +143,5 @@ class PurgeList extends Maintenance {
 	}
 }
 
-$maintClass = "PurgeList";
+$maintClass = PurgeList::class;
 require_once RUN_MAINTENANCE_IF_MAIN;

@@ -24,6 +24,8 @@
  * @author Soxred93 <soxred93@gmail.com>
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Querypage that lists the most wanted files
  *
@@ -74,6 +76,7 @@ class WantedFilesPage extends WantedQueryPage {
 	 * In its own function to allow subclasses to override.
 	 * @see SpecialWantedFilesGUOverride in GlobalUsage extension.
 	 * @since 1.24
+	 * @return bool
 	 */
 	protected function likelyToHaveFalsePositives() {
 		return RepoGroup::singleton()->hasForeignRepos();
@@ -83,7 +86,7 @@ class WantedFilesPage extends WantedQueryPage {
 	 * KLUGE: The results may contain false positives for files
 	 * that exist e.g. in a shared repo.  Setting this at least
 	 * keeps them from showing up as redlinks in the output, even
-	 * if it doesn't fix the real problem (bug 6220).
+	 * if it doesn't fix the real problem (T8220).
 	 *
 	 * @note could also have existing links here from broken file
 	 * redirects.
@@ -96,13 +99,14 @@ class WantedFilesPage extends WantedQueryPage {
 	/**
 	 * Does the file exist?
 	 *
-	 * Use wfFindFile so we still think file namespace pages without
-	 * files are missing, but valid file redirects and foreign files are ok.
+	 * Use findFile() so we still think file namespace pages without files
+	 * are missing, but valid file redirects and foreign files are ok.
 	 *
+	 * @param Title $title
 	 * @return bool
 	 */
 	protected function existenceCheck( Title $title ) {
-		return (bool)wfFindFile( $title );
+		return (bool)MediaWikiServices::getInstance()->getRepoGroup()->findFile( $title );
 	}
 
 	function getQueryInfo() {

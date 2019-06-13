@@ -1,43 +1,45 @@
-( function ( mw ) {
+( function () {
 	QUnit.module( 'mediawiki.api.parse', QUnit.newMwEnvironment( {
 		setup: function () {
 			this.server = this.sandbox.useFakeServer();
+			this.server.respondImmediately = true;
 		}
 	} ) );
 
-	QUnit.test( 'Hello world', function ( assert ) {
-		QUnit.expect( 3 );
+	QUnit.test( '.parse( string )', function ( assert ) {
+		this.server.respondWith( 'POST', /api.php/, [ 200,
+			{ 'Content-Type': 'application/json' },
+			'{ "parse": { "text": "<p><b>Hello world</b></p>" } }'
+		] );
 
-		var api = new mw.Api();
-
-		api.parse( '\'\'\'Hello world\'\'\'' ).done( function ( html ) {
-			assert.equal( html, '<p><b>Hello world</b></p>', 'Parse wikitext by string' );
+		return new mw.Api().parse( '\'\'\'Hello world\'\'\'' ).done( function ( html ) {
+			assert.strictEqual( html, '<p><b>Hello world</b></p>', 'Parse wikitext by string' );
 		} );
+	} );
 
-		api.parse( {
+	QUnit.test( '.parse( Object.toString )', function ( assert ) {
+		this.server.respondWith( 'POST', /api.php/, [ 200,
+			{ 'Content-Type': 'application/json' },
+			'{ "parse": { "text": "<p><b>Hello world</b></p>" } }'
+		] );
+
+		return new mw.Api().parse( {
 			toString: function () {
 				return '\'\'\'Hello world\'\'\'';
 			}
 		} ).done( function ( html ) {
-			assert.equal( html, '<p><b>Hello world</b></p>', 'Parse wikitext by toString object' );
+			assert.strictEqual( html, '<p><b>Hello world</b></p>', 'Parse wikitext by toString object' );
 		} );
-
-		this.server.respondWith( /action=parse.*&text='''Hello\+world'''/, function ( request ) {
-			request.respond( 200, { 'Content-Type': 'application/json' },
-				'{ "parse": { "text": "<p><b>Hello world</b></p>" } }'
-			);
-		} );
-
-		api.parse( new mw.Title( 'Earth' ) ).done( function ( html ) {
-			assert.equal( html, '<p><b>Earth</b> is a planet.</p>', 'Parse page by Title object'  );
-		} );
-
-		this.server.respondWith( /action=parse.*&page=Earth/, function ( request ) {
-			request.respond( 200, { 'Content-Type': 'application/json' },
-				'{ "parse": { "text": "<p><b>Earth</b> is a planet.</p>" } }'
-			);
-		} );
-
-		this.server.respond();
 	} );
-}( mediaWiki ) );
+
+	QUnit.test( '.parse( mw.Title )', function ( assert ) {
+		this.server.respondWith( 'GET', /action=parse.*&page=Earth/, [ 200,
+			{ 'Content-Type': 'application/json' },
+			'{ "parse": { "text": "<p><b>Earth</b> is a planet.</p>" } }'
+		] );
+
+		return new mw.Api().parse( new mw.Title( 'Earth' ) ).done( function ( html ) {
+			assert.strictEqual( html, '<p><b>Earth</b> is a planet.</p>', 'Parse page by Title object' );
+		} );
+	} );
+}() );

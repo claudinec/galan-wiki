@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on June 06, 2011
- *
  * Copyright © 2011 Sam Reed
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,10 +20,19 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+use MediaWiki\Revision\RevisionAccessException;
+use MediaWiki\Revision\RevisionRecord;
+use MediaWiki\Revision\RevisionStore;
+use MediaWiki\Revision\SlotRecord;
+
 /**
  * @ingroup API
  */
 class ApiFeedContributions extends ApiBase {
+
+	/** @var RevisionStore */
+	private $revisionStore;
 
 	/**
 	 * This module uses a custom feed wrapper printer.
@@ -39,20 +44,22 @@ class ApiFeedContributions extends ApiBase {
 	}
 
 	public function execute() {
+		$this->revisionStore = MediaWikiServices::getInstance()->getRevisionStore();
+
 		$params = $this->extractRequestParams();
 
 		$config = $this->getConfig();
 		if ( !$config->get( 'Feed' ) ) {
-			$this->dieUsage( 'Syndication feeds are not available', 'feed-unavailable' );
+			$this->dieWithError( 'feed-unavailable' );
 		}
 
 		$feedClasses = $config->get( 'FeedClasses' );
 		if ( !isset( $feedClasses[$params['feedformat']] ) ) {
-			$this->dieUsage( 'Invalid subscription feed type', 'feed-invalid' );
+			$this->dieWithError( 'feed-invalid' );
 		}
 
 		if ( $params['showsizediff'] && $this->getConfig()->get( 'MiserMode' ) ) {
-			$this->dieUsage( 'Size difference is disabled in Miser Mode', 'sizediffdisabled' );
+			$this->dieWithError( 'apierror-sizediffdisabled' );
 		}
 
 		$msg = wfMessage( 'Contributions' )->inContentLanguage()->text();
@@ -70,15 +77,21 @@ class ApiFeedContributions extends ApiBase {
 			$feedUrl
 		);
 
+		// Convert year/month parameters to end parameter
+		$params['start'] = '';
+		$params['end'] = '';
+		$params = ContribsPager::processDateFilter( $params );
+
 		$pager = new ContribsPager( $this->getContext(), [
 			'target' => $target,
 			'namespace' => $params['namespace'],
-			'year' => $params['year'],
-			'month' => $params['month'],
+			'start' => $params['start'],
+			'end' => $params['end'],
 			'tagFilter' => $params['tagfilter'],
 			'deletedOnly' => $params['deletedonly'],
 			'topOnly' => $params['toponly'],
 			'newOnly' => $params['newonly'],
+			'hideMinor' => $params['hideminor'],
 			'showSizeDiff' => $params['showsizediff'],
 		] );
 
@@ -124,11 +137,13 @@ class ApiFeedContributions extends ApiBase {
 		}
 
 		// Hook completed and did not return a valid feed item
-		$title = Title::makeTitle( intval( $row->page_namespace ), $row->page_title );
-		if ( $title && $title->userCan( 'read', $this->getUser() ) ) {
+		$title = Title::makeTitle( (int)$row->page_namespace, $row->page_title );
+		$user = $this->getUser();
+
+		if ( $title && $this->getPermissionManager()->userCan( 'read', $user, $title ) ) {
 			$date = $row->rev_timestamp;
 			$comments = $title->getTalkPage()->getFullURL();
-			$revision = Revision::newFromRow( $row );
+			$revision = $this->revisionStore->newRevisionFromRow( $row );
 
 			return new FeedItem(
 				$title->getPrefixedText(),
@@ -144,39 +159,44 @@ class ApiFeedContributions extends ApiBase {
 	}
 
 	/**
-	 * @param Revision $revision
+	 * @since 1.32, takes a RevisionRecord instead of a Revision
+	 * @param RevisionRecord $revision
 	 * @return string
 	 */
-	protected function feedItemAuthor( $revision ) {
-		return $revision->getUserText();
+	protected function feedItemAuthor( RevisionRecord $revision ) {
+		$user = $revision->getUser();
+		return $user ? $user->getName() : '';
 	}
 
 	/**
-	 * @param Revision $revision
+	 * @since 1.32, takes a RevisionRecord instead of a Revision
+	 * @param RevisionRecord $revision
 	 * @return string
 	 */
-	protected function feedItemDesc( $revision ) {
-		if ( $revision ) {
-			$msg = wfMessage( 'colon-separator' )->inContentLanguage()->text();
-			$content = $revision->getContent();
-
-			if ( $content instanceof TextContent ) {
-				// only textual content has a "source view".
-				$html = nl2br( htmlspecialchars( $content->getNativeData() ) );
-			} else {
-				// XXX: we could get an HTML representation of the content via getParserOutput, but that may
-				//     contain JS magic and generally may not be suitable for inclusion in a feed.
-				//     Perhaps Content should have a getDescriptiveHtml method and/or a getSourceText method.
-				// Compare also FeedUtils::formatDiffRow.
-				$html = '';
-			}
-
-			return '<p>' . htmlspecialchars( $revision->getUserText() ) . $msg .
-				htmlspecialchars( FeedItem::stripComment( $revision->getComment() ) ) .
-				"</p>\n<hr />\n<div>" . $html . '</div>';
+	protected function feedItemDesc( RevisionRecord $revision ) {
+		$msg = wfMessage( 'colon-separator' )->inContentLanguage()->text();
+		try {
+			$content = $revision->getContent( SlotRecord::MAIN );
+		} catch ( RevisionAccessException $e ) {
+			$content = null;
 		}
 
-		return '';
+		if ( $content instanceof TextContent ) {
+			// only textual content has a "source view".
+			$html = nl2br( htmlspecialchars( $content->getText() ) );
+		} else {
+			// XXX: we could get an HTML representation of the content via getParserOutput, but that may
+			//     contain JS magic and generally may not be suitable for inclusion in a feed.
+			//     Perhaps Content should have a getDescriptiveHtml method and/or a getSourceText method.
+			// Compare also FeedUtils::formatDiffRow.
+			$html = '';
+		}
+
+		$comment = $revision->getComment();
+
+		return '<p>' . htmlspecialchars( $this->feedItemAuthor( $revision ) ) . $msg .
+			htmlspecialchars( FeedItem::stripComment( $comment ? $comment->text : '' ) ) .
+			"</p>\n<hr />\n<div>" . $html . '</div>';
 	}
 
 	public function getAllowedParams() {
@@ -208,6 +228,7 @@ class ApiFeedContributions extends ApiBase {
 			'deletedonly' => false,
 			'toponly' => false,
 			'newonly' => false,
+			'hideminor' => false,
 			'showsizediff' => [
 				ApiBase::PARAM_DFLT => false,
 			],

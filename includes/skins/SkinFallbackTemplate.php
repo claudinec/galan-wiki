@@ -9,6 +9,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * BaseTemplate class for the fallback skin
  */
@@ -26,8 +28,7 @@ class SkinFallbackTemplate extends BaseTemplate {
 
 		// Filter out skins that aren't installed
 		$possibleSkins = array_filter( $possibleSkins, function ( $skinDir ) use ( $styleDirectory ) {
-			return
-				is_file( "$styleDirectory/$skinDir/skin.json" )
+			return is_file( "$styleDirectory/$skinDir/skin.json" )
 				|| is_file( "$styleDirectory/$skinDir/$skinDir.php" );
 		} );
 
@@ -42,7 +43,8 @@ class SkinFallbackTemplate extends BaseTemplate {
 	private function buildHelpfulInformationMessage() {
 		$defaultSkin = $this->config->get( 'DefaultSkin' );
 		$installedSkins = $this->findInstalledSkins();
-		$enabledSkins = SkinFactory::getDefaultInstance()->getSkinNames();
+		$skinFactory = MediaWikiServices::getInstance()->getSkinFactory();
+		$enabledSkins = $skinFactory->getSkinNames();
 		$enabledSkins = array_change_key_case( $enabledSkins, CASE_LOWER );
 
 		if ( $installedSkins ) {
@@ -96,12 +98,9 @@ class SkinFallbackTemplate extends BaseTemplate {
 	 * warning message and page content.
 	 */
 	public function execute() {
-		$this->html( 'headelement' ) ?>
-
-		<div class="warningbox">
-			<?php echo $this->buildHelpfulInformationMessage() ?>
-		</div>
-
+		$this->html( 'headelement' );
+		echo Html::warningBox( $this->buildHelpfulInformationMessage() );
+	?>
 		<form action="<?php $this->text( 'wgScript' ) ?>">
 			<input type="hidden" name="title" value="<?php $this->text( 'searchtitle' ) ?>" />
 			<h3><label for="searchInput"><?php $this->msg( 'search' ) ?></label></h3>

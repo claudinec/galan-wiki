@@ -23,6 +23,8 @@
  * @ingroup SpecialPage
  */
 
+use MediaWiki\Logger\LoggerFactory;
+
 /**
  * A special page that allows users to export pages in a XML file
  *
@@ -96,6 +98,15 @@ class SpecialExport extends SpecialPage {
 			$page = '';
 			$history = '';
 		} elseif ( $request->wasPosted() && $par == '' ) {
+			// Log to see if certain parameters are actually used.
+			// If not, we could deprecate them and do some cleanup, here and in WikiExporter.
+			LoggerFactory::getInstance( 'export' )->debug(
+				'Special:Export POST, dir: [{dir}], offset: [{offset}], limit: [{limit}]', [
+				'dir' => $request->getRawVal( 'dir' ),
+				'offset' => $request->getRawVal( 'offset' ),
+				'limit' => $request->getRawVal( 'limit' ),
+			] );
+
 			$page = $request->getText( 'pages' );
 			$this->curonly = $request->getCheck( 'curonly' );
 			$rawOffset = $request->getVal( 'offset' );
@@ -201,6 +212,7 @@ class SpecialExport extends SpecialPage {
 				'buttontype' => 'submit',
 				'buttonname' => 'addcat',
 				'buttondefault' => $this->msg( 'export-addcat' )->text(),
+				'hide-if' => [ '===', 'exportall', '1' ],
 			],
 		];
 		if ( $config->get( 'ExportFromNamespaces' ) ) {
@@ -216,6 +228,7 @@ class SpecialExport extends SpecialPage {
 					'buttontype' => 'submit',
 					'buttonname' => 'addns',
 					'buttondefault' => $this->msg( 'export-addns' )->text(),
+					'hide-if' => [ '===', 'exportall', '1' ],
 				],
 			];
 		}
@@ -234,12 +247,13 @@ class SpecialExport extends SpecialPage {
 
 		$formDescriptor += [
 			'textarea' => [
-				'class' => 'HTMLTextAreaField',
+				'class' => HTMLTextAreaField::class,
 				'name' => 'pages',
 				'label-message' => 'export-manual',
 				'nodata' => true,
 				'rows' => 10,
 				'default' => $page,
+				'hide-if' => [ '===', 'exportall', '1' ],
 			],
 		];
 
@@ -283,7 +297,7 @@ class SpecialExport extends SpecialPage {
 		$formDescriptor += [
 			'wpDownload' => [
 				'type' => 'check',
-				'name' =>'wpDownload',
+				'name' => 'wpDownload',
 				'id' => 'wpDownload',
 				'default' => $request->wasPosted() ? $request->getCheck( 'wpDownload' ) : true,
 				'label-message' => 'export-download',
@@ -325,7 +339,6 @@ class SpecialExport extends SpecialPage {
 	 * @param bool $exportall Whether to export everything
 	 */
 	private function doExport( $page, $history, $list_authors, $exportall ) {
-
 		// If we are grabbing everything, enable full history and ignore the rest
 		if ( $exportall ) {
 			$history = WikiExporter::FULL;
@@ -356,7 +369,7 @@ class SpecialExport extends SpecialPage {
 
 			$pages = array_keys( $pageSet );
 
-			// Normalize titles to the same format and remove dupes, see bug 17374
+			// Normalize titles to the same format and remove dupes, see T19374
 			foreach ( $pages as $k => $v ) {
 				$pages[$k] = str_replace( " ", "_", $v );
 			}
@@ -365,23 +378,9 @@ class SpecialExport extends SpecialPage {
 		}
 
 		/* Ok, let's get to it... */
-		if ( $history == WikiExporter::CURRENT ) {
-			$lb = false;
-			$db = wfGetDB( DB_SLAVE );
-			$buffer = WikiExporter::BUFFER;
-		} else {
-			// Use an unbuffered query; histories may be very long!
-			$lb = wfGetLBFactory()->newMainLB();
-			$db = $lb->getConnection( DB_SLAVE );
-			$buffer = WikiExporter::STREAM;
+		$db = wfGetDB( DB_REPLICA );
 
-			// This might take a while... :D
-			MediaWiki\suppressWarnings();
-			set_time_limit( 0 );
-			MediaWiki\restoreWarnings();
-		}
-
-		$exporter = new WikiExporter( $db, $history, $buffer );
+		$exporter = new WikiExporter( $db, $history );
 		$exporter->list_authors = $list_authors;
 		$exporter->openStream();
 
@@ -389,7 +388,7 @@ class SpecialExport extends SpecialPage {
 			$exporter->allPages();
 		} else {
 			foreach ( $pages as $page ) {
-				# Bug 8824: Only export pages the user can read
+				# T10824: Only export pages the user can read
 				$title = Title::newFromText( $page );
 				if ( is_null( $title ) ) {
 					// @todo Perhaps output an <error> tag or something.
@@ -406,24 +405,18 @@ class SpecialExport extends SpecialPage {
 		}
 
 		$exporter->closeStream();
-
-		if ( $lb ) {
-			$lb->closeAll();
-		}
 	}
 
 	/**
 	 * @param Title $title
-	 * @return array
+	 * @return string[]
 	 */
 	private function getPagesFromCategory( $title ) {
-		global $wgContLang;
-
 		$maxPages = $this->getConfig()->get( 'ExportPagelistLimit' );
 
 		$name = $title->getDBkey();
 
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$res = $dbr->select(
 			[ 'page', 'categorylinks' ],
 			[ 'page_namespace', 'page_title' ],
@@ -435,13 +428,7 @@ class SpecialExport extends SpecialPage {
 		$pages = [];
 
 		foreach ( $res as $row ) {
-			$n = $row->page_title;
-			if ( $row->page_namespace ) {
-				$ns = $wgContLang->getNsText( $row->page_namespace );
-				$n = $ns . ':' . $n;
-			}
-
-			$pages[] = $n;
+			$pages[] = Title::makeName( $row->page_namespace, $row->page_title );
 		}
 
 		return $pages;
@@ -449,14 +436,12 @@ class SpecialExport extends SpecialPage {
 
 	/**
 	 * @param int $nsindex
-	 * @return array
+	 * @return string[]
 	 */
 	private function getPagesFromNamespace( $nsindex ) {
-		global $wgContLang;
-
 		$maxPages = $this->getConfig()->get( 'ExportPagelistLimit' );
 
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$res = $dbr->select(
 			'page',
 			[ 'page_namespace', 'page_title' ],
@@ -468,14 +453,7 @@ class SpecialExport extends SpecialPage {
 		$pages = [];
 
 		foreach ( $res as $row ) {
-			$n = $row->page_title;
-
-			if ( $row->page_namespace ) {
-				$ns = $wgContLang->getNsText( $row->page_namespace );
-				$n = $ns . ':' . $n;
-			}
-
-			$pages[] = $n;
+			$pages[] = Title::makeName( $row->page_namespace, $row->page_title );
 		}
 
 		return $pages;
@@ -529,9 +507,7 @@ class SpecialExport extends SpecialPage {
 	 * @return array
 	 */
 	private function getPageLinks( $inputPages, $pageSet, $depth ) {
-		// @codingStandardsIgnoreStart Squiz.WhiteSpace.SemicolonSpacing.Incorrect
 		for ( ; $depth > 0; --$depth ) {
-			// @codingStandardsIgnoreEnd
 			$pageSet = $this->getLinks(
 				$inputPages, $pageSet, 'pagelinks',
 				[ 'namespace' => 'pl_namespace', 'title' => 'pl_title' ],
@@ -553,7 +529,7 @@ class SpecialExport extends SpecialPage {
 	 * @return array
 	 */
 	private function getLinks( $inputPages, $pageSet, $table, $fields, $join ) {
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 
 		foreach ( $inputPages as $page ) {
 			$title = Title::newFromText( $page );

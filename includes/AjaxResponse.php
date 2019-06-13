@@ -20,6 +20,7 @@
  * @file
  * @ingroup Ajax
  */
+use MediaWiki\MediaWikiServices;
 
 /**
  * Handle responses for Ajax requests (send headers, print
@@ -82,7 +83,7 @@ class AjaxResponse {
 	function __construct( $text = null, Config $config = null ) {
 		$this->mCacheDuration = null;
 		$this->mVary = null;
-		$this->mConfig = $config ?: ConfigFactory::getDefaultInstance()->makeConfig( 'main' );
+		$this->mConfig = $config ?: MediaWikiServices::getInstance()->getMainConfig();
 
 		$this->mDisabled = false;
 		$this->mText = '';
@@ -161,7 +162,7 @@ class AjaxResponse {
 			// For back-compat, it is supported that mResponseCode be a string like " 200 OK"
 			// (with leading space and the status message after). Cast response code to an integer
 			// to take advantage of PHP's conversion rules which will turn "  200 OK" into 200.
-			// http://php.net/string#language.types.string.conversion
+			// https://www.php.net/manual/en/language.types.string.php#language.types.string.conversion
 			$n = intval( trim( $this->mResponseCode ) );
 			HttpStatus::header( $n );
 		}
@@ -178,13 +179,13 @@ class AjaxResponse {
 			# If CDN caches are configured, tell them to cache the response,
 			# and tell the client to always check with the CDN. Otherwise,
 			# tell the client to use a cached copy, without a way to purge it.
-
-			if ( $this->mConfig->get( 'UseSquid' ) ) {
+			if ( $this->mConfig->get( 'UseCdn' ) ) {
 				# Expect explicit purge of the proxy cache, but require end user agents
 				# to revalidate against the proxy on each visit.
 				# Surrogate-Control controls our CDN, Cache-Control downstream caches
 
 				if ( $this->mConfig->get( 'UseESI' ) ) {
+					wfDeprecated( '$wgUseESI = true', '1.33' );
 					header( 'Surrogate-Control: max-age=' . $this->mCacheDuration . ', content="ESI/1.0"' );
 					header( 'Cache-Control: s-maxage=0, must-revalidate, max-age=0' );
 				} else {
@@ -241,7 +242,7 @@ class AjaxResponse {
 			# this breaks strtotime().
 			$modsince = preg_replace( '/;.*$/', '', $_SERVER["HTTP_IF_MODIFIED_SINCE"] );
 			$modsinceTime = strtotime( $modsince );
-			$ismodsince = wfTimestamp( TS_MW, $modsinceTime ? $modsinceTime : 1 );
+			$ismodsince = wfTimestamp( TS_MW, $modsinceTime ?: 1 );
 			wfDebug( "$fname: -- client send If-Modified-Since: $modsince", 'private' );
 			wfDebug( "$fname: --  we might send Last-Modified : $lastmod", 'private' );
 
@@ -280,7 +281,8 @@ class AjaxResponse {
 			return false;
 		}
 
-		$mcvalue = ObjectCache::getMainWANInstance()->get( $mckey );
+		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
+		$mcvalue = $cache->get( $mckey );
 		if ( $mcvalue ) {
 			# Check to see if the value has been invalidated
 			if ( $touched <= $mcvalue['timestamp'] ) {
@@ -302,11 +304,13 @@ class AjaxResponse {
 	 * @return bool
 	 */
 	function storeInMemcached( $mckey, $expiry = 86400 ) {
-		ObjectCache::getMainWANInstance()->set( $mckey,
+		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
+		$cache->set( $mckey,
 			[
 				'timestamp' => wfTimestampNow(),
 				'value' => $this->mText
-			], $expiry
+			],
+			$expiry
 		);
 
 		return true;

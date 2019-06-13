@@ -77,7 +77,7 @@ class SpecialApiHelp extends UnlistedSpecialPage {
 		$main = new ApiMain( $this->getContext(), false );
 		try {
 			$module = $main->getModuleFromPath( $moduleName );
-		} catch ( UsageException $ex ) {
+		} catch ( ApiUsageException $ex ) {
 			$this->getOutput()->addHTML( Html::rawElement( 'span', [ 'class' => 'error' ],
 				$this->msg( 'apihelp-no-such-module', $moduleName )->inContentLanguage()->parse()
 			) );

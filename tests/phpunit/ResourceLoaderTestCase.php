@@ -1,27 +1,53 @@
 <?php
 
+use MediaWiki\MediaWikiServices;
+use Psr\Log\LoggerInterface;
+
 abstract class ResourceLoaderTestCase extends MediaWikiTestCase {
+	// Version hash for a blank file module.
+	// Result of ResourceLoader::makeHash(), ResourceLoaderTestModule
+	// and ResourceLoaderFileModule::getDefinitionSummary().
+	const BLANK_VERSION = '09p30q0';
+
 	/**
-	 * @param string $lang
-	 * @param string $dir
+	 * @param array|string $options Language code or options array
+	 * - string 'lang' Language code
+	 * - string 'dir' Language direction (ltr or rtl)
+	 * - string 'modules' Pipe-separated list of module names
+	 * - string|null 'only' "scripts" (unwrapped script), "styles" (stylesheet), or null
+	 *    (mw.loader.implement).
+	 * @param ResourceLoader|null $rl
 	 * @return ResourceLoaderContext
 	 */
-	protected function getResourceLoaderContext( $lang = 'en', $dir = 'ltr' ) {
-		$resourceLoader = new ResourceLoader();
+	protected function getResourceLoaderContext( $options = [], ResourceLoader $rl = null ) {
+		if ( is_string( $options ) ) {
+			// Back-compat for extension tests
+			$options = [ 'lang' => $options ];
+		}
+		$options += [
+			'debug' => 'true',
+			'lang' => 'en',
+			'dir' => 'ltr',
+			'skin' => 'fallback',
+			'modules' => 'startup',
+			'only' => 'scripts',
+			'safemode' => null,
+		];
+		$resourceLoader = $rl ?: new ResourceLoader( MediaWikiServices::getInstance()->getMainConfig() );
 		$request = new FauxRequest( [
-				'lang' => $lang,
-				'modules' => 'startup',
-				'only' => 'scripts',
-				'skin' => 'vector',
+				'debug' => $options['debug'],
+				'lang' => $options['lang'],
+				'modules' => $options['modules'],
+				'only' => $options['only'],
+				'safemode' => $options['safemode'],
+				'skin' => $options['skin'],
 				'target' => 'phpunit',
 		] );
-		$ctx = $this->getMockBuilder( 'ResourceLoaderContext' )
+		$ctx = $this->getMockBuilder( ResourceLoaderContext::class )
 			->setConstructorArgs( [ $resourceLoader, $request ] )
 			->setMethods( [ 'getDirection' ] )
 			->getMock();
-		$ctx->expects( $this->any() )->method( 'getDirection' )->will(
-			$this->returnValue( $dir )
-		);
+		$ctx->method( 'getDirection' )->willReturn( $options['dir'] );
 		return $ctx;
 	}
 
@@ -30,18 +56,21 @@ abstract class ResourceLoaderTestCase extends MediaWikiTestCase {
 			// For ResourceLoader::inDebugMode since it doesn't have context
 			'ResourceLoaderDebug' => true,
 
-			// Avoid influence from wgInvalidateCacheOnLocalSettingsChange
-			'CacheEpoch' => '20140101000000',
-
-			// For ResourceLoader::__construct()
-			'ResourceLoaderSources' => [],
-
-			// For wfScript()
+			// For ResourceLoaderStartUpModule and ResourceLoader::__construct()
 			'ScriptPath' => '/w',
-			'ScriptExtension' => '.php',
 			'Script' => '/w/index.php',
 			'LoadScript' => '/w/load.php',
+
+			// For ResourceLoader::register() - TODO: Inject somehow T32956
+			'ResourceModuleSkinStyles' => [],
+
+			// For ResourceLoader::respond() - TODO: Inject somehow T32956
+			'UseFileCache' => false,
 		];
+	}
+
+	public static function getMinimalConfig() {
+		return new HashConfig( self::getSettings() );
 	}
 
 	protected function setUp() {
@@ -68,7 +97,10 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 	protected $styles = '';
 	protected $skipFunction = null;
 	protected $isRaw = false;
+	protected $isKnownEmpty = false;
+	protected $type = ResourceLoaderModule::LOAD_GENERAL;
 	protected $targets = [ 'phpunit' ];
+	protected $shouldEmbed = null;
 
 	public function __construct( $options = [] ) {
 		foreach ( $options as $key => $value ) {
@@ -100,6 +132,10 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 		return $this->source;
 	}
 
+	public function getType() {
+		return $this->type;
+	}
+
 	public function getSkipFunction() {
 		return $this->skipFunction;
 	}
@@ -108,10 +144,45 @@ class ResourceLoaderTestModule extends ResourceLoaderModule {
 		return $this->isRaw;
 	}
 
+	public function isKnownEmpty( ResourceLoaderContext $context ) {
+		return $this->isKnownEmpty;
+	}
+
+	public function shouldEmbedModule( ResourceLoaderContext $context ) {
+		return $this->shouldEmbed ?? parent::shouldEmbedModule( $context );
+	}
+
 	public function enableModuleContentVersion() {
 		return true;
 	}
 }
 
+class ResourceLoaderFileTestModule extends ResourceLoaderFileModule {
+	protected $lessVars = [];
+
+	public function __construct( $options = [] ) {
+		if ( isset( $options['lessVars'] ) ) {
+			$this->lessVars = $options['lessVars'];
+			unset( $options['lessVars'] );
+		}
+
+		parent::__construct( $options );
+	}
+
+	public function getLessVars( ResourceLoaderContext $context ) {
+		return $this->lessVars;
+	}
+}
+
 class ResourceLoaderFileModuleTestModule extends ResourceLoaderFileModule {
+}
+
+class EmptyResourceLoader extends ResourceLoader {
+	public function __construct( Config $config = null, LoggerInterface $logger = null ) {
+		parent::__construct( $config ?: ResourceLoaderTestCase::getMinimalConfig(), $logger );
+	}
+
+	public function getErrors() {
+		return $this->errors;
+	}
 }

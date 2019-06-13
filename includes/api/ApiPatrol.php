@@ -2,8 +2,6 @@
 /**
  * API for MediaWiki 1.14+
  *
- * Created on Sep 2, 2008
- *
  * Copyright © 2008 Soxred93 soxred93@gmail.com,
  *
  * This program is free software; you can redistribute it and/or modify
@@ -24,6 +22,8 @@
  * @file
  */
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * Allows user to patrol pages
  * @ingroup API
@@ -40,19 +40,17 @@ class ApiPatrol extends ApiBase {
 		if ( isset( $params['rcid'] ) ) {
 			$rc = RecentChange::newFromId( $params['rcid'] );
 			if ( !$rc ) {
-				$this->dieUsageMsg( [ 'nosuchrcid', $params['rcid'] ] );
+				$this->dieWithError( [ 'apierror-nosuchrcid', $params['rcid'] ] );
 			}
 		} else {
-			$rev = Revision::newFromId( $params['revid'] );
+			$store = MediaWikiServices::getInstance()->getRevisionStore();
+			$rev = $store->getRevisionById( $params['revid'] );
 			if ( !$rev ) {
-				$this->dieUsageMsg( [ 'nosuchrevid', $params['revid'] ] );
+				$this->dieWithError( [ 'apierror-nosuchrevid', $params['revid'] ] );
 			}
-			$rc = $rev->getRecentChange();
+			$rc = $store->getRecentChange( $rev );
 			if ( !$rc ) {
-				$this->dieUsage(
-					'The revision ' . $params['revid'] . " can't be patrolled as it's too old",
-					'notpatrollable'
-				);
+				$this->dieWithError( [ 'apierror-notpatrollable', $params['revid'] ] );
 			}
 		}
 
@@ -70,10 +68,10 @@ class ApiPatrol extends ApiBase {
 		$retval = $rc->doMarkPatrolled( $user, false, $tags );
 
 		if ( $retval ) {
-			$this->dieUsageMsg( reset( $retval ) );
+			$this->dieStatus( $this->errorArrayToStatus( $retval, $user ) );
 		}
 
-		$result = [ 'rcid' => intval( $rc->getAttribute( 'rc_id' ) ) ];
+		$result = [ 'rcid' => (int)$rc->getAttribute( 'rc_id' ) ];
 		ApiQueryBase::addTitleInfo( $result, $rc->getTitle() );
 		$this->getResult()->addValue( null, $this->getModuleName(), $result );
 	}
@@ -115,6 +113,6 @@ class ApiPatrol extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Patrol';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Patrol';
 	}
 }

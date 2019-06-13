@@ -44,8 +44,6 @@ class SpecialAllPages extends IncludableSpecialPage {
 	protected $nsfromMsg = 'allpagesfrom';
 
 	/**
-	 * Constructor
-	 *
 	 * @param string $name Name of the special page, as seen in links and URLs (default: 'Allpages')
 	 */
 	function __construct( $name = 'Allpages' ) {
@@ -69,7 +67,11 @@ class SpecialAllPages extends IncludableSpecialPage {
 		$from = $request->getVal( 'from', null );
 		$to = $request->getVal( 'to', null );
 		$namespace = $request->getInt( 'namespace' );
-		$hideredirects = $request->getBool( 'hideredirects', false );
+
+		$miserMode = (bool)$this->getConfig()->get( 'MiserMode' );
+
+		// Redirects filter is disabled in MiserMode
+		$hideredirects = $request->getBool( 'hideredirects', false ) && !$miserMode;
 
 		$namespaces = $this->getLanguage()->getNamespaces();
 
@@ -95,12 +97,13 @@ class SpecialAllPages extends IncludableSpecialPage {
 	 * @param int $namespace A namespace constant (default NS_MAIN).
 	 * @param string $from DbKey we are starting listing at.
 	 * @param string $to DbKey we are ending listing at.
-	 * @param bool $hideRedirects Dont show redirects  (default false)
+	 * @param bool $hideRedirects Don't show redirects  (default false)
 	 */
 	protected function outputHTMLForm( $namespace = NS_MAIN,
 		$from = '', $to = '', $hideRedirects = false
 	) {
-		$fields = [
+		$miserMode = (bool)$this->getConfig()->get( 'MiserMode' );
+		$formDescriptor = [
 			'from' => [
 				'type' => 'text',
 				'name' => 'from',
@@ -123,7 +126,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 				'id' => 'namespace',
 				'label-message' => 'namespace',
 				'all' => null,
-				'value' => $namespace,
+				'default' => $namespace,
 			],
 			'hideredirects' => [
 				'type' => 'check',
@@ -133,8 +136,16 @@ class SpecialAllPages extends IncludableSpecialPage {
 				'value' => $hideRedirects,
 			],
 		];
-		$form = HTMLForm::factory( 'table', $fields, $this->getContext() );
-		$form->setMethod( 'get' )
+
+		if ( $miserMode ) {
+			unset( $formDescriptor['hideredirects'] );
+		}
+
+		$context = new DerivativeContext( $this->getContext() );
+		$context->setTitle( $this->getPageTitle() ); // Remove subpage
+		$htmlForm = HTMLForm::factory( 'ooui', $formDescriptor, $context );
+		$htmlForm
+			->setMethod( 'get' )
 			->setWrapperLegendMsg( 'allpages' )
 			->setSubmitTextMsg( 'allpagessubmit' )
 			->prepareForm()
@@ -145,7 +156,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 	 * @param int $namespace (default NS_MAIN)
 	 * @param string $from List all pages from this name
 	 * @param string $to List all pages to this name
-	 * @param bool $hideredirects Dont show redirects (default false)
+	 * @param bool $hideredirects Don't show redirects (default false)
 	 */
 	function showToplevel( $namespace = NS_MAIN, $from = '', $to = '', $hideredirects = false ) {
 		$from = Title::makeTitleSafe( $namespace, $from );
@@ -158,9 +169,9 @@ class SpecialAllPages extends IncludableSpecialPage {
 
 	/**
 	 * @param int $namespace Namespace (Default NS_MAIN)
-	 * @param string $from List all pages from this name (default false)
-	 * @param string $to List all pages to this name (default false)
-	 * @param bool $hideredirects Dont show redirects (default false)
+	 * @param string|false $from List all pages from this name (default false)
+	 * @param string|false $to List all pages to this name (default false)
+	 * @param bool $hideredirects Don't show redirects (default false)
 	 */
 	function showChunk( $namespace = NS_MAIN, $from = false, $to = false, $hideredirects = false ) {
 		$output = $this->getOutput();
@@ -181,7 +192,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 			list( $namespace, $fromKey, $from ) = $fromList;
 			list( , $toKey, $to ) = $toList;
 
-			$dbr = wfGetDB( DB_SLAVE );
+			$dbr = wfGetDB( DB_REPLICA );
 			$filterConds = [ 'page_namespace' => $namespace ];
 			if ( $hideredirects ) {
 				$filterConds['page_is_redirect'] = 0;
@@ -204,6 +215,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 				]
 			);
 
+			$linkRenderer = $this->getLinkRenderer();
 			if ( $res->numRows() > 0 ) {
 				$out = Html::openElement( 'ul', [ 'class' => 'mw-allpages-chunk' ] );
 
@@ -213,7 +225,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 						$out .= '<li' .
 							( $s->page_is_redirect ? ' class="allpagesredirect"' : '' ) .
 							'>' .
-							Linker::link( $t ) .
+							$linkRenderer->makeLink( $t ) .
 							"</li>\n";
 					} else {
 						$out .= '<li>[[' . htmlspecialchars( $s->page_title ) . "]]</li>\n";
@@ -269,6 +281,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 		$navLinks = [];
 		$self = $this->getPageTitle();
 
+		$linkRenderer = $this->getLinkRenderer();
 		// Generate a "previous page" link if needed
 		if ( $prevTitle ) {
 			$query = [ 'from' => $prevTitle->getText() ];
@@ -281,9 +294,9 @@ class SpecialAllPages extends IncludableSpecialPage {
 				$query['hideredirects'] = $hideredirects;
 			}
 
-			$navLinks[] = Linker::linkKnown(
+			$navLinks[] = $linkRenderer->makeKnownLink(
 				$self,
-				$this->msg( 'prevpage', $prevTitle->getText() )->escaped(),
+				$this->msg( 'prevpage', $prevTitle->getText() )->text(),
 				[],
 				$query
 			);
@@ -304,9 +317,9 @@ class SpecialAllPages extends IncludableSpecialPage {
 				$query['hideredirects'] = $hideredirects;
 			}
 
-			$navLinks[] = Linker::linkKnown(
+			$navLinks[] = $linkRenderer->makeKnownLink(
 				$self,
-				$this->msg( 'nextpage', $t->getText() )->escaped(),
+				$this->msg( 'nextpage', $t->getText() )->text(),
 				[],
 				$query
 			);
@@ -331,7 +344,7 @@ class SpecialAllPages extends IncludableSpecialPage {
 	/**
 	 * @param int $ns The namespace of the article
 	 * @param string $text The name of the article
-	 * @return array( int namespace, string dbkey, string pagename ) or null on error
+	 * @return array|null [ int namespace, string dbkey, string pagename ] or null on error
 	 */
 	protected function getNamespaceKeyAndText( $ns, $text ) {
 		if ( $text == '' ) {

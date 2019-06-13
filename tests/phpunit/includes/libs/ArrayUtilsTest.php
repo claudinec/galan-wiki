@@ -4,9 +4,9 @@
  *
  * @group Database
  */
+class ArrayUtilsTest extends PHPUnit\Framework\TestCase {
 
-class ArrayUtilsTest extends PHPUnit_Framework_TestCase {
-	private $search;
+	use MediaWikiCoversValidator;
 
 	/**
 	 * @covers ArrayUtils::findLowerBound
@@ -133,9 +133,7 @@ class ArrayUtilsTest extends PHPUnit_Framework_TestCase {
 	 * @covers ArrayUtils::arrayDiffAssocRecursive
 	 * @dataProvider provideArrayDiffAssocRecursive
 	 */
-	function testArrayDiffAssocRecursive( $expected ) {
-		$args = func_get_args();
-		array_shift( $args );
+	function testArrayDiffAssocRecursive( $expected, ...$args ) {
 		$this->assertEquals( call_user_func_array(
 			'ArrayUtils::arrayDiffAssocRecursive', $args
 		), $expected );

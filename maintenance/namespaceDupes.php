@@ -24,9 +24,12 @@
  * @ingroup Maintenance
  */
 
-use MediaWiki\Linker\LinkTarget;
-
 require_once __DIR__ . '/Maintenance.php';
+
+use MediaWiki\Linker\LinkTarget;
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\ResultWrapper;
+use Wikimedia\Rdbms\IMaintainableDatabase;
 
 /**
  * Maintenance script that checks for articles to fix after
@@ -34,10 +37,10 @@ require_once __DIR__ . '/Maintenance.php';
  *
  * @ingroup Maintenance
  */
-class NamespaceConflictChecker extends Maintenance {
+class NamespaceDupes extends Maintenance {
 
 	/**
-	 * @var DatabaseBase
+	 * @var IMaintainableDatabase
 	 */
 	protected $db;
 
@@ -101,25 +104,29 @@ class NamespaceConflictChecker extends Maintenance {
 	 * @return bool
 	 */
 	private function checkAll( $options ) {
-		global $wgContLang, $wgNamespaceAliases, $wgCapitalLinks;
+		global $wgNamespaceAliases, $wgCapitalLinks;
 
+		$contLang = MediaWikiServices::getInstance()->getContentLanguage();
 		$spaces = [];
 
 		// List interwikis first, so they'll be overridden
 		// by any conflicting local namespaces.
 		foreach ( $this->getInterwikiList() as $prefix ) {
-			$name = $wgContLang->ucfirst( $prefix );
+			$name = $contLang->ucfirst( $prefix );
 			$spaces[$name] = 0;
 		}
 
 		// Now pull in all canonical and alias namespaces...
-		foreach ( MWNamespace::getCanonicalNamespaces() as $ns => $name ) {
+		foreach (
+			MediaWikiServices::getInstance()->getNamespaceInfo()->getCanonicalNamespaces()
+			as $ns => $name
+		) {
 			// This includes $wgExtraNamespaces
 			if ( $name !== '' ) {
 				$spaces[$name] = $ns;
 			}
 		}
-		foreach ( $wgContLang->getNamespaces() as $ns => $name ) {
+		foreach ( $contLang->getNamespaces() as $ns => $name ) {
 			if ( $name !== '' ) {
 				$spaces[$name] = $ns;
 			}
@@ -127,7 +134,7 @@ class NamespaceConflictChecker extends Maintenance {
 		foreach ( $wgNamespaceAliases as $name => $ns ) {
 			$spaces[$name] = $ns;
 		}
-		foreach ( $wgContLang->getNamespaceAliases() as $name => $ns ) {
+		foreach ( $contLang->getNamespaceAliases() as $name => $ns ) {
 			$spaces[$name] = $ns;
 		}
 
@@ -135,17 +142,17 @@ class NamespaceConflictChecker extends Maintenance {
 		// since we're doing case-sensitive searches in the db.
 		foreach ( $spaces as $name => $ns ) {
 			$moreNames = [];
-			$moreNames[] = $wgContLang->uc( $name );
-			$moreNames[] = $wgContLang->ucfirst( $wgContLang->lc( $name ) );
-			$moreNames[] = $wgContLang->ucwords( $name );
-			$moreNames[] = $wgContLang->ucwords( $wgContLang->lc( $name ) );
-			$moreNames[] = $wgContLang->ucwordbreaks( $name );
-			$moreNames[] = $wgContLang->ucwordbreaks( $wgContLang->lc( $name ) );
+			$moreNames[] = $contLang->uc( $name );
+			$moreNames[] = $contLang->ucfirst( $contLang->lc( $name ) );
+			$moreNames[] = $contLang->ucwords( $name );
+			$moreNames[] = $contLang->ucwords( $contLang->lc( $name ) );
+			$moreNames[] = $contLang->ucwordbreaks( $name );
+			$moreNames[] = $contLang->ucwordbreaks( $contLang->lc( $name ) );
 			if ( !$wgCapitalLinks ) {
 				foreach ( $moreNames as $altName ) {
-					$moreNames[] = $wgContLang->lcfirst( $altName );
+					$moreNames[] = $contLang->lcfirst( $altName );
 				}
-				$moreNames[] = $wgContLang->lcfirst( $name );
+				$moreNames[] = $contLang->lcfirst( $name );
 			}
 			foreach ( array_unique( $moreNames ) as $altName ) {
 				if ( $altName !== $name ) {
@@ -158,17 +165,8 @@ class NamespaceConflictChecker extends Maintenance {
 		// break the tie by sorting by name
 		$origSpaces = $spaces;
 		uksort( $spaces, function ( $a, $b ) use ( $origSpaces ) {
-			if ( $origSpaces[$a] < $origSpaces[$b] ) {
-				return -1;
-			} elseif ( $origSpaces[$a] > $origSpaces[$b] ) {
-				return 1;
-			} elseif ( $a < $b ) {
-				return -1;
-			} elseif ( $a > $b ) {
-				return 1;
-			} else {
-				return 0;
-			}
+			return $origSpaces[$a] <=> $origSpaces[$b]
+				?: $a <=> $b;
 		} );
 
 		$ok = true;
@@ -224,7 +222,7 @@ class NamespaceConflictChecker extends Maintenance {
 	 * @return array
 	 */
 	private function getInterwikiList() {
-		$result = Interwiki::getAllPrefixes();
+		$result = MediaWikiServices::getInstance()->getInterwikiLookup()->getAllPrefixes();
 		$prefixes = [];
 		foreach ( $result as $row ) {
 			$prefixes[] = $row['iw_prefix'];
@@ -253,7 +251,6 @@ class NamespaceConflictChecker extends Maintenance {
 
 		$ok = true;
 		foreach ( $targets as $row ) {
-
 			// Find the new title and determine the action to take
 
 			$newTitle = $this->getDestinationTitle( $ns, $name,
@@ -435,7 +432,10 @@ class NamespaceConflictChecker extends Maintenance {
 	 * @return ResultWrapper
 	 */
 	private function getTargetList( $ns, $name, $options ) {
-		if ( $options['move-talk'] && MWNamespace::isSubject( $ns ) ) {
+		if (
+			$options['move-talk'] &&
+			MediaWikiServices::getInstance()->getNamespaceInfo()->isSubject( $ns )
+		) {
 			$checkNamespaces = [ NS_MAIN, NS_TALK ];
 		} else {
 			$checkNamespaces = NS_MAIN;
@@ -457,10 +457,10 @@ class NamespaceConflictChecker extends Maintenance {
 
 	/**
 	 * Get the preferred destination title for a given target page.
-	 * @param integer $ns The destination namespace ID
+	 * @param int $ns The destination namespace ID
 	 * @param string $name The conflicting prefix
-	 * @param integer $sourceNs The source namespace
-	 * @param integer $sourceDbk The source DB key (i.e. page_title)
+	 * @param int $sourceNs The source namespace
+	 * @param int $sourceDbk The source DB key (i.e. page_title)
 	 * @param array $options Associative array of validated command-line options
 	 * @return Title|false
 	 */
@@ -471,9 +471,10 @@ class NamespaceConflictChecker extends Maintenance {
 			$dbk = "$name-" . $dbk;
 		}
 		$destNS = $ns;
-		if ( $sourceNs == NS_TALK && MWNamespace::isSubject( $ns ) ) {
+		$nsInfo = MediaWikiServices::getInstance()->getNamespaceInfo();
+		if ( $sourceNs == NS_TALK && $nsInfo->isSubject( $ns ) ) {
 			// This is an associated talk page moved with the --move-talk feature.
-			$destNS = MWNamespace::getTalk( $destNS );
+			$destNS = $nsInfo->getTalk( $destNS );
 		}
 		$newTitle = Title::makeTitleSafe( $destNS, $dbk );
 		if ( !$newTitle || !$newTitle->canExist() ) {
@@ -570,7 +571,7 @@ class NamespaceConflictChecker extends Maintenance {
 	/**
 	 * Merge page histories
 	 *
-	 * @param integer $id The page_id
+	 * @param stdClass $row Page row
 	 * @param Title $newTitle The new title
 	 * @return bool
 	 */
@@ -596,6 +597,8 @@ class NamespaceConflictChecker extends Maintenance {
 
 		$this->db->delete( 'page', [ 'page_id' => $id ], __METHOD__ );
 
+		$this->commitTransaction( $this->db, __METHOD__ );
+
 		/* Call LinksDeletionUpdate to delete outgoing links from the old title,
 		 * and update category counts.
 		 *
@@ -605,13 +608,12 @@ class NamespaceConflictChecker extends Maintenance {
 		 * accidentally introduce an assumption of title validity to the code we
 		 * are calling.
 		 */
-		$update = new LinksDeletionUpdate( $wikiPage );
-		$update->doUpdate();
-		$this->commitTransaction( $this->db, __METHOD__ );
+		DeferredUpdates::addUpdate( new LinksDeletionUpdate( $wikiPage ) );
+		DeferredUpdates::doUpdates();
 
 		return true;
 	}
 }
 
-$maintClass = "NamespaceConflictChecker";
+$maintClass = NamespaceDupes::class;
 require_once RUN_MAINTENANCE_IF_MAIN;

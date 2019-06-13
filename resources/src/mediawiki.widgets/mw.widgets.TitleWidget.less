@@ -4,23 +4,24 @@
  * @copyright 2011-2015 MediaWiki Widgets Team and others; see AUTHORS.txt
  * @license The MIT License (MIT); see LICENSE.txt
  */
+@import 'mediawiki.mixins';
 
 .mw-widget-titleWidget-menu {
 	.mw-widget-titleOptionWidget {
 		line-height: normal;
 
 		&-description {
-			color: #888;
+			color: #72777d;
 		}
 	}
 
 	&-withImages {
 		.mw-widget-titleOptionWidget {
-			-webkit-box-sizing: border-box;
-			-moz-box-sizing: border-box;
-			box-sizing: border-box;
+			.box-sizing( border-box );
 			min-height: 3.75em;
 			padding-left: 4.75em;
+			padding-top: 0.5em;
+			padding-bottom: 0.5em;
 
 			&:not( :last-child ) {
 				margin-bottom: 2px;
@@ -36,10 +37,13 @@
 					width: 3.75em;
 					height: 3.75em;
 					left: 0;
+
 					&:not( .mw-widget-titleOptionWidget-hasImage ) {
-						background-color: #ccc;
+						background-size: 80%;
+						background-color: #c8ccd1;
 						opacity: 0.4;
 					}
+
 					&.mw-widget-titleOptionWidget-hasImage {
 						border: 0;
 						background-size: cover;
@@ -48,7 +52,8 @@
 				}
 			}
 
-			&.oo-ui-optionWidget-highlighted, &.oo-ui-optionWidget-selected {
+			&.oo-ui-optionWidget-highlighted,
+			&.oo-ui-optionWidget-selected {
 				&.oo-ui-iconElement > .mw-widget-titleOptionWidget-hasImage {
 					opacity: 1;
 				}
@@ -71,7 +76,8 @@
 		}
 	}
 
-	&:not(&-withDescriptions) {
+	/* TODO: Should be able to use :not( &-withDescriptions ) but LESS version is buggy (T204816) */
+	&:not( .mw-widget-titleWidget-menu-withDescriptions ) {
 		.mw-widget-titleOptionWidget-description {
 			display: none;
 		}

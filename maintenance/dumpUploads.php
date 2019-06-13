@@ -21,6 +21,8 @@
  * @ingroup Maintenance
  */
 
+use MediaWiki\MediaWikiServices;
+
 require_once __DIR__ . '/Maintenance.php';
 
 /**
@@ -29,7 +31,7 @@ require_once __DIR__ . '/Maintenance.php';
  *
  * @ingroup Maintenance
  */
-class UploadDumper extends Maintenance {
+class DumpUploads extends Maintenance {
 	public function __construct() {
 		parent::__construct();
 		$this->addDescription( 'Generates list of uploaded files which can be fed to tar or similar.
@@ -76,13 +78,13 @@ By default, outputs relative paths against the parent directory of $wgUploadDire
 	 * @param bool $shared True to pass shared-dir settings to hash func
 	 */
 	function fetchUsed( $shared ) {
-		$dbr = $this->getDB( DB_SLAVE );
+		$dbr = $this->getDB( DB_REPLICA );
 		$image = $dbr->tableName( 'image' );
 		$imagelinks = $dbr->tableName( 'imagelinks' );
 
 		$sql = "SELECT DISTINCT il_to, img_name
 			FROM $imagelinks
-			LEFT OUTER JOIN $image
+			LEFT JOIN $image
 			ON il_to=img_name";
 		$result = $dbr->query( $sql );
 
@@ -97,7 +99,7 @@ By default, outputs relative paths against the parent directory of $wgUploadDire
 	 * @param bool $shared True to pass shared-dir settings to hash func
 	 */
 	function fetchLocal( $shared ) {
-		$dbr = $this->getDB( DB_SLAVE );
+		$dbr = $this->getDB( DB_REPLICA );
 		$result = $dbr->select( 'image',
 			[ 'img_name' ],
 			'',
@@ -109,9 +111,9 @@ By default, outputs relative paths against the parent directory of $wgUploadDire
 	}
 
 	function outputItem( $name, $shared ) {
-		$file = wfFindFile( $name );
+		$file = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $name );
 		if ( $file && $this->filterItem( $file, $shared ) ) {
-			$filename = $file->getPath();
+			$filename = $file->getLocalRefPath();
 			$rel = wfRelativePath( $filename, $this->mBasePath );
 			$this->output( "$rel\n" );
 		} else {
@@ -124,5 +126,5 @@ By default, outputs relative paths against the parent directory of $wgUploadDire
 	}
 }
 
-$maintClass = "UploadDumper";
+$maintClass = DumpUploads::class;
 require_once RUN_MAINTENANCE_IF_MAIN;

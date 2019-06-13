@@ -2,6 +2,8 @@
  * Display neat icons on redirect pages.
  */
 
+/* stylelint-disable selector-class-pattern */
+
 /* Hide, but keep accessible for screen-readers. */
 .redirectMsg p {
 	overflow: hidden;
@@ -13,9 +15,11 @@
 	list-style: none none;
 	display: inline;
 	/* shared.css has some very weird directionality-specific rules for 'ul' we need to override,
-	   search for "Correct directionality when page dir is different from site/user dir" */
+	 * search for "Correct directionality when page dir is different from site/user dir" */
+	/* stylelint-disable declaration-no-important */
 	margin: 0 !important;
 	padding: 0 !important;
+	/* stylelint-enable declaration-no-important */
 }
 
 /* @noflip */

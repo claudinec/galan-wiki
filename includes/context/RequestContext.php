@@ -22,9 +22,10 @@
  * @file
  */
 
-use Liuggio\StatsdClient\Factory\StatsdDataFactory;
+use Wikimedia\AtEase\AtEase;
 use MediaWiki\Logger\LoggerFactory;
 use MediaWiki\MediaWikiServices;
+use Wikimedia\ScopedCallback;
 
 /**
  * Group all the pieces relevant to the context of a request into one instance
@@ -81,41 +82,33 @@ class RequestContext implements IContextSource, MutableContext {
 	private static $instance = null;
 
 	/**
-	 * Set the Config object
-	 *
-	 * @param Config $c
+	 * @param Config $config
 	 */
-	public function setConfig( Config $c ) {
-		$this->config = $c;
+	public function setConfig( Config $config ) {
+		$this->config = $config;
 	}
 
 	/**
-	 * Get the Config object
-	 *
 	 * @return Config
 	 */
 	public function getConfig() {
 		if ( $this->config === null ) {
 			// @todo In the future, we could move this to WebStart.php so
 			// the Config object is ready for when initialization happens
-			$this->config = ConfigFactory::getDefaultInstance()->makeConfig( 'main' );
+			$this->config = MediaWikiServices::getInstance()->getMainConfig();
 		}
 
 		return $this->config;
 	}
 
 	/**
-	 * Set the WebRequest object
-	 *
-	 * @param WebRequest $r
+	 * @param WebRequest $request
 	 */
-	public function setRequest( WebRequest $r ) {
-		$this->request = $r;
+	public function setRequest( WebRequest $request ) {
+		$this->request = $request;
 	}
 
 	/**
-	 * Get the WebRequest object
-	 *
 	 * @return WebRequest
 	 */
 	public function getRequest() {
@@ -133,19 +126,15 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Get the Stats object
-	 *
 	 * @deprecated since 1.27 use a StatsdDataFactory from MediaWikiServices (preferably injected)
 	 *
-	 * @return StatsdDataFactory
+	 * @return IBufferingStatsdDataFactory
 	 */
 	public function getStats() {
 		return MediaWikiServices::getInstance()->getStatsdDataFactory();
 	}
 
 	/**
-	 * Get the timing object
-	 *
 	 * @return Timing
 	 */
 	public function getTiming() {
@@ -158,9 +147,7 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Set the Title object
-	 *
-	 * @param Title $title
+	 * @param Title|null $title
 	 */
 	public function setTitle( Title $title = null ) {
 		$this->title = $title;
@@ -169,8 +156,6 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Get the Title object
-	 *
 	 * @return Title|null
 	 */
 	public function getTitle() {
@@ -216,18 +201,16 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Set the WikiPage object
-	 *
 	 * @since 1.19
-	 * @param WikiPage $p
+	 * @param WikiPage $wikiPage
 	 */
-	public function setWikiPage( WikiPage $p ) {
-		$pageTitle = $p->getTitle();
+	public function setWikiPage( WikiPage $wikiPage ) {
+		$pageTitle = $wikiPage->getTitle();
 		if ( !$this->hasTitle() || !$pageTitle->equals( $this->getTitle() ) ) {
 			$this->setTitle( $pageTitle );
 		}
 		// Defer this to the end since setTitle sets it to null.
-		$this->wikipage = $p;
+		$this->wikipage = $wikiPage;
 	}
 
 	/**
@@ -253,15 +236,13 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * @param OutputPage $o
+	 * @param OutputPage $output
 	 */
-	public function setOutput( OutputPage $o ) {
-		$this->output = $o;
+	public function setOutput( OutputPage $output ) {
+		$this->output = $output;
 	}
 
 	/**
-	 * Get the OutputPage object
-	 *
 	 * @return OutputPage
 	 */
 	public function getOutput() {
@@ -273,17 +254,15 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Set the User object
-	 *
-	 * @param User $u
+	 * @param User $user
 	 */
-	public function setUser( User $u ) {
-		$this->user = $u;
+	public function setUser( User $user ) {
+		$this->user = $user;
+		// Invalidate cached user interface language
+		$this->lang = null;
 	}
 
 	/**
-	 * Get the User object
-	 *
 	 * @return User
 	 */
 	public function getUser() {
@@ -308,7 +287,6 @@ class RequestContext implements IContextSource, MutableContext {
 
 		# Validate $code
 		if ( !$code || !Language::isValidCode( $code ) || $code === 'qqq' ) {
-			wfDebug( "Invalid user language code\n" );
 			$code = $wgLanguageCode;
 		}
 
@@ -316,18 +294,16 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Set the Language object
-	 *
-	 * @param Language|string $l Language instance or language code
+	 * @param Language|string $language Language instance or language code
 	 * @throws MWException
 	 * @since 1.19
 	 */
-	public function setLanguage( $l ) {
-		if ( $l instanceof Language ) {
-			$this->lang = $l;
-		} elseif ( is_string( $l ) ) {
-			$l = self::sanitizeLangCode( $l );
-			$obj = Language::factory( $l );
+	public function setLanguage( $language ) {
+		if ( $language instanceof Language ) {
+			$this->lang = $language;
+		} elseif ( is_string( $language ) ) {
+			$language = self::sanitizeLangCode( $language );
+			$obj = Language::factory( $language );
 			$this->lang = $obj;
 		} else {
 			throw new MWException( __METHOD__ . " was passed an invalid type of data." );
@@ -352,8 +328,6 @@ class RequestContext implements IContextSource, MutableContext {
 		} elseif ( $this->lang === null ) {
 			$this->recursion = true;
 
-			global $wgContLang;
-
 			try {
 				$request = $this->getRequest();
 				$user = $this->getUser();
@@ -367,17 +341,13 @@ class RequestContext implements IContextSource, MutableContext {
 				Hooks::run( 'UserGetLanguageObject', [ $user, &$code, $this ] );
 
 				if ( $code === $this->getConfig()->get( 'LanguageCode' ) ) {
-					$this->lang = $wgContLang;
+					$this->lang = MediaWikiServices::getInstance()->getContentLanguage();
 				} else {
 					$obj = Language::factory( $code );
 					$this->lang = $obj;
 				}
-
+			} finally {
 				unset( $this->recursion );
-			}
-			catch ( Exception $ex ) {
-				unset( $this->recursion );
-				throw $ex;
 			}
 		}
 
@@ -385,25 +355,21 @@ class RequestContext implements IContextSource, MutableContext {
 	}
 
 	/**
-	 * Set the Skin object
-	 *
-	 * @param Skin $s
+	 * @param Skin $skin
 	 */
-	public function setSkin( Skin $s ) {
-		$this->skin = clone $s;
+	public function setSkin( Skin $skin ) {
+		$this->skin = clone $skin;
 		$this->skin->setContext( $this );
 	}
 
 	/**
-	 * Get the Skin object
-	 *
 	 * @return Skin
 	 */
 	public function getSkin() {
 		if ( $this->skin === null ) {
 			$skin = null;
 			Hooks::run( 'RequestContextCreateSkin', [ $this, &$skin ] );
-			$factory = SkinFactory::getDefaultInstance();
+			$factory = MediaWikiServices::getInstance()->getSkinFactory();
 
 			// If the hook worked try to set a skin from it
 			if ( $skin instanceof Skin ) {
@@ -427,7 +393,7 @@ class RequestContext implements IContextSource, MutableContext {
 				}
 
 				// Normalize the key in case the user is passing gibberish
-				// or has old preferences (bug 69566).
+				// or has old preferences (T71566).
 				$normalized = Skin::normalizeKey( $userSkin );
 
 				// Skin::normalizeKey will also validate it, so
@@ -442,22 +408,20 @@ class RequestContext implements IContextSource, MutableContext {
 		return $this->skin;
 	}
 
-	/** Helpful methods **/
-
 	/**
 	 * Get a Message object with context set
 	 * Parameters are the same as wfMessage()
 	 *
-	 * @param mixed ...
+	 * @param string|string[]|MessageSpecifier $key Message key, or array of keys,
+	 *   or a MessageSpecifier.
+	 * @param mixed $args,...
 	 * @return Message
 	 */
-	public function msg() {
+	public function msg( $key ) {
 		$args = func_get_args();
 
-		return call_user_func_array( 'wfMessage', $args )->setContext( $this );
+		return wfMessage( ...$args )->setContext( $this );
 	}
-
-	/** Static methods **/
 
 	/**
 	 * Get the RequestContext object associated with the main request
@@ -590,7 +554,7 @@ class RequestContext implements IContextSource, MutableContext {
 			$wgUser = $context->getUser(); // b/c
 			if ( $session && MediaWiki\Session\PHPSessionHandler::isEnabled() ) {
 				session_id( $session->getId() );
-				MediaWiki\quietCall( 'session_start' );
+				AtEase::quietCall( 'session_start' );
 			}
 			$request = new FauxRequest( [], false, $session );
 			$request->setIP( $params['ip'] );

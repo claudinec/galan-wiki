@@ -21,6 +21,16 @@
  * @ingroup Cache
  */
 
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\Database;
+use Wikimedia\Rdbms\IDatabase;
+use Wikimedia\Rdbms\DBError;
+use Wikimedia\Rdbms\DBQueryError;
+use Wikimedia\Rdbms\DBConnectionError;
+use Wikimedia\Rdbms\LoadBalancer;
+use Wikimedia\ScopedCallback;
+use Wikimedia\WaitConditionLoop;
+
 /**
  * Class to store objects in the database
  *
@@ -42,10 +52,12 @@ class SqlBagOStuff extends BagOStuff {
 	/** @var string */
 	protected $tableName = 'objectcache';
 	/** @var bool */
-	protected $slaveOnly = false;
+	protected $replicaOnly = false;
 	/** @var int */
 	protected $syncTimeout = 3;
 
+	/** @var LoadBalancer|null */
+	protected $separateMainLB;
 	/** @var array */
 	protected $conns;
 	/** @var array UNIX timestamps */
@@ -80,17 +92,23 @@ class SqlBagOStuff extends BagOStuff {
 	 *                  shards-1. The number of digits will be the minimum number
 	 *                  required to hold the largest shard index. Data will be
 	 *                  distributed across all tables by key hash. This is for
-	 *                  MySQL bugs 61735 and 61736.
-	 *   - slaveOnly:   Whether to only use slave DBs and avoid triggering
+	 *                  MySQL bugs 61735 <https://bugs.mysql.com/bug.php?id=61735>
+	 *                  and 61736 <https://bugs.mysql.com/bug.php?id=61736>.
+	 *
+	 *   - slaveOnly:   Whether to only use replica DBs and avoid triggering
 	 *                  garbage collection logic of expired items. This only
 	 *                  makes sense if the primary DB is used and only if get()
 	 *                  calls will be used. This is used by ReplicatedBagOStuff.
-	 *   - syncTimeout: Max seconds to wait for slaves to catch up for WRITE_SYNC.
+	 *   - syncTimeout: Max seconds to wait for replica DBs to catch up for WRITE_SYNC.
 	 *
 	 * @param array $params
 	 */
 	public function __construct( $params ) {
 		parent::__construct( $params );
+
+		$this->attrMap[self::ATTR_EMULATION] = self::QOS_EMULATION_SQL;
+		$this->attrMap[self::ATTR_SYNCWRITES] = self::QOS_SYNCWRITES_NONE;
+
 		if ( isset( $params['servers'] ) ) {
 			$this->serverInfos = [];
 			$this->serverTags = [];
@@ -101,7 +119,7 @@ class SqlBagOStuff extends BagOStuff {
 				if ( is_string( $tag ) ) {
 					$this->serverTags[$index] = $tag;
 				} else {
-					$this->serverTags[$index] = isset( $info['host'] ) ? $info['host'] : "#$index";
+					$this->serverTags[$index] = $info['host'] ?? "#$index";
 				}
 				++$index;
 			}
@@ -109,8 +127,10 @@ class SqlBagOStuff extends BagOStuff {
 			$this->serverInfos = [ $params['server'] ];
 			$this->numServers = count( $this->serverInfos );
 		} else {
+			// Default to using the main wiki's database servers
 			$this->serverInfos = false;
 			$this->numServers = 1;
+			$this->attrMap[self::ATTR_SYNCWRITES] = self::QOS_SYNCWRITES_BE;
 		}
 		if ( isset( $params['purgePeriod'] ) ) {
 			$this->purgePeriod = intval( $params['purgePeriod'] );
@@ -124,14 +144,14 @@ class SqlBagOStuff extends BagOStuff {
 		if ( isset( $params['syncTimeout'] ) ) {
 			$this->syncTimeout = $params['syncTimeout'];
 		}
-		$this->slaveOnly = !empty( $params['slaveOnly'] );
+		$this->replicaOnly = !empty( $params['slaveOnly'] );
 	}
 
 	/**
 	 * Get a connection to the specified database
 	 *
 	 * @param int $serverIndex
-	 * @return IDatabase
+	 * @return Database
 	 * @throws MWException
 	 */
 	protected function getDB( $serverIndex ) {
@@ -147,29 +167,28 @@ class SqlBagOStuff extends BagOStuff {
 				throw $this->connFailureErrors[$serverIndex];
 			}
 
-			# If server connection info was given, use that
 			if ( $this->serverInfos ) {
+				// Use custom database defined by server connection info
 				$info = $this->serverInfos[$serverIndex];
-				$type = isset( $info['type'] ) ? $info['type'] : 'mysql';
-				$host = isset( $info['host'] ) ? $info['host'] : '[unknown]';
+				$type = $info['type'] ?? 'mysql';
+				$host = $info['host'] ?? '[unknown]';
 				$this->logger->debug( __CLASS__ . ": connecting to $host" );
-				// Use a blank trx profiler to ignore expections as this is a cache
-				$info['trxProfiler'] = new TransactionProfiler();
-				$db = DatabaseBase::factory( $type, $info );
-				$db->clearFlag( DBO_TRX );
+				$db = Database::factory( $type, $info );
+				$db->clearFlag( DBO_TRX ); // auto-commit mode
 			} else {
-				// We must keep a separate connection to MySQL in order to avoid deadlocks
-				// However, SQLite has an opposite behavior. And PostgreSQL needs to know
-				// if we are in transaction or not (@TODO: find some work-around).
-				$index = $this->slaveOnly ? DB_SLAVE : DB_MASTER;
-				if ( wfGetDB( $index )->getType() == 'mysql' ) {
-					$lb = wfGetLBFactory()->newMainLB();
-					$db = $lb->getConnection( $index );
-					$db->clearFlag( DBO_TRX ); // auto-commit mode
+				// Use the main LB database
+				$lb = MediaWikiServices::getInstance()->getDBLoadBalancer();
+				$index = $this->replicaOnly ? DB_REPLICA : DB_MASTER;
+				if ( $lb->getServerType( $lb->getWriterIndex() ) !== 'sqlite' ) {
+					// Keep a separate connection to avoid contention and deadlocks
+					$db = $lb->getConnection( $index, [], false, $lb::CONN_TRX_AUTOCOMMIT );
 				} else {
-					$db = wfGetDB( $index );
+					// However, SQLite has the opposite behavior due to DB-level locking.
+					// Stock sqlite MediaWiki installs use a separate sqlite cache DB instead.
+					$db = $lb->getConnection( $index );
 				}
 			}
+
 			$this->logger->debug( sprintf( "Connection %s will be used for SqlBagOStuff", $db ) );
 			$this->conns[$serverIndex] = $db;
 		}
@@ -215,22 +234,34 @@ class SqlBagOStuff extends BagOStuff {
 		}
 	}
 
-	protected function doGet( $key, $flags = 0 ) {
+	protected function doGet( $key, $flags = 0, &$casToken = null ) {
 		$casToken = null;
 
-		return $this->getWithToken( $key, $casToken, $flags );
-	}
+		$blobs = $this->fetchBlobMulti( [ $key ] );
+		if ( array_key_exists( $key, $blobs ) ) {
+			$blob = $blobs[$key];
+			$value = $this->unserialize( $blob );
 
-	protected function getWithToken( $key, &$casToken, $flags = 0 ) {
-		$values = $this->getMulti( [ $key ] );
-		if ( array_key_exists( $key, $values ) ) {
-			$casToken = $values[$key];
-			return $values[$key];
+			$casToken = ( $value !== false ) ? $blob : null;
+
+			return $value;
 		}
+
 		return false;
 	}
 
 	public function getMulti( array $keys, $flags = 0 ) {
+		$values = [];
+
+		$blobs = $this->fetchBlobMulti( $keys );
+		foreach ( $blobs as $key => $blob ) {
+			$values[$key] = $this->unserialize( $blob );
+		}
+
+		return $values;
+	}
+
+	public function fetchBlobMulti( array $keys, $flags = 0 ) {
 		$values = []; // array of (key => value)
 
 		$keysByTable = [];
@@ -273,15 +304,16 @@ class SqlBagOStuff extends BagOStuff {
 			if ( isset( $dataRows[$key] ) ) { // HIT?
 				$row = $dataRows[$key];
 				$this->debug( "get: retrieved data; expiry time is " . $row->exptime );
+				$db = null;
 				try {
 					$db = $this->getDB( $row->serverIndex );
 					if ( $this->isExpired( $db, $row->exptime ) ) { // MISS
 						$this->debug( "get: key has expired" );
 					} else { // HIT
-						$values[$key] = $this->unserialize( $db->decodeBlob( $row->value ) );
+						$values[$key] = $db->decodeBlob( $row->value );
 					}
 				} catch ( DBQueryError $e ) {
-					$this->handleWriteError( $e, $row->serverIndex );
+					$this->handleWriteError( $e, $db, $row->serverIndex );
 				}
 			} else { // MISS
 				$this->debug( 'get: no matching rows' );
@@ -291,7 +323,11 @@ class SqlBagOStuff extends BagOStuff {
 		return $values;
 	}
 
-	public function setMulti( array $data, $expiry = 0 ) {
+	public function setMulti( array $data, $expiry = 0, $flags = 0 ) {
+		return $this->insertMulti( $data, $expiry, $flags, true );
+	}
+
+	private function insertMulti( array $data, $expiry, $flags, $replace ) {
 		$keysByTable = [];
 		foreach ( $data as $key => $value ) {
 			list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
@@ -302,11 +338,13 @@ class SqlBagOStuff extends BagOStuff {
 
 		$result = true;
 		$exptime = (int)$expiry;
+		$silenceScope = $this->silenceTransactionProfiler();
 		foreach ( $keysByTable as $serverIndex => $serverKeys ) {
+			$db = null;
 			try {
 				$db = $this->getDB( $serverIndex );
 			} catch ( DBError $e ) {
-				$this->handleWriteError( $e, $serverIndex );
+				$this->handleWriteError( $e, $db, $serverIndex );
 				$result = false;
 				continue;
 			}
@@ -318,7 +356,7 @@ class SqlBagOStuff extends BagOStuff {
 			if ( $exptime == 0 ) {
 				$encExpiry = $this->getMaxDateTime( $db );
 			} else {
-				$exptime = $this->convertExpiry( $exptime );
+				$exptime = $this->convertToExpiry( $exptime );
 				$encExpiry = $db->timestamp( $exptime );
 			}
 			foreach ( $serverKeys as $tableName => $tableKeys ) {
@@ -332,19 +370,22 @@ class SqlBagOStuff extends BagOStuff {
 				}
 
 				try {
-					$db->replace(
-						$tableName,
-						[ 'keyname' ],
-						$rows,
-						__METHOD__
-					);
+					if ( $replace ) {
+						$db->replace( $tableName, [ 'keyname' ], $rows, __METHOD__ );
+					} else {
+						$db->insert( $tableName, $rows, __METHOD__, [ 'IGNORE' ] );
+						$result = ( $db->affectedRows() > 0 && $result );
+					}
 				} catch ( DBError $e ) {
-					$this->handleWriteError( $e, $serverIndex );
+					$this->handleWriteError( $e, $db, $serverIndex );
 					$result = false;
 				}
 
 			}
+		}
 
+		if ( ( $flags & self::WRITE_SYNC ) == self::WRITE_SYNC ) {
+			$result = $this->waitForReplication() && $result;
 		}
 
 		return $result;
@@ -352,15 +393,20 @@ class SqlBagOStuff extends BagOStuff {
 
 	public function set( $key, $value, $exptime = 0, $flags = 0 ) {
 		$ok = $this->setMulti( [ $key => $value ], $exptime );
-		if ( ( $flags & self::WRITE_SYNC ) == self::WRITE_SYNC ) {
-			$ok = $ok && $this->waitForSlaves();
-		}
 
 		return $ok;
 	}
 
-	protected function cas( $casToken, $key, $value, $exptime = 0 ) {
+	public function add( $key, $value, $exptime = 0, $flags = 0 ) {
+		$added = $this->insertMulti( [ $key => $value ], $exptime, $flags, false );
+
+		return $added;
+	}
+
+	protected function cas( $casToken, $key, $value, $exptime = 0, $flags = 0 ) {
 		list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
+		$db = null;
+		$silenceScope = $this->silenceTransactionProfiler();
 		try {
 			$db = $this->getDB( $serverIndex );
 			$exptime = intval( $exptime );
@@ -372,10 +418,10 @@ class SqlBagOStuff extends BagOStuff {
 			if ( $exptime == 0 ) {
 				$encExpiry = $this->getMaxDateTime( $db );
 			} else {
-				$exptime = $this->convertExpiry( $exptime );
+				$exptime = $this->convertToExpiry( $exptime );
 				$encExpiry = $db->timestamp( $exptime );
 			}
-			// (bug 24425) use a replace if the db supports it instead of
+			// (T26425) use a replace if the db supports it instead of
 			// delete/insert to avoid clashes with conflicting keynames
 			$db->update(
 				$tableName,
@@ -386,12 +432,12 @@ class SqlBagOStuff extends BagOStuff {
 				],
 				[
 					'keyname' => $key,
-					'value' => $db->encodeBlob( $this->serialize( $casToken ) )
+					'value' => $db->encodeBlob( $casToken )
 				],
 				__METHOD__
 			);
 		} catch ( DBQueryError $e ) {
-			$this->handleWriteError( $e, $serverIndex );
+			$this->handleWriteError( $e, $db, $serverIndex );
 
 			return false;
 		}
@@ -399,24 +445,53 @@ class SqlBagOStuff extends BagOStuff {
 		return (bool)$db->affectedRows();
 	}
 
-	public function delete( $key ) {
-		list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
-		try {
-			$db = $this->getDB( $serverIndex );
-			$db->delete(
-				$tableName,
-				[ 'keyname' => $key ],
-				__METHOD__ );
-		} catch ( DBError $e ) {
-			$this->handleWriteError( $e, $serverIndex );
-			return false;
+	public function deleteMulti( array $keys, $flags = 0 ) {
+		$keysByTable = [];
+		foreach ( $keys as $key ) {
+			list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
+			$keysByTable[$serverIndex][$tableName][] = $key;
 		}
 
-		return true;
+		$result = true;
+		$silenceScope = $this->silenceTransactionProfiler();
+		foreach ( $keysByTable as $serverIndex => $serverKeys ) {
+			$db = null;
+			try {
+				$db = $this->getDB( $serverIndex );
+			} catch ( DBError $e ) {
+				$this->handleWriteError( $e, $db, $serverIndex );
+				$result = false;
+				continue;
+			}
+
+			foreach ( $serverKeys as $tableName => $tableKeys ) {
+				try {
+					$db->delete( $tableName, [ 'keyname' => $tableKeys ], __METHOD__ );
+				} catch ( DBError $e ) {
+					$this->handleWriteError( $e, $db, $serverIndex );
+					$result = false;
+				}
+
+			}
+		}
+
+		if ( ( $flags & self::WRITE_SYNC ) == self::WRITE_SYNC ) {
+			$result = $this->waitForReplication() && $result;
+		}
+
+		return $result;
+	}
+
+	public function delete( $key, $flags = 0 ) {
+		$ok = $this->deleteMulti( [ $key ], $flags );
+
+		return $ok;
 	}
 
 	public function incr( $key, $step = 1 ) {
 		list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
+		$db = null;
+		$silenceScope = $this->silenceTransactionProfiler();
 		try {
 			$db = $this->getDB( $serverIndex );
 			$step = intval( $step );
@@ -425,51 +500,86 @@ class SqlBagOStuff extends BagOStuff {
 				[ 'value', 'exptime' ],
 				[ 'keyname' => $key ],
 				__METHOD__,
-				[ 'FOR UPDATE' ] );
+				[ 'FOR UPDATE' ]
+			);
 			if ( $row === false ) {
 				// Missing
-
-				return null;
+				return false;
 			}
 			$db->delete( $tableName, [ 'keyname' => $key ], __METHOD__ );
 			if ( $this->isExpired( $db, $row->exptime ) ) {
 				// Expired, do not reinsert
-
-				return null;
+				return false;
 			}
 
 			$oldValue = intval( $this->unserialize( $db->decodeBlob( $row->value ) ) );
 			$newValue = $oldValue + $step;
-			$db->insert( $tableName,
+			$db->insert(
+				$tableName,
 				[
 					'keyname' => $key,
 					'value' => $db->encodeBlob( $this->serialize( $newValue ) ),
 					'exptime' => $row->exptime
-				], __METHOD__, 'IGNORE' );
+				],
+				__METHOD__,
+				[ 'IGNORE' ]
+			);
 
 			if ( $db->affectedRows() == 0 ) {
-				// Race condition. See bug 28611
-				$newValue = null;
+				// Race condition. See T30611
+				$newValue = false;
 			}
 		} catch ( DBError $e ) {
-			$this->handleWriteError( $e, $serverIndex );
-			return null;
+			$this->handleWriteError( $e, $db, $serverIndex );
+			return false;
 		}
 
 		return $newValue;
 	}
 
-	public function merge( $key, $callback, $exptime = 0, $attempts = 10, $flags = 0 ) {
-		if ( !is_callable( $callback ) ) {
-			throw new Exception( "Got invalid callback." );
-		}
-
-		$ok = $this->mergeViaCas( $key, $callback, $exptime, $attempts );
+	public function merge( $key, callable $callback, $exptime = 0, $attempts = 10, $flags = 0 ) {
+		$ok = $this->mergeViaCas( $key, $callback, $exptime, $attempts, $flags );
 		if ( ( $flags & self::WRITE_SYNC ) == self::WRITE_SYNC ) {
-			$ok = $ok && $this->waitForSlaves();
+			$ok = $this->waitForReplication() && $ok;
 		}
 
 		return $ok;
+	}
+
+	public function changeTTL( $key, $exptime = 0, $flags = 0 ) {
+		list( $serverIndex, $tableName ) = $this->getTableByKey( $key );
+		$db = null;
+		$silenceScope = $this->silenceTransactionProfiler();
+		try {
+			$db = $this->getDB( $serverIndex );
+			if ( $exptime == 0 ) {
+				$timestamp = $this->getMaxDateTime( $db );
+			} else {
+				$timestamp = $db->timestamp( $this->convertToExpiry( $exptime ) );
+			}
+			$db->update(
+				$tableName,
+				[ 'exptime' => $timestamp ],
+				[ 'keyname' => $key, 'exptime > ' . $db->addQuotes( $db->timestamp( time() ) ) ],
+				__METHOD__
+			);
+			if ( $db->affectedRows() == 0 ) {
+				$exists = (bool)$db->selectField(
+					$tableName,
+					1,
+					[ 'keyname' => $key, 'exptime' => $timestamp ],
+					__METHOD__,
+					[ 'FOR UPDATE' ]
+				);
+
+				return $exists;
+			}
+		} catch ( DBError $e ) {
+			$this->handleWriteError( $e, $db, $serverIndex );
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
@@ -494,7 +604,7 @@ class SqlBagOStuff extends BagOStuff {
 	}
 
 	protected function garbageCollect() {
-		if ( !$this->purgePeriod || $this->slaveOnly ) {
+		if ( !$this->purgePeriod || $this->replicaOnly ) {
 			// Disabled
 			return;
 		}
@@ -521,7 +631,9 @@ class SqlBagOStuff extends BagOStuff {
 	 * @return bool
 	 */
 	public function deleteObjectsExpiringBefore( $timestamp, $progressCallback = false ) {
+		$silenceScope = $this->silenceTransactionProfiler();
 		for ( $serverIndex = 0; $serverIndex < $this->numServers; $serverIndex++ ) {
+			$db = null;
 			try {
 				$db = $this->getDB( $serverIndex );
 				$dbTimestamp = $db->timestamp( $timestamp );
@@ -532,7 +644,7 @@ class SqlBagOStuff extends BagOStuff {
 					while ( true ) {
 						$conds = $baseConds;
 						if ( $maxExpTime !== false ) {
-							$conds[] = 'exptime > ' . $db->addQuotes( $maxExpTime );
+							$conds[] = 'exptime >= ' . $db->addQuotes( $maxExpTime );
 						}
 						$rows = $db->select(
 							$this->getTableNameByShard( $i ),
@@ -584,7 +696,7 @@ class SqlBagOStuff extends BagOStuff {
 					}
 				}
 			} catch ( DBError $e ) {
-				$this->handleWriteError( $e, $serverIndex );
+				$this->handleWriteError( $e, $db, $serverIndex );
 				return false;
 			}
 		}
@@ -597,14 +709,16 @@ class SqlBagOStuff extends BagOStuff {
 	 * @return bool
 	 */
 	public function deleteAll() {
+		$silenceScope = $this->silenceTransactionProfiler();
 		for ( $serverIndex = 0; $serverIndex < $this->numServers; $serverIndex++ ) {
+			$db = null;
 			try {
 				$db = $this->getDB( $serverIndex );
 				for ( $i = 0; $i < $this->shards; $i++ ) {
 					$db->delete( $this->getTableNameByShard( $i ), '*', __METHOD__ );
 				}
 			} catch ( DBError $e ) {
-				$this->handleWriteError( $e, $serverIndex );
+				$this->handleWriteError( $e, $db, $serverIndex );
 				return false;
 			}
 		}
@@ -616,7 +730,7 @@ class SqlBagOStuff extends BagOStuff {
 	 * On typical message and page data, this can provide a 3X decrease
 	 * in storage requirements.
 	 *
-	 * @param mixed $data
+	 * @param mixed &$data
 	 * @return string
 	 */
 	protected function serialize( &$data ) {
@@ -636,11 +750,11 @@ class SqlBagOStuff extends BagOStuff {
 	 */
 	protected function unserialize( $serial ) {
 		if ( function_exists( 'gzinflate' ) ) {
-			MediaWiki\suppressWarnings();
+			Wikimedia\suppressWarnings();
 			$decomp = gzinflate( $serial );
-			MediaWiki\restoreWarnings();
+			Wikimedia\restoreWarnings();
 
-			if ( false !== $decomp ) {
+			if ( $decomp !== false ) {
 				$serial = $decomp;
 			}
 		}
@@ -660,35 +774,30 @@ class SqlBagOStuff extends BagOStuff {
 		if ( $exception instanceof DBConnectionError ) {
 			$this->markServerDown( $exception, $serverIndex );
 		}
-		$this->logger->error( "DBError: {$exception->getMessage()}" );
-		if ( $exception instanceof DBConnectionError ) {
-			$this->setLastError( BagOStuff::ERR_UNREACHABLE );
-			$this->logger->debug( __METHOD__ . ": ignoring connection error" );
-		} else {
-			$this->setLastError( BagOStuff::ERR_UNEXPECTED );
-			$this->logger->debug( __METHOD__ . ": ignoring query error" );
-		}
+
+		$this->setAndLogDBError( $exception );
 	}
 
 	/**
 	 * Handle a DBQueryError which occurred during a write operation.
 	 *
 	 * @param DBError $exception
+	 * @param IDatabase|null $db DB handle or null if connection failed
 	 * @param int $serverIndex
+	 * @throws Exception
 	 */
-	protected function handleWriteError( DBError $exception, $serverIndex ) {
-		if ( $exception instanceof DBConnectionError ) {
+	protected function handleWriteError( DBError $exception, IDatabase $db = null, $serverIndex ) {
+		if ( !$db ) {
 			$this->markServerDown( $exception, $serverIndex );
 		}
-		if ( $exception->db && $exception->db->wasReadOnlyError() ) {
-			if ( $exception->db->trxLevel() ) {
-				try {
-					$exception->db->rollback( __METHOD__ );
-				} catch ( DBError $e ) {
-				}
-			}
-		}
 
+		$this->setAndLogDBError( $exception );
+	}
+
+	/**
+	 * @param DBError $exception
+	 */
+	private function setAndLogDBError( DBError $exception ) {
 		$this->logger->error( "DBError: {$exception->getMessage()}" );
 		if ( $exception instanceof DBConnectionError ) {
 			$this->setLastError( BagOStuff::ERR_UNREACHABLE );
@@ -705,7 +814,7 @@ class SqlBagOStuff extends BagOStuff {
 	 * @param DBError $exception
 	 * @param int $serverIndex
 	 */
-	protected function markServerDown( $exception, $serverIndex ) {
+	protected function markServerDown( DBError $exception, $serverIndex ) {
 		unset( $this->conns[$serverIndex] ); // bug T103435
 
 		if ( isset( $this->connFailureTimes[$serverIndex] ) ) {
@@ -742,18 +851,58 @@ class SqlBagOStuff extends BagOStuff {
 		}
 	}
 
-	protected function waitForSlaves() {
-		if ( !$this->serverInfos ) {
-			// Main LB is used; wait for any slaves to catch up
-			try {
-				wfGetLBFactory()->waitForReplication( [ 'wiki' => wfWikiID() ] );
-				return true;
-			} catch ( DBReplicationWaitError $e ) {
-				return false;
-			}
-		} else {
+	/**
+	 * @return bool Whether the main DB is used, e.g. wfGetDB( DB_MASTER )
+	 */
+	protected function usesMainDB() {
+		return !$this->serverInfos;
+	}
+
+	protected function waitForReplication() {
+		if ( !$this->usesMainDB() ) {
 			// Custom DB server list; probably doesn't use replication
 			return true;
 		}
+
+		$lb = MediaWikiServices::getInstance()->getDBLoadBalancer();
+		if ( $lb->getServerCount() <= 1 ) {
+			return true; // no replica DBs
+		}
+
+		// Main LB is used; wait for any replica DBs to catch up
+		try {
+			$masterPos = $lb->getMasterPos();
+			if ( !$masterPos ) {
+				return true; // not applicable
+			}
+
+			$loop = new WaitConditionLoop(
+				function () use ( $lb, $masterPos ) {
+					return $lb->waitForAll( $masterPos, 1 );
+				},
+				$this->syncTimeout,
+				$this->busyCallbacks
+			);
+
+			return ( $loop->invoke() === $loop::CONDITION_REACHED );
+		} catch ( DBError $e ) {
+			$this->setAndLogDBError( $e );
+
+			return false;
+		}
+	}
+
+	/**
+	 * Returns a ScopedCallback which resets the silence flag in the transaction profiler when it is
+	 * destroyed on the end of a scope, for example on return or throw
+	 * @return ScopedCallback
+	 * @since 1.32
+	 */
+	protected function silenceTransactionProfiler() {
+		$trxProfiler = Profiler::instance()->getTransactionProfiler();
+		$oldSilenced = $trxProfiler->setSilenced( true );
+		return new ScopedCallback( function () use ( $trxProfiler, $oldSilenced ) {
+			$trxProfiler->setSilenced( $oldSilenced );
+		} );
 	}
 }

@@ -16,7 +16,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @license GPL-2.0+
  * @author Kunal Mehta <legoktm@member.fsf.org>
  */
 namespace MediaWiki\Linker;
@@ -25,8 +24,10 @@ use DummyLinker;
 use Hooks;
 use Html;
 use HtmlArmor;
+use LinkCache;
 use Linker;
 use MediaWiki\MediaWikiServices;
+use NamespaceInfo;
 use Sanitizer;
 use Title;
 use TitleFormatter;
@@ -34,6 +35,7 @@ use TitleFormatter;
 /**
  * Class that generates HTML <a> links for pages.
  *
+ * @see https://www.mediawiki.org/wiki/Manual:LinkRenderer
  * @since 1.28
  */
 class LinkRenderer {
@@ -63,6 +65,16 @@ class LinkRenderer {
 	private $titleFormatter;
 
 	/**
+	 * @var LinkCache
+	 */
+	private $linkCache;
+
+	/**
+	 * @var NamespaceInfo
+	 */
+	private $nsInfo;
+
+	/**
 	 * Whether to run the legacy Linker hooks
 	 *
 	 * @var bool
@@ -71,9 +83,15 @@ class LinkRenderer {
 
 	/**
 	 * @param TitleFormatter $titleFormatter
+	 * @param LinkCache $linkCache
+	 * @param NamespaceInfo $nsInfo
 	 */
-	public function __construct( TitleFormatter $titleFormatter ) {
+	public function __construct(
+		TitleFormatter $titleFormatter, LinkCache $linkCache, NamespaceInfo $nsInfo
+	) {
 		$this->titleFormatter = $titleFormatter;
+		$this->linkCache = $linkCache;
+		$this->nsInfo = $nsInfo;
 	}
 
 	/**
@@ -195,7 +213,7 @@ class LinkRenderer {
 			$realHtml = $html = null;
 		}
 		if ( !Hooks::run( 'LinkBegin',
-			[ $dummy, $title, &$html, &$extraAttribs, &$query, &$options, &$ret ] )
+			[ $dummy, $title, &$html, &$extraAttribs, &$query, &$options, &$ret ], '1.28' )
 		) {
 			return $ret;
 		}
@@ -225,7 +243,7 @@ class LinkRenderer {
 	}
 
 	/**
-	 * If you have already looked up the proper CSS classes using Linker::getLinkColour()
+	 * If you have already looked up the proper CSS classes using LinkRenderer::getLinkClasses()
 	 * or some other method, use this to avoid looking it up again.
 	 *
 	 * @param LinkTarget $target
@@ -236,7 +254,7 @@ class LinkRenderer {
 	 * @return string
 	 */
 	public function makePreloadedLink(
-		LinkTarget $target, $text = null, $classes, array $extraAttribs = [], array $query = []
+		LinkTarget $target, $text = null, $classes = '', array $extraAttribs = [], array $query = []
 	) {
 		// Run begin hook
 		$ret = $this->runBeginHook( $target, $text, $extraAttribs, $query, true );
@@ -276,7 +294,7 @@ class LinkRenderer {
 		if ( $target->isExternal() ) {
 			$classes[] = 'extiw';
 		}
-		$colour = Linker::getLinkColour( $target, $this->stubThreshold );
+		$colour = $this->getLinkClasses( $target );
 		if ( $colour !== '' ) {
 			$classes[] = $colour;
 		}
@@ -284,7 +302,7 @@ class LinkRenderer {
 		return $this->makePreloadedLink(
 			$target,
 			$text,
-			$classes ? implode( ' ', $classes ) : '',
+			implode( ' ', $classes ),
 			$extraAttribs,
 			$query
 		);
@@ -364,7 +382,7 @@ class LinkRenderer {
 			$title = Title::newFromLinkTarget( $target );
 			$options = $this->getLegacyOptions( $isKnown );
 			if ( !Hooks::run( 'LinkEnd',
-				[ $dummy, $title, $options, &$html, &$attribs, &$ret ] )
+				[ $dummy, $title, $options, &$html, &$attribs, &$ret ], '1.28' )
 			) {
 				return $ret;
 			}
@@ -391,16 +409,13 @@ class LinkRenderer {
 	private function getLinkURL( LinkTarget $target, array $query = [] ) {
 		// TODO: Use a LinkTargetResolver service instead of Title
 		$title = Title::newFromLinkTarget( $target );
-		$proto = $this->expandUrls !== false
-			? $this->expandUrls
-			: PROTO_RELATIVE;
 		if ( $this->forceArticlePath ) {
 			$realQuery = $query;
 			$query = [];
 		} else {
 			$realQuery = [];
 		}
-		$url = $title->getLinkURL( $query, false, $proto );
+		$url = $title->getLinkURL( $query, false, $this->expandUrls );
 
 		if ( $this->forceArticlePath && $realQuery ) {
 			$url = wfAppendQuery( $url, $realQuery );
@@ -445,4 +460,31 @@ class LinkRenderer {
 		return $ret;
 	}
 
+	/**
+	 * Return the CSS classes of a known link
+	 *
+	 * @param LinkTarget $target
+	 * @return string CSS class
+	 */
+	public function getLinkClasses( LinkTarget $target ) {
+		// Make sure the target is in the cache
+		$id = $this->linkCache->addLinkObj( $target );
+		if ( $id == 0 ) {
+			// Doesn't exist
+			return '';
+		}
+
+		if ( $this->linkCache->getGoodLinkFieldObj( $target, 'redirect' ) ) {
+			# Page is a redirect
+			return 'mw-redirect';
+		} elseif (
+			$this->stubThreshold > 0 && $this->nsInfo->isContent( $target->getNamespace() ) &&
+			$this->linkCache->getGoodLinkFieldObj( $target, 'length' ) < $this->stubThreshold
+		) {
+			# Page is a stub
+			return 'stub';
+		}
+
+		return '';
+	}
 }

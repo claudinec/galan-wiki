@@ -1,6 +1,6 @@
 <?php
 /**
- * Include most things that are needed to make %MediaWiki work.
+ * Include most things that are needed to make MediaWiki work.
  *
  * This file is included by WebStart.php and doMaintenance.php so that both
  * web and maintenance scripts share a final set up phase to include necessary
@@ -24,6 +24,8 @@
  * @file
  */
 use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\LBFactory;
+use Wikimedia\Rdbms\ChronologyProtector;
 
 /**
  * This file is not a valid entry point, perform no further processing unless
@@ -33,17 +35,104 @@ if ( !defined( 'MEDIAWIKI' ) ) {
 	exit( 1 );
 }
 
+// Check to see if we are at the file scope
+$wgScopeTest = 'MediaWiki Setup.php scope test';
+if ( !isset( $GLOBALS['wgScopeTest'] ) || $GLOBALS['wgScopeTest'] !== $wgScopeTest ) {
+	echo "Error, Setup.php must be included from the file scope.\n";
+	die( 1 );
+}
+unset( $wgScopeTest );
+
+/**
+ * Pre-config setup: Before loading LocalSettings.php
+ */
+
+// Sanity check (T5782, T122807)
+if ( ini_get( 'mbstring.func_overload' ) ) {
+	die( 'MediaWiki does not support installations where mbstring.func_overload is non-zero.' );
+}
+
+// Start the autoloader, so that extensions can derive classes from core files
+require_once "$IP/includes/AutoLoader.php";
+
+// Load up some global defines
+require_once "$IP/includes/Defines.php";
+
+// Load default settings
+require_once "$IP/includes/DefaultSettings.php";
+
+// Load global functions
+require_once "$IP/includes/GlobalFunctions.php";
+
+// Load composer's autoloader if present
+if ( is_readable( "$IP/vendor/autoload.php" ) ) {
+	require_once "$IP/vendor/autoload.php";
+} elseif ( file_exists( "$IP/vendor/autoload.php" ) ) {
+	die( "$IP/vendor/autoload.php exists but is not readable" );
+}
+
+// Assert that composer dependencies were successfully loaded
+// Purposely no leading \ due to it breaking HHVM RepoAuthorative mode
+// PHP works fine with both versions
+// See https://github.com/facebook/hhvm/issues/5833
+if ( !interface_exists( 'Psr\Log\LoggerInterface' ) ) {
+	$message = (
+		'MediaWiki requires the <a href="https://github.com/php-fig/log">PSR-3 logging ' .
+		"library</a> to be present. This library is not embedded directly in MediaWiki's " .
+		"git repository and must be installed separately by the end user.\n\n" .
+		'Please see <a href="https://www.mediawiki.org/wiki/Download_from_Git' .
+		'#Fetch_external_libraries">mediawiki.org</a> for help on installing ' .
+		'the required components.'
+	);
+	echo $message;
+	trigger_error( $message, E_USER_ERROR );
+	die( 1 );
+}
+
+// Install a header callback
+MediaWiki\HeaderCallback::register();
+
+/**
+ * Load LocalSettings.php
+ */
+
+if ( defined( 'MW_CONFIG_CALLBACK' ) ) {
+	call_user_func( MW_CONFIG_CALLBACK );
+} else {
+	if ( !defined( 'MW_CONFIG_FILE' ) ) {
+		define( 'MW_CONFIG_FILE', "$IP/LocalSettings.php" );
+	}
+	require_once MW_CONFIG_FILE;
+}
+
+/**
+ * Customization point after all loading (constants, functions, classes,
+ * DefaultSettings, LocalSettings). Specifically, this is before usage of
+ * settings, before instantiation of Profiler (and other singletons), and
+ * before any setup functions or hooks run.
+ */
+
+if ( defined( 'MW_SETUP_CALLBACK' ) ) {
+	call_user_func( MW_SETUP_CALLBACK );
+}
+
+/**
+ * Main setup
+ */
+
 $fname = 'Setup.php';
 $ps_setup = Profiler::instance()->scopedProfileIn( $fname );
 
-// If any extensions are still queued, force load them
+// Load queued extensions
 ExtensionRegistry::getInstance()->loadFromQueue();
+// Don't let any other extensions load
+ExtensionRegistry::getInstance()->finish();
 
-// Check to see if we are at the file scope
-if ( !isset( $wgVersion ) ) {
-	echo "Error, Setup.php must be included from the file scope, after DefaultSettings.php\n";
-	die( 1 );
-}
+mb_internal_encoding( 'UTF-8' );
+
+// Set the configured locale on all requests for consisteny
+putenv( "LC_ALL=$wgShellLocale" );
+setlocale( LC_ALL, $wgShellLocale );
 
 // Set various default paths sensibly...
 $ps_default = Profiler::instance()->scopedProfileIn( $fname . '-defaults' );
@@ -107,10 +196,6 @@ if ( $wgGitInfoCacheDirectory === false && $wgCacheDirectory !== false ) {
 	$wgGitInfoCacheDirectory = "{$wgCacheDirectory}/gitinfo";
 }
 
-if ( $wgEnableParserCache === false ) {
-	$wgParserCacheType = CACHE_NONE;
-}
-
 // Fix path to icon images after they were moved in 1.24
 if ( $wgRightsIcon ) {
 	$wgRightsIcon = str_replace(
@@ -165,24 +250,37 @@ $wgNamespaceAliases['Image_talk'] = NS_FILE_TALK;
  */
 $wgLockManagers[] = [
 	'name' => 'fsLockManager',
-	'class' => 'FSLockManager',
+	'class' => FSLockManager::class,
 	'lockDirectory' => "{$wgUploadDirectory}/lockdir",
 ];
 $wgLockManagers[] = [
 	'name' => 'nullLockManager',
-	'class' => 'NullLockManager',
+	'class' => NullLockManager::class,
 ];
 
 /**
- * Initialise $wgLocalFileRepo from backwards-compatible settings
+ * Default parameters for the "<gallery>" tag.
+ * @see DefaultSettings.php for description of the fields.
+ */
+$wgGalleryOptions += [
+	'imagesPerRow' => 0,
+	'imageWidth' => 120,
+	'imageHeight' => 120,
+	'captionLength' => true,
+	'showBytes' => true,
+	'showDimensions' => true,
+	'mode' => 'traditional',
+];
+
+/**
+ * Shortcuts for $wgLocalFileRepo
  */
 if ( !$wgLocalFileRepo ) {
 	$wgLocalFileRepo = [
-		'class' => 'LocalRepo',
+		'class' => LocalRepo::class,
 		'name' => 'local',
 		'directory' => $wgUploadDirectory,
 		'scriptDirUrl' => $wgScriptPath,
-		'scriptExtension' => '.php',
 		'url' => $wgUploadBaseUrl ? $wgUploadBaseUrl . $wgUploadPath : $wgUploadPath,
 		'hashLevels' => $wgHashedUploadDirectory ? 2 : 0,
 		'thumbScriptUrl' => $wgThumbnailScriptPath,
@@ -191,13 +289,20 @@ if ( !$wgLocalFileRepo ) {
 		'deletedHashLevels' => $wgHashedUploadDirectory ? 3 : 0
 	];
 }
+
+if ( !isset( $wgLocalFileRepo['backend'] ) ) {
+	// Create a default FileBackend name.
+	// FileBackendGroup will register a default, if absent from $wgFileBackends.
+	$wgLocalFileRepo['backend'] = $wgLocalFileRepo['name'] . '-backend';
+}
+
 /**
- * Initialise shared repo from backwards-compatible settings
+ * Shortcuts for $wgForeignFileRepos
  */
 if ( $wgUseSharedUploads ) {
 	if ( $wgSharedUploadDBname ) {
 		$wgForeignFileRepos[] = [
-			'class' => 'ForeignDBRepo',
+			'class' => ForeignDBRepo::class,
 			'name' => 'shared',
 			'directory' => $wgSharedUploadDirectory,
 			'url' => $wgSharedUploadPath,
@@ -217,7 +322,7 @@ if ( $wgUseSharedUploads ) {
 		];
 	} else {
 		$wgForeignFileRepos[] = [
-			'class' => 'FileRepo',
+			'class' => FileRepo::class,
 			'name' => 'shared',
 			'directory' => $wgSharedUploadDirectory,
 			'url' => $wgSharedUploadPath,
@@ -231,7 +336,7 @@ if ( $wgUseSharedUploads ) {
 }
 if ( $wgUseInstantCommons ) {
 	$wgForeignFileRepos[] = [
-		'class' => 'ForeignAPIRepo',
+		'class' => ForeignAPIRepo::class,
 		'name' => 'wikimediacommons',
 		'apibase' => 'https://commons.wikimedia.org/w/api.php',
 		'url' => 'https://upload.wikimedia.org/wikipedia/commons',
@@ -240,18 +345,11 @@ if ( $wgUseInstantCommons ) {
 		'transformVia404' => true,
 		'fetchDescription' => true,
 		'descriptionCacheExpiry' => 43200,
-		'apiThumbCacheExpiry' => 86400,
+		'apiThumbCacheExpiry' => 0,
 	];
 }
-/*
- * Add on default file backend config for file repos.
- * FileBackendGroup will handle initializing the backends.
- */
-if ( !isset( $wgLocalFileRepo['backend'] ) ) {
-	$wgLocalFileRepo['backend'] = $wgLocalFileRepo['name'] . '-backend';
-}
 foreach ( $wgForeignFileRepos as &$repo ) {
-	if ( !isset( $repo['directory'] ) && $repo['class'] === 'ForeignAPIRepo' ) {
+	if ( !isset( $repo['directory'] ) && $repo['class'] === ForeignAPIRepo::class ) {
 		$repo['directory'] = $wgUploadDirectory; // b/c
 	}
 	if ( !isset( $repo['backend'] ) ) {
@@ -267,11 +365,9 @@ if ( $wgRCFilterByAge ) {
 	// Note that we allow 1 link higher than the max for things like 56 days but a 60 day link.
 	sort( $wgRCLinkDays );
 
-	// @codingStandardsIgnoreStart Generic.CodeAnalysis.ForLoopWithTestFunctionCall.NotAllowed
-	for ( $i = 0; $i < count( $wgRCLinkDays ); $i++ ) {
-		// @codingStandardsIgnoreEnd
-		if ( $wgRCLinkDays[$i] >= $rcMaxAgeDays ) {
-			$wgRCLinkDays = array_slice( $wgRCLinkDays, 0, $i + 1, false );
+	foreach ( $wgRCLinkDays as $i => $days ) {
+		if ( $days >= $rcMaxAgeDays ) {
+			array_splice( $wgRCLinkDays, $i + 1 );
 			break;
 		}
 	}
@@ -325,7 +421,7 @@ if ( $wgEnableEmail ) {
 	$wgUseEnotif = $wgEnotifUserTalk || $wgEnotifWatchlist;
 } else {
 	// Disable all other email settings automatically if $wgEnableEmail
-	// is set to false. - bug 63678
+	// is set to false. - T65678
 	$wgAllowHTMLEmail = false;
 	$wgEmailAuthentication = false; // do not require auth if you're not sending email anyway
 	$wgEnableUserEmail = false;
@@ -396,16 +492,87 @@ $wgCanonicalNamespaceNames = [
 
 /// @todo UGLY UGLY
 if ( is_array( $wgExtraNamespaces ) ) {
-	$wgCanonicalNamespaceNames = $wgCanonicalNamespaceNames + $wgExtraNamespaces;
+	$wgCanonicalNamespaceNames += $wgExtraNamespaces;
+}
+
+// Hard-deprecate setting $wgDummyLanguageCodes in LocalSettings.php
+if ( count( $wgDummyLanguageCodes ) !== 0 ) {
+	wfDeprecated( '$wgDummyLanguageCodes', '1.29' );
+}
+// Merge in the legacy language codes, incorporating overrides from the config
+$wgDummyLanguageCodes += [
+	// Internal language codes of the private-use area which get mapped to
+	// themselves.
+	'qqq' => 'qqq', // Used for message documentation
+	'qqx' => 'qqx', // Used for viewing message keys
+] + $wgExtraLanguageCodes + LanguageCode::getDeprecatedCodeMapping();
+// Merge in (inverted) BCP 47 mappings
+foreach ( LanguageCode::getNonstandardLanguageCodeMapping() as $code => $bcp47 ) {
+	$bcp47 = strtolower( $bcp47 ); // force case-insensitivity
+	if ( !isset( $wgDummyLanguageCodes[$bcp47] ) ) {
+		$wgDummyLanguageCodes[$bcp47] = $wgDummyLanguageCodes[$code] ?? $code;
+	}
 }
 
 // These are now the same, always
 // To determine the user language, use $wgLang->getCode()
 $wgContLanguageCode = $wgLanguageCode;
 
+// Temporary backwards-compatibility reading of old Squid-named CDN settings as of MediaWiki 1.34,
+// to support sysadmins who fail to update their settings immediately:
+
+if ( isset( $wgUseSquid ) ) {
+	// If the sysadmin is still setting a value of $wgUseSquid to true but $wgUseCdn is the default of
+	// false, to be safe, assume they do want this still, so enable it.
+	if ( !$wgUseCdn && $wgUseSquid ) {
+		$wgUseCdn = $wgUseSquid;
+		wfDeprecated( '$wgUseSquid enabled but $wgUseCdn disabled; enabling CDN functions', '1.34' );
+	}
+} else {
+	// Backwards-compatibility for extensions that read this value.
+	$wgUseSquid = $wgUseCdn;
+}
+
+if ( isset( $wgSquidServers ) ) {
+	// If the sysadmin is still setting a value of $wgSquidServers but $wgCdnServers is the default of
+	// empty, to be safe, assume they do want these servers to be still used, so use them.
+	if ( !empty( $wgSquidServers ) && empty( $wgCdnServers ) ) {
+		$wgCdnServers = $wgSquidServers;
+		wfDeprecated( '$wgSquidServers set, $wgCdnServers empty; using them', '1.34' );
+	}
+} else {
+	// Backwards-compatibility for extensions that read this value.
+	$wgSquidServers = $wgCdnServers;
+}
+
+if ( isset( $wgSquidServersNoPurge ) ) {
+	// If the sysadmin is still setting values in $wgSquidServersNoPurge but $wgCdnServersNoPurge is
+	// the default of empty, to be safe, assume they do want these servers to be still used, so use
+	// them.
+	if ( !empty( $wgSquidServersNoPurge ) && empty( $wgCdnServersNoPurge ) ) {
+		$wgCdnServersNoPurge = $wgSquidServersNoPurge;
+		wfDeprecated( '$wgSquidServersNoPurge set, $wgCdnServersNoPurge empty; using them', '1.34' );
+	}
+} else {
+	// Backwards-compatibility for extensions that read this value.
+	$wgSquidServersNoPurge = $wgCdnServersNoPurge;
+}
+
+if ( isset( $wgSquidMaxage ) ) {
+	// If the sysadmin is still setting a value of $wgSquidMaxage and it's higher than $wgCdnMaxAge,
+	// to be safe, assume they want the higher (lower performance requirement) value, so use that.
+	if ( $wgCdnMaxAge < $wgSquidMaxage ) {
+		$wgCdnMaxAge = $wgSquidMaxage;
+		wfDeprecated( '$wgSquidMaxage set higher than $wgCdnMaxAge; using the higher value', '1.34' );
+	}
+} else {
+	// Backwards-compatibility for extensions that read this value.
+	$wgSquidMaxage = $wgCdnMaxAge;
+}
+
 // Easy to forget to falsify $wgDebugToolbar for static caches.
 // If file cache or CDN cache is on, just disable this (DWIMD).
-if ( $wgUseFileCache || $wgUseSquid ) {
+if ( $wgUseFileCache || $wgUseCdn ) {
 	$wgDebugToolbar = false;
 }
 
@@ -419,26 +586,32 @@ $wgJsMimeType = 'text/javascript';
 $wgFileExtensions = array_values( array_diff( $wgFileExtensions, $wgFileBlacklist ) );
 
 if ( $wgInvalidateCacheOnLocalSettingsChange ) {
-	MediaWiki\suppressWarnings();
+	Wikimedia\suppressWarnings();
 	$wgCacheEpoch = max( $wgCacheEpoch, gmdate( 'YmdHis', filemtime( "$IP/LocalSettings.php" ) ) );
-	MediaWiki\restoreWarnings();
+	Wikimedia\restoreWarnings();
 }
 
 if ( $wgNewUserLog ) {
-	// Add a new log type
+	// Add new user log type
 	$wgLogTypes[] = 'newusers';
 	$wgLogNames['newusers'] = 'newuserlogpage';
 	$wgLogHeaders['newusers'] = 'newuserlogpagetext';
-	$wgLogActionsHandlers['newusers/newusers'] = 'NewUsersLogFormatter';
-	$wgLogActionsHandlers['newusers/create'] = 'NewUsersLogFormatter';
-	$wgLogActionsHandlers['newusers/create2'] = 'NewUsersLogFormatter';
-	$wgLogActionsHandlers['newusers/byemail'] = 'NewUsersLogFormatter';
-	$wgLogActionsHandlers['newusers/autocreate'] = 'NewUsersLogFormatter';
+	$wgLogActionsHandlers['newusers/newusers'] = NewUsersLogFormatter::class;
+	$wgLogActionsHandlers['newusers/create'] = NewUsersLogFormatter::class;
+	$wgLogActionsHandlers['newusers/create2'] = NewUsersLogFormatter::class;
+	$wgLogActionsHandlers['newusers/byemail'] = NewUsersLogFormatter::class;
+	$wgLogActionsHandlers['newusers/autocreate'] = NewUsersLogFormatter::class;
+}
+
+if ( $wgPageCreationLog ) {
+	// Add page creation log type
+	$wgLogTypes[] = 'create';
+	$wgLogActionsHandlers['create/create'] = LogFormatter::class;
 }
 
 if ( $wgPageLanguageUseDB ) {
 	$wgLogTypes[] = 'pagelang';
-	$wgLogActionsHandlers['pagelang/pagelang'] = 'PageLangLogFormatter';
+	$wgLogActionsHandlers['pagelang/pagelang'] = PageLangLogFormatter::class;
 }
 
 if ( $wgCookieSecure === 'detect' ) {
@@ -450,22 +623,6 @@ if ( $wgProfileOnly ) {
 	$wgDebugLogFile = '';
 }
 
-// Disable AuthManager API modules if $wgDisableAuthManager
-if ( $wgDisableAuthManager ) {
-	$wgAPIModules += [
-		'clientlogin' => 'ApiDisabled',
-		'createaccount' => 'ApiCreateAccount', // Use the non-AuthManager version
-		'linkaccount' => 'ApiDisabled',
-		'unlinkaccount' => 'ApiDisabled',
-		'changeauthenticationdata' => 'ApiDisabled',
-		'removeauthenticationdata' => 'ApiDisabled',
-		'resetpassword' => 'ApiDisabled',
-	];
-	$wgAPIMetaModules += [
-		'authmanagerinfo' => 'ApiQueryDisabled',
-	];
-}
-
 // Backwards compatibility with old password limits
 if ( $wgMinimalPasswordLength !== false ) {
 	$wgPasswordPolicy['policies']['default']['MinimalPasswordLength'] = $wgMinimalPasswordLength;
@@ -474,21 +631,6 @@ if ( $wgMinimalPasswordLength !== false ) {
 if ( $wgMaximalPasswordLength !== false ) {
 	$wgPasswordPolicy['policies']['default']['MaximalPasswordLength'] = $wgMaximalPasswordLength;
 }
-
-// Backwards compatibility warning
-if ( !$wgSessionsInObjectCache && !$wgSessionsInMemcached ) {
-	wfDeprecated( '$wgSessionsInObjectCache = false', '1.27' );
-	if ( $wgSessionHandler ) {
-		wfDeprecated( '$wgSessionsHandler', '1.27' );
-	}
-	$cacheType = get_class( ObjectCache::getInstance( $wgSessionCacheType ) );
-	wfDebugLog(
-		'caches',
-		"Session data will be stored in \"$cacheType\" cache with " .
-			"expiry $wgObjectCacheSessionExpiry seconds"
-	);
-}
-$wgSessionsInObjectCache = true;
 
 if ( $wgPHPSessionHandling !== 'enable' &&
 	$wgPHPSessionHandling !== 'warn' &&
@@ -511,10 +653,6 @@ if ( $wgDebugToolbar && !$wgCommandLineMode ) {
 	MWDebug::init();
 }
 
-if ( !class_exists( 'AutoLoader' ) ) {
-	require_once "$IP/includes/AutoLoader.php";
-}
-
 // Reset the global service locator, so any services that have already been created will be
 // re-created while taking into account any custom settings and extensions.
 MediaWikiServices::resetGlobalInstance( new GlobalVarConfig(), 'quick' );
@@ -523,40 +661,7 @@ MediaWikiServices::resetGlobalInstance( new GlobalVarConfig(), 'quick' );
 // is complete.
 define( 'MW_SERVICE_BOOTSTRAP_COMPLETE', 1 );
 
-// Install a header callback to prevent caching of responses with cookies (T127993)
-if ( !$wgCommandLineMode ) {
-	header_register_callback( function () {
-		$headers = [];
-		foreach ( headers_list() as $header ) {
-			list( $name, $value ) = explode( ':', $header, 2 );
-			$headers[strtolower( trim( $name ) )][] = trim( $value );
-		}
-
-		if ( isset( $headers['set-cookie'] ) ) {
-			$cacheControl = isset( $headers['cache-control'] )
-				? implode( ', ', $headers['cache-control'] )
-				: '';
-
-			if ( !preg_match( '/(?:^|,)\s*(?:private|no-cache|no-store)\s*(?:$|,)/i', $cacheControl ) ) {
-				header( 'Expires: Thu, 01 Jan 1970 00:00:00 GMT' );
-				header( 'Cache-Control: private, max-age=0, s-maxage=0' );
-				MediaWiki\Logger\LoggerFactory::getInstance( 'cache-cookies' )->warning(
-					'Cookies set on {url} with Cache-Control "{cache-control}"', [
-						'url' => WebRequest::getGlobalRequestURL(),
-						'cookies' => $headers['set-cookie'],
-						'cache-control' => $cacheControl ?: '<not set>',
-					]
-				);
-			}
-		}
-	} );
-}
-
 MWExceptionHandler::installHandler();
-
-require_once "$IP/includes/compat/normal/UtfNormalUtil.php";
-
-$ps_validation = Profiler::instance()->scopedProfileIn( $fname . '-validation' );
 
 // T48998: Bail out early if $wgArticlePath is non-absolute
 foreach ( [ 'wgArticlePath', 'wgVariantArticlePath' ] as $varName ) {
@@ -569,8 +674,6 @@ foreach ( [ 'wgArticlePath', 'wgVariantArticlePath' ] as $varName ) {
 		);
 	}
 }
-
-Profiler::instance()->scopedProfileOut( $ps_validation );
 
 $ps_default2 = Profiler::instance()->scopedProfileIn( $fname . '-defaults2' );
 
@@ -624,15 +727,28 @@ if ( $wgMainWANCache === false ) {
 	// Sites using multiple datacenters can configure a relayer.
 	$wgMainWANCache = 'mediawiki-main-default';
 	$wgWANObjectCaches[$wgMainWANCache] = [
-		'class'    => 'WANObjectCache',
-		'cacheId'  => $wgMainCacheType,
-		'channels' => [ 'purge' => 'wancache-main-default-purge' ]
+		'class'    => WANObjectCache::class,
+		'cacheId'  => $wgMainCacheType
 	];
+}
+
+if ( $wgSharedDB && $wgSharedTables ) {
+	// Apply $wgSharedDB table aliases for the local LB (all non-foreign DB connections)
+	MediaWikiServices::getInstance()->getDBLoadBalancer()->setTableAliases(
+		array_fill_keys(
+			$wgSharedTables,
+			[
+				'dbname' => $wgSharedDB,
+				'schema' => $wgSharedSchema,
+				'prefix' => $wgSharedPrefix
+			]
+		)
+	);
 }
 
 Profiler::instance()->scopedProfileOut( $ps_default2 );
 
-$ps_misc = Profiler::instance()->scopedProfileIn( $fname . '-misc1' );
+$ps_misc = Profiler::instance()->scopedProfileIn( $fname . '-misc' );
 
 // Raise the memory limit if it's too low
 wfMemoryLimit();
@@ -643,22 +759,48 @@ wfMemoryLimit();
  * explicitly set. Inspired by phpMyAdmin's treatment of the problem.
  */
 if ( is_null( $wgLocaltimezone ) ) {
-	MediaWiki\suppressWarnings();
+	Wikimedia\suppressWarnings();
 	$wgLocaltimezone = date_default_timezone_get();
-	MediaWiki\restoreWarnings();
+	Wikimedia\restoreWarnings();
 }
 
 date_default_timezone_set( $wgLocaltimezone );
 if ( is_null( $wgLocalTZoffset ) ) {
 	$wgLocalTZoffset = date( 'Z' ) / 60;
 }
+// The part after the System| is ignored, but rest of MW fills it
+// out as the local offset.
+$wgDefaultUserOptions['timecorrection'] = "System|$wgLocalTZoffset";
 
 if ( !$wgDBerrorLogTZ ) {
 	$wgDBerrorLogTZ = $wgLocaltimezone;
 }
 
-// initialize the request object in $wgRequest
+// Initialize the request object in $wgRequest
 $wgRequest = RequestContext::getMain()->getRequest(); // BackCompat
+// Set user IP/agent information for agent session consistency purposes
+$cpPosInfo = LBFactory::getCPInfoFromCookieValue(
+	// The cookie has no prefix and is set by MediaWiki::preOutputCommit()
+	$wgRequest->getCookie( 'cpPosIndex', '' ),
+	// Mitigate broken client-side cookie expiration handling (T190082)
+	time() - ChronologyProtector::POSITION_COOKIE_TTL
+);
+MediaWikiServices::getInstance()->getDBLoadBalancerFactory()->setRequestInfo( [
+	'IPAddress' => $wgRequest->getIP(),
+	'UserAgent' => $wgRequest->getHeader( 'User-Agent' ),
+	'ChronologyProtection' => $wgRequest->getHeader( 'MediaWiki-Chronology-Protection' ),
+	'ChronologyPositionIndex' => $wgRequest->getInt( 'cpPosIndex', $cpPosInfo['index'] ),
+	'ChronologyClientId' => $cpPosInfo['clientId']
+		?? $wgRequest->getHeader( 'MediaWiki-Chronology-Client-Id' )
+] );
+unset( $cpPosInfo );
+// Make sure that object caching does not undermine the ChronologyProtector improvements
+if ( $wgRequest->getCookie( 'UseDC', '' ) === 'master' ) {
+	// The user is pinned to the primary DC, meaning that they made recent changes which should
+	// be reflected in their subsequent web requests. Avoid the use of interim cache keys because
+	// they use a blind TTL and could be stale if an object changes twice in a short time span.
+	MediaWikiServices::getInstance()->getMainWANObjectCache()->useInterimHoldOffCaching( false );
+}
 
 // Useful debug output
 if ( $wgCommandLineMode ) {
@@ -676,21 +818,18 @@ if ( $wgCommandLineMode ) {
 	wfDebug( $debug );
 }
 
-Profiler::instance()->scopedProfileOut( $ps_misc );
-$ps_memcached = Profiler::instance()->scopedProfileIn( $fname . '-memcached' );
-
-$wgMemc = wfGetMainCache();
+$wgMemc = ObjectCache::getLocalClusterInstance();
 $messageMemc = wfGetMessageCacheStorage();
-$parserMemc = wfGetParserCacheStorage();
 
 wfDebugLog( 'caches',
 	'cluster: ' . get_class( $wgMemc ) .
-	', WAN: ' . $wgMainWANCache .
+	', WAN: ' . ( $wgMainWANCache === CACHE_NONE ? 'CACHE_NONE' : $wgMainWANCache ) .
 	', stash: ' . $wgMainStash .
 	', message: ' . get_class( $messageMemc ) .
-	', parser: ' . get_class( $parserMemc ) );
+	', session: ' . get_class( ObjectCache::getInstance( $wgSessionCacheType ) )
+);
 
-Profiler::instance()->scopedProfileOut( $ps_memcached );
+Profiler::instance()->scopedProfileOut( $ps_misc );
 
 // Most of the config is out, some might want to run hooks here.
 Hooks::run( 'SetupAfterCache' );
@@ -699,34 +838,13 @@ $ps_globals = Profiler::instance()->scopedProfileIn( $fname . '-globals' );
 
 /**
  * @var Language $wgContLang
+ * @deprecated since 1.32, use the ContentLanguage service directly
  */
-$wgContLang = Language::factory( $wgLanguageCode );
-$wgContLang->initEncoding();
-$wgContLang->initContLang();
+$wgContLang = MediaWikiServices::getInstance()->getContentLanguage();
 
 // Now that variant lists may be available...
 $wgRequest->interpolateTitle();
 
-if ( !is_object( $wgAuth ) ) {
-	$wgAuth = $wgDisableAuthManager ? new AuthPlugin : new MediaWiki\Auth\AuthManagerAuthPlugin;
-	Hooks::run( 'AuthPluginSetup', [ &$wgAuth ] );
-}
-if ( !$wgDisableAuthManager &&
-	$wgAuth && !$wgAuth instanceof MediaWiki\Auth\AuthManagerAuthPlugin
-) {
-	MediaWiki\Auth\AuthManager::singleton()->forcePrimaryAuthenticationProviders( [
-		new MediaWiki\Auth\TemporaryPasswordPrimaryAuthenticationProvider( [
-			'authoritative' => false,
-		] ),
-		new MediaWiki\Auth\AuthPluginPrimaryAuthenticationProvider( $wgAuth ),
-		new MediaWiki\Auth\LocalPasswordPrimaryAuthenticationProvider( [
-			'authoritative' => true,
-		] ),
-	], '$wgAuth is ' . get_class( $wgAuth ) );
-}
-
-// Set up the session
-$ps_session = Profiler::instance()->scopedProfileIn( $fname . '-session' );
 /**
  * @var MediaWiki\Session\SessionId|null $wgInitialSessionId The persistent
  * session ID (if any) loaded at startup
@@ -735,7 +853,7 @@ $wgInitialSessionId = null;
 if ( !defined( 'MW_NO_SESSION' ) && !$wgCommandLineMode ) {
 	// If session.auto_start is there, we can't touch session name
 	if ( $wgPHPSessionHandling !== 'disable' && !wfIniGetBool( 'session.auto_start' ) ) {
-		session_name( $wgSessionName ? $wgSessionName : $wgCookiePrefix . '_session' );
+		session_name( $wgSessionName ?: $wgCookiePrefix . '_session' );
 	}
 
 	// Create the SessionManager singleton and set up our session handler,
@@ -773,11 +891,19 @@ if ( !defined( 'MW_NO_SESSION' ) && !$wgCommandLineMode ) {
 
 	$session->renew();
 	if ( MediaWiki\Session\PHPSessionHandler::isEnabled() &&
-		( $session->isPersistent() || $session->shouldRememberUser() )
+		( $session->isPersistent() || $session->shouldRememberUser() ) &&
+		session_id() !== $session->getId()
 	) {
 		// Start the PHP-session for backwards compatibility
+		if ( session_id() !== '' ) {
+			wfDebugLog( 'session', 'PHP session {old_id} was already started, changing to {new_id}', 'all', [
+				'old_id' => session_id(),
+				'new_id' => $session->getId(),
+			] );
+			session_write_close();
+		}
 		session_id( $session->getId() );
-		MediaWiki\quietCall( 'session_start' );
+		session_start();
 	}
 
 	unset( $session );
@@ -790,7 +916,6 @@ if ( !defined( 'MW_NO_SESSION' ) && !$wgCommandLineMode ) {
 		);
 	}
 }
-Profiler::instance()->scopedProfileOut( $ps_session );
 
 /**
  * @var User $wgUser
@@ -809,8 +934,11 @@ $wgOut = RequestContext::getMain()->getOutput(); // BackCompat
 
 /**
  * @var Parser $wgParser
+ * @deprecated since 1.32, use MediaWikiServices::getInstance()->getParser() instead
  */
-$wgParser = new StubObject( 'wgParser', $wgParserConf['class'], [ $wgParserConf ] );
+$wgParser = new StubObject( 'wgParser', function () {
+	return MediaWikiServices::getInstance()->getParser();
+} );
 
 /**
  * @var Title $wgTitle
@@ -825,22 +953,7 @@ $ps_extensions = Profiler::instance()->scopedProfileIn( $fname . '-extensions' )
 // of the extension file. This allows the extension to perform
 // any necessary initialisation in the fully initialised environment
 foreach ( $wgExtensionFunctions as $func ) {
-	// Allow closures in PHP 5.3+
-	if ( is_object( $func ) && $func instanceof Closure ) {
-		$profName = $fname . '-extensions-closure';
-	} elseif ( is_array( $func ) ) {
-		if ( is_object( $func[0] ) ) {
-			$profName = $fname . '-extensions-' . get_class( $func[0] ) . '::' . $func[1];
-		} else {
-			$profName = $fname . '-extensions-' . implode( '::', $func );
-		}
-	} else {
-		$profName = $fname . '-extensions-' . strval( $func );
-	}
-
-	$ps_ext_func = Profiler::instance()->scopedProfileIn( $profName );
 	call_user_func( $func );
-	Profiler::instance()->scopedProfileOut( $ps_ext_func );
 }
 
 // If the session user has a 0 id but a valid name, that means we need to
@@ -848,18 +961,12 @@ foreach ( $wgExtensionFunctions as $func ) {
 if ( !defined( 'MW_NO_SESSION' ) && !$wgCommandLineMode ) {
 	$sessionUser = MediaWiki\Session\SessionManager::getGlobalSession()->getUser();
 	if ( $sessionUser->getId() === 0 && User::isValidUserName( $sessionUser->getName() ) ) {
-		$ps_autocreate = Profiler::instance()->scopedProfileIn( $fname . '-autocreate' );
-		if ( $wgDisableAuthManager ) {
-			$res = MediaWiki\Session\SessionManager::autoCreateUser( $sessionUser );
-		} else {
-			$res = MediaWiki\Auth\AuthManager::singleton()->autoCreateUser(
-				$sessionUser,
-				MediaWiki\Auth\AuthManager::AUTOCREATE_SOURCE_SESSION,
-				true
-			);
-		}
-		Profiler::instance()->scopedProfileOut( $ps_autocreate );
-		\MediaWiki\Logger\LoggerFactory::getInstance( 'authmanager' )->info( 'Autocreation attempt', [
+		$res = MediaWiki\Auth\AuthManager::singleton()->autoCreateUser(
+			$sessionUser,
+			MediaWiki\Auth\AuthManager::AUTOCREATE_SOURCE_SESSION,
+			true
+		);
+		\MediaWiki\Logger\LoggerFactory::getInstance( 'authevents' )->info( 'Autocreation attempt', [
 			'event' => 'autocreate',
 			'status' => $res,
 		] );
@@ -868,7 +975,10 @@ if ( !defined( 'MW_NO_SESSION' ) && !$wgCommandLineMode ) {
 	unset( $sessionUser );
 }
 
-wfDebug( "Fully initialised\n" );
+if ( !$wgCommandLineMode ) {
+	Pingback::schedulePingback();
+}
+
 $wgFullyInitialised = true;
 
 Profiler::instance()->scopedProfileOut( $ps_extensions );

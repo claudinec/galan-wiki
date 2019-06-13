@@ -22,6 +22,8 @@
  */
 use MediaWiki\Linker\LinkTarget;
 use MediaWiki\MediaWikiServices;
+use Wikimedia\Rdbms\IResultWrapper;
+use Wikimedia\Rdbms\IDatabase;
 
 /**
  * Class representing a list of titles
@@ -40,7 +42,10 @@ class LinkBatch {
 	 */
 	protected $caller;
 
-	function __construct( $arr = [] ) {
+	/**
+	 * @param Traversable|LinkTarget[] $arr Initial items to be added to the batch
+	 */
+	public function __construct( $arr = [] ) {
 		foreach ( $arr as $item ) {
 			$this->addObj( $item );
 		}
@@ -52,9 +57,12 @@ class LinkBatch {
 	 * @since 1.17
 	 *
 	 * @param string $caller
+	 * @return self (since 1.32)
 	 */
 	public function setCaller( $caller ) {
 		$this->caller = $caller;
+
+		return $this;
 	}
 
 	/**
@@ -73,8 +81,8 @@ class LinkBatch {
 	 * @param string $dbkey
 	 */
 	public function add( $ns, $dbkey ) {
-		if ( $ns < 0 ) {
-			return;
+		if ( $ns < 0 || $dbkey === '' ) {
+			return; // T137083
 		}
 		if ( !array_key_exists( $ns, $this->data ) ) {
 			$this->data[$ns] = [];
@@ -126,7 +134,7 @@ class LinkBatch {
 	 * Do the query and add the results to a given LinkCache object
 	 * Return an array mapping PDBK to ID
 	 *
-	 * @param LinkCache $cache
+	 * @param LinkCache &$cache
 	 * @return array Remaining IDs
 	 */
 	protected function executeInto( &$cache ) {
@@ -144,7 +152,7 @@ class LinkBatch {
 	 * parsing to avoid extra DB queries.
 	 *
 	 * @param LinkCache $cache
-	 * @param ResultWrapper $res
+	 * @param IResultWrapper $res
 	 * @return array Array of remaining titles
 	 */
 	public function addResultToCache( $cache, $res ) {
@@ -168,7 +176,7 @@ class LinkBatch {
 		// The remaining links in $data are bad links, register them as such
 		foreach ( $remaining as $ns => $dbkeys ) {
 			foreach ( $dbkeys as $dbkey => $unused ) {
-				$title = new TitleValue( (int)$ns, $dbkey );
+				$title = new TitleValue( (int)$ns, (string)$dbkey );
 				$cache->addBadLinkObj( $title );
 				$pdbk = $titleFormatter->getPrefixedDBkey( $title );
 				$ids[$pdbk] = 0;
@@ -180,7 +188,7 @@ class LinkBatch {
 
 	/**
 	 * Perform the existence test query, return a ResultWrapper with page_id fields
-	 * @return bool|ResultWrapper
+	 * @return bool|IResultWrapper
 	 */
 	public function doQuery() {
 		if ( $this->isEmpty() ) {
@@ -188,7 +196,7 @@ class LinkBatch {
 		}
 
 		// This is similar to LinkHolderArray::replaceInternal
-		$dbr = wfGetDB( DB_SLAVE );
+		$dbr = wfGetDB( DB_REPLICA );
 		$table = 'page';
 		$fields = array_merge(
 			LinkCache::getSelectFields(),
@@ -216,13 +224,13 @@ class LinkBatch {
 		if ( $this->isEmpty() ) {
 			return false;
 		}
+		$services = MediaWikiServices::getInstance();
 
-		global $wgContLang;
-		if ( !$wgContLang->needsGenderDistinction() ) {
+		if ( !$services->getContentLanguage()->needsGenderDistinction() ) {
 			return false;
 		}
 
-		$genderCache = MediaWikiServices::getInstance()->getGenderCache();
+		$genderCache = $services->getGenderCache();
 		$genderCache->doLinkBatch( $this->data, $this->caller );
 
 		return true;
@@ -232,7 +240,7 @@ class LinkBatch {
 	 * Construct a WHERE clause which will match all the given titles.
 	 *
 	 * @param string $prefix The appropriate table's field name prefix ('page', 'pl', etc)
-	 * @param IDatabase $db DatabaseBase object to use
+	 * @param IDatabase $db DB object to use
 	 * @return string|bool String with SQL where clause fragment, or false if no items.
 	 */
 	public function constructSet( $prefix, $db ) {

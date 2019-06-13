@@ -29,24 +29,6 @@
 class FeedUtils {
 
 	/**
-	 * Check whether feed's cache should be cleared; for changes feeds
-	 * If the feed should be purged; $timekey and $key will be removed from cache
-	 *
-	 * @param string $timekey Cache key of the timestamp of the last item
-	 * @param string $key Cache key of feed's content
-	 */
-	public static function checkPurge( $timekey, $key ) {
-		global $wgRequest, $wgUser;
-
-		$purge = $wgRequest->getVal( 'action' ) === 'purge';
-		if ( $purge && $wgUser->isAllowed( 'purge' ) ) {
-			$cache = ObjectCache::getMainWANInstance();
-			$cache->delete( $timekey, 1 );
-			$cache->delete( $key, 1 );
-		}
-	}
-
-	/**
 	 * Check whether feeds can be used and that $type is a valid feed type
 	 *
 	 * @param string $type Feed type, as requested by the user
@@ -71,7 +53,8 @@ class FeedUtils {
 	/**
 	 * Format a diff for the newsfeed
 	 *
-	 * @param object $row Row from the recentchanges table
+	 * @param object $row Row from the recentchanges table, including fields as
+	 *  appropriate for CommentStore
 	 * @return string
 	 */
 	public static function formatDiff( $row ) {
@@ -87,7 +70,7 @@ class FeedUtils {
 			$timestamp,
 			$row->rc_deleted & Revision::DELETED_COMMENT
 				? wfMessage( 'rev-deleted-comment' )->escaped()
-				: $row->rc_comment,
+				: CommentStore::getStore()->getComment( 'rc_comment', $row )->text,
 			$actiontext
 		);
 	}
@@ -95,7 +78,7 @@ class FeedUtils {
 	/**
 	 * Really format a diff for the newsfeed
 	 *
-	 * @param Title $title Title object
+	 * @param Title $title
 	 * @param int $oldid Old revision's id
 	 * @param int $newid New revision's id
 	 * @param int $timestamp New revision's timestamp
@@ -128,13 +111,6 @@ class FeedUtils {
 		}
 
 		if ( $oldid ) {
-
-			# $diffText = $de->getDiff( wfMessage( 'revisionasof',
-			# 	$wgLang->timeanddate( $timestamp ),
-			# 	$wgLang->date( $timestamp ),
-			# 	$wgLang->time( $timestamp ) )->text(),
-			# 	wfMessage( 'currentrev' )->text() );
-
 			$diffText = '';
 			// Don't bother generating the diff if we won't be able to show it
 			if ( $wgFeedDiffCutoff > 0 ) {
@@ -178,7 +154,7 @@ class FeedUtils {
 
 			if ( $newContent instanceof TextContent ) {
 				// only textual content has a "source view".
-				$text = $newContent->getNativeData();
+				$text = $newContent->getText();
 
 				if ( $wgFeedDiffCutoff <= 0 || strlen( $text ) > $wgFeedDiffCutoff ) {
 					$html = null;
@@ -194,8 +170,7 @@ class FeedUtils {
 			}
 
 			if ( $html === null ) {
-
-				// Omit large new page diffs, bug 29110
+				// Omit large new page diffs, T31110
 				// Also use diff link for non-textual content
 				$diffText = self::getDiffLink( $title, $newid );
 			} else {
@@ -240,18 +215,18 @@ class FeedUtils {
 	 */
 	public static function applyDiffStyle( $text ) {
 		$styles = [
-			'diff'             => 'background-color: white; color:black;',
-			'diff-otitle'      => 'background-color: white; color:black; text-align: center;',
-			'diff-ntitle'      => 'background-color: white; color:black; text-align: center;',
-			'diff-addedline'   => 'color:black; font-size: 88%; border-style: solid; '
+			'diff'             => 'background-color: #fff; color: #222;',
+			'diff-otitle'      => 'background-color: #fff; color: #222; text-align: center;',
+			'diff-ntitle'      => 'background-color: #fff; color: #222; text-align: center;',
+			'diff-addedline'   => 'color: #222; font-size: 88%; border-style: solid; '
 				. 'border-width: 1px 1px 1px 4px; border-radius: 0.33em; border-color: #a3d3ff; '
 				. 'vertical-align: top; white-space: pre-wrap;',
-			'diff-deletedline' => 'color:black; font-size: 88%; border-style: solid; '
+			'diff-deletedline' => 'color: #222; font-size: 88%; border-style: solid; '
 				. 'border-width: 1px 1px 1px 4px; border-radius: 0.33em; border-color: #ffe49c; '
 				. 'vertical-align: top; white-space: pre-wrap;',
-			'diff-context'     => 'background-color: #f9f9f9; color: #333333; font-size: 88%; '
+			'diff-context'     => 'background-color: #f8f9fa; color: #222; font-size: 88%; '
 				. 'border-style: solid; border-width: 1px 1px 1px 4px; border-radius: 0.33em; '
-				. 'border-color: #e6e6e6; vertical-align: top; white-space: pre-wrap;',
+				. 'border-color: #eaecf0; vertical-align: top; white-space: pre-wrap;',
 			'diffchange'       => 'font-weight: bold; text-decoration: none;',
 		];
 

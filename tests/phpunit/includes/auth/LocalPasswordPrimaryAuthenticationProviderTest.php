@@ -2,25 +2,19 @@
 
 namespace MediaWiki\Auth;
 
+use MediaWiki\MediaWikiServices;
+use Wikimedia\TestingAccessWrapper;
+
 /**
  * @group AuthManager
  * @group Database
- * @covers MediaWiki\Auth\LocalPasswordPrimaryAuthenticationProvider
+ * @covers \MediaWiki\Auth\LocalPasswordPrimaryAuthenticationProvider
  */
 class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase {
 
 	private $manager = null;
 	private $config = null;
 	private $validity = null;
-
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
 
 	/**
 	 * Get an instance of the provider
@@ -37,19 +31,18 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		}
 		$config = new \MultiConfig( [
 			$this->config,
-			\ConfigFactory::getDefaultInstance()->makeConfig( 'main' )
+			MediaWikiServices::getInstance()->getMainConfig()
 		] );
 
 		if ( !$this->manager ) {
 			$this->manager = new AuthManager( new \FauxRequest(), $config );
 		}
 		$this->validity = \Status::newGood();
+		$provider = $this->getMockBuilder( LocalPasswordPrimaryAuthenticationProvider::class )
+			->setMethods( [ 'checkPasswordValidity' ] )
+			->setConstructorArgs( [ [ 'loginOnly' => $loginOnly ] ] )
+			->getMock();
 
-		$provider = $this->getMock(
-			LocalPasswordPrimaryAuthenticationProvider::class,
-			[ 'checkPasswordValidity' ],
-			[ [ 'loginOnly' => $loginOnly ] ]
-		);
 		$provider->expects( $this->any() )->method( 'checkPasswordValidity' )
 			->will( $this->returnCallback( function () {
 				return $this->validity;
@@ -139,7 +132,7 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$provider->setConfig( $this->config );
 		$provider->setLogger( new \Psr\Log\NullLogger() );
 		$provider->setManager( $this->manager );
-		$providerPriv = \TestingAccessWrapper::newFromObject( $provider );
+		$providerPriv = TestingAccessWrapper::newFromObject( $provider );
 
 		$user = $this->getMutableTestUser()->getUser();
 		$userName = $user->getName();
@@ -174,13 +167,31 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 
 		$this->manager->removeAuthenticationSessionData( null );
 		$row->user_password_expires = null;
-		$status = \Status::newGood();
+		$status = \Status::newGood( [ 'suggestChangeOnLogin' => true ] );
 		$status->error( 'testing' );
 		$providerPriv->setPasswordResetFlag( $userName, $status, $row );
 		$ret = $this->manager->getAuthenticationSessionData( 'reset-pass' );
 		$this->assertNotNull( $ret );
 		$this->assertSame( 'resetpass-validity-soft', $ret->msg->getKey() );
 		$this->assertFalse( $ret->hard );
+
+		$this->manager->removeAuthenticationSessionData( null );
+		$row->user_password_expires = null;
+		$status = \Status::newGood( [ 'forceChange' => true ] );
+		$status->error( 'testing' );
+		$providerPriv->setPasswordResetFlag( $userName, $status, $row );
+		$ret = $this->manager->getAuthenticationSessionData( 'reset-pass' );
+		$this->assertNotNull( $ret );
+		$this->assertSame( 'resetpass-validity', $ret->msg->getKey() );
+		$this->assertTrue( $ret->hard );
+
+		$this->manager->removeAuthenticationSessionData( null );
+		$row->user_password_expires = null;
+		$status = \Status::newGood( [ 'suggestChangeOnLogin' => false, ] );
+		$status->error( 'testing' );
+		$providerPriv->setPasswordResetFlag( $userName, $status, $row );
+		$ret = $this->manager->getAuthenticationSessionData( 'reset-pass' );
+		$this->assertNull( $ret );
 	}
 
 	public function testAuthentication() {
@@ -228,8 +239,12 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$req->password = 'DoesNotExist';
 		$ret = $provider->beginPrimaryAuthentication( $reqs );
 		$this->assertEquals(
-			AuthenticationResponse::newAbstain(),
-			$provider->beginPrimaryAuthentication( $reqs )
+			AuthenticationResponse::FAIL,
+			$ret->status
+		);
+		$this->assertEquals(
+			'wrongpassword',
+			$ret->message->getKey()
 		);
 
 		// Validation failure
@@ -268,6 +283,7 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 
 		// Successful auth with reset
 		$this->manager->removeAuthenticationSessionData( null );
+		$this->validity = \Status::newGood( [ 'suggestChangeOnLogin' => true ] );
 		$this->validity->error( 'arbitrary-warning' );
 		$this->assertEquals(
 			AuthenticationResponse::newPass( $userName ),
@@ -337,7 +353,6 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 			AuthenticationResponse::newPass( $userName ),
 			$provider->beginPrimaryAuthentication( $reqs )
 		);
-
 	}
 
 	/**
@@ -356,7 +371,7 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		} elseif ( $type === PasswordDomainAuthenticationRequest::class ) {
 			$req = new $type( [] );
 		} else {
-			$req = $this->getMock( $type );
+			$req = $this->createMock( $type );
 		}
 		$req->action = AuthManager::ACTION_CHANGE;
 		$req->username = $user;
@@ -452,14 +467,14 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		if ( $type === PasswordAuthenticationRequest::class ) {
 			$changeReq = new $type();
 		} else {
-			$changeReq = $this->getMock( $type );
+			$changeReq = $this->createMock( $type );
 		}
 		$changeReq->action = AuthManager::ACTION_CHANGE;
 		$changeReq->username = $user;
 		$changeReq->password = $newpass;
 		$provider->providerChangeAuthenticationData( $changeReq );
 
-		if ( $loginOnly ) {
+		if ( $loginOnly && $changed ) {
 			$old = 'fail';
 			$new = 'fail';
 			$expectExpiry = null;
@@ -517,7 +532,10 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 
 		$this->assertSame(
 			$expectExpiry,
-			$dbw->selectField( 'user', 'user_password_expires', [ 'user_name' => $cuser ] )
+			wfTimestampOrNull(
+				TS_MW,
+				$dbw->selectField( 'user', 'user_password_expires', [ 'user_name' => $cuser ] )
+			)
 		);
 	}
 
@@ -631,7 +649,7 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$req->password = 'bar';
 
 		$expect = AuthenticationResponse::newPass( 'Foo' );
-		$expect->createRequest = clone( $req );
+		$expect->createRequest = clone $req;
 		$expect->createRequest->username = 'Foo';
 		$this->assertEquals( $expect, $provider->beginPrimaryAccountCreation( $user, $user, $reqs ) );
 
@@ -654,7 +672,5 @@ class LocalPasswordPrimaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$this->assertNull( $provider->finishAccountCreation( $user, $user, $res2 ) );
 		$ret = $provider->beginPrimaryAuthentication( $reqs );
 		$this->assertEquals( AuthenticationResponse::PASS, $ret->status, 'new password is set' );
-
 	}
-
 }

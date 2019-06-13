@@ -11,6 +11,8 @@
  * @author Reedy
  */
 
+$fallback = 'pt';
+
 $namespaceNames = [
 	NS_MEDIA            => 'Media',
 	NS_SPECIAL          => 'Espesiál',
@@ -69,4 +71,3 @@ $specialPageAliases = [
 	'Whatlinkshere'             => [ 'Pájina_sira_ne\'ebé_bá_iha_ne\'e' ],
 	'Withoutinterwiki'          => [ 'Laiha_interwiki' ],
 ];
-

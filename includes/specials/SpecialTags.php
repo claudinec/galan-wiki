@@ -34,14 +34,14 @@ class SpecialTags extends SpecialPage {
 	protected $explicitlyDefinedTags;
 
 	/**
-	 * @var array List of extension defined tags
+	 * @var array List of software defined tags
 	 */
-	protected $extensionDefinedTags;
+	protected $softwareDefinedTags;
 
 	/**
-	 * @var array List of extension activated tags
+	 * @var array List of software activated tags
 	 */
-	protected $extensionActivatedTags;
+	protected $softwareActivatedTags;
 
 	function __construct() {
 		parent::__construct( 'Tags' );
@@ -98,7 +98,7 @@ class SpecialTags extends SpecialPage {
 				],
 			];
 
-			$form = new HTMLForm( $fields, $this->getContext() );
+			$form = HTMLForm::factory( 'ooui', $fields, $this->getContext() );
 			$form->setAction( $this->getPageTitle( 'create' )->getLocalURL() );
 			$form->setWrapperLegendMsg( 'tags-create-heading' );
 			$form->setHeaderText( $this->msg( 'tags-create-explanation' )->parseAsBlock() );
@@ -110,7 +110,7 @@ class SpecialTags extends SpecialPage {
 			// continuing with this, as the user is just going to end up getting sent
 			// somewhere else. Additionally, if we keep going here, we end up
 			// populating the memcache of tag data (see ChangeTags::listDefinedTags)
-			// with out-of-date data from the slave, because the slave hasn't caught
+			// with out-of-date data from the replica DB, because the replica DB hasn't caught
 			// up to the fact that a new tag has been created as part of an implicit,
 			// as yet uncommitted transaction on master.
 			if ( $out->getRedirect() !== '' ) {
@@ -124,12 +124,11 @@ class SpecialTags extends SpecialPage {
 		// Used in #doTagRow()
 		$this->explicitlyDefinedTags = array_fill_keys(
 			ChangeTags::listExplicitlyDefinedTags(), true );
-		$this->extensionDefinedTags = array_fill_keys(
-			ChangeTags::listExtensionDefinedTags(), true );
+		$this->softwareDefinedTags = array_fill_keys(
+			ChangeTags::listSoftwareDefinedTags(), true );
 
 		// List all defined tags, even if they were never applied
-		$definedTags = array_keys( array_merge(
-			$this->explicitlyDefinedTags, $this->extensionDefinedTags ) );
+		$definedTags = array_keys( $this->explicitlyDefinedTags + $this->softwareDefinedTags );
 
 		// Show header only if there exists atleast one tag
 		if ( !$tagStats && !$definedTags ) {
@@ -137,38 +136,42 @@ class SpecialTags extends SpecialPage {
 		}
 
 		// Write the headers
-		$html = Xml::tags( 'tr', null, Xml::tags( 'th', null, $this->msg( 'tags-tag' )->parse() ) .
+		$thead = Xml::tags( 'tr', null, Xml::tags( 'th', null, $this->msg( 'tags-tag' )->parse() ) .
 			Xml::tags( 'th', null, $this->msg( 'tags-display-header' )->parse() ) .
 			Xml::tags( 'th', null, $this->msg( 'tags-description-header' )->parse() ) .
 			Xml::tags( 'th', null, $this->msg( 'tags-source-header' )->parse() ) .
 			Xml::tags( 'th', null, $this->msg( 'tags-active-header' )->parse() ) .
 			Xml::tags( 'th', null, $this->msg( 'tags-hitcount-header' )->parse() ) .
-			( $userCanManage ?
+			( ( $userCanManage || $userCanDelete ) ?
 				Xml::tags( 'th', [ 'class' => 'unsortable' ],
 					$this->msg( 'tags-actions-header' )->parse() ) :
 				'' )
 		);
 
+		$tbody = '';
 		// Used in #doTagRow()
-		$this->extensionActivatedTags = array_fill_keys(
-			ChangeTags::listExtensionActivatedTags(), true );
+		$this->softwareActivatedTags = array_fill_keys(
+			ChangeTags::listSoftwareActivatedTags(), true );
 
 		// Insert tags that have been applied at least once
 		foreach ( $tagStats as $tag => $hitcount ) {
-			$html .= $this->doTagRow( $tag, $hitcount, $userCanManage,
+			$tbody .= $this->doTagRow( $tag, $hitcount, $userCanManage,
 				$userCanDelete, $userCanEditInterface );
 		}
 		// Insert tags defined somewhere but never applied
 		foreach ( $definedTags as $tag ) {
 			if ( !isset( $tagStats[$tag] ) ) {
-				$html .= $this->doTagRow( $tag, 0, $userCanManage, $userCanDelete, $userCanEditInterface );
+				$tbody .= $this->doTagRow( $tag, 0, $userCanManage, $userCanDelete, $userCanEditInterface );
 			}
 		}
 
+		$out->addModuleStyles( 'jquery.tablesorter.styles' );
+		$out->addModules( 'jquery.tablesorter' );
 		$out->addHTML( Xml::tags(
 			'table',
 			[ 'class' => 'mw-datatable sortable mw-tags-table' ],
-			$html
+			Xml::tags( 'thead', null, $thead ) .
+			Xml::tags( 'tbody', null, $tbody )
 		) );
 	}
 
@@ -176,12 +179,13 @@ class SpecialTags extends SpecialPage {
 		$newRow = '';
 		$newRow .= Xml::tags( 'td', null, Xml::element( 'code', null, $tag ) );
 
-		$disp = ChangeTags::tagDescription( $tag );
+		$linkRenderer = $this->getLinkRenderer();
+		$disp = ChangeTags::tagDescription( $tag, $this->getContext() );
 		if ( $showEditLinks ) {
 			$disp .= ' ';
-			$editLink = Linker::link(
+			$editLink = $linkRenderer->makeLink(
 				$this->msg( "tag-$tag" )->inContentLanguage()->getTitle(),
-				$this->msg( 'tags-edit' )->escaped()
+				$this->msg( 'tags-edit' )->text()
 			);
 			$disp .= $this->msg( 'parentheses' )->rawParams( $editLink )->escaped();
 		}
@@ -191,18 +195,19 @@ class SpecialTags extends SpecialPage {
 		$desc = !$msg->exists() ? '' : $msg->parse();
 		if ( $showEditLinks ) {
 			$desc .= ' ';
-			$editDescLink = Linker::link(
+			$editDescLink = $linkRenderer->makeLink(
 				$this->msg( "tag-$tag-description" )->inContentLanguage()->getTitle(),
-				$this->msg( 'tags-edit' )->escaped()
+				$this->msg( 'tags-edit' )->text()
 			);
 			$desc .= $this->msg( 'parentheses' )->rawParams( $editDescLink )->escaped();
 		}
 		$newRow .= Xml::tags( 'td', null, $desc );
 
 		$sourceMsgs = [];
-		$isExtension = isset( $this->extensionDefinedTags[$tag] );
+		$isSoftware = isset( $this->softwareDefinedTags[$tag] );
 		$isExplicit = isset( $this->explicitlyDefinedTags[$tag] );
-		if ( $isExtension ) {
+		if ( $isSoftware ) {
+			// TODO: Rename this message
 			$sourceMsgs[] = $this->msg( 'tags-source-extension' )->escaped();
 		}
 		if ( $isExplicit ) {
@@ -213,55 +218,54 @@ class SpecialTags extends SpecialPage {
 		}
 		$newRow .= Xml::tags( 'td', null, implode( Xml::element( 'br' ), $sourceMsgs ) );
 
-		$isActive = $isExplicit || isset( $this->extensionActivatedTags[$tag] );
+		$isActive = $isExplicit || isset( $this->softwareActivatedTags[$tag] );
 		$activeMsg = ( $isActive ? 'tags-active-yes' : 'tags-active-no' );
 		$newRow .= Xml::tags( 'td', null, $this->msg( $activeMsg )->escaped() );
 
-		$hitcountLabel = $this->msg( 'tags-hitcount' )->numParams( $hitcount )->escaped();
+		$hitcountLabelMsg = $this->msg( 'tags-hitcount' )->numParams( $hitcount );
 		if ( $this->getConfig()->get( 'UseTagFilter' ) ) {
-			$hitcountLabel = Linker::link(
+			$hitcountLabel = $linkRenderer->makeLink(
 				SpecialPage::getTitleFor( 'Recentchanges' ),
-				$hitcountLabel,
+				$hitcountLabelMsg->text(),
 				[],
 				[ 'tagfilter' => $tag ]
 			);
+		} else {
+			$hitcountLabel = $hitcountLabelMsg->escaped();
 		}
 
 		// add raw $hitcount for sorting, because tags-hitcount contains numbers and letters
 		$newRow .= Xml::tags( 'td', [ 'data-sort-value' => $hitcount ], $hitcountLabel );
 
-		// actions
 		$actionLinks = [];
 
-		// delete
 		if ( $showDeleteActions && ChangeTags::canDeleteTag( $tag )->isOK() ) {
-			$actionLinks[] = Linker::linkKnown( $this->getPageTitle( 'delete' ),
-				$this->msg( 'tags-delete' )->escaped(),
+			$actionLinks[] = $linkRenderer->makeKnownLink(
+				$this->getPageTitle( 'delete' ),
+				$this->msg( 'tags-delete' )->text(),
 				[],
 				[ 'tag' => $tag ] );
 		}
 
 		if ( $showManageActions ) { // we've already checked that the user had the requisite userright
-
-			// activate
 			if ( ChangeTags::canActivateTag( $tag )->isOK() ) {
-				$actionLinks[] = Linker::linkKnown( $this->getPageTitle( 'activate' ),
-					$this->msg( 'tags-activate' )->escaped(),
+				$actionLinks[] = $linkRenderer->makeKnownLink(
+					$this->getPageTitle( 'activate' ),
+					$this->msg( 'tags-activate' )->text(),
 					[],
 					[ 'tag' => $tag ] );
 			}
 
-			// deactivate
 			if ( ChangeTags::canDeactivateTag( $tag )->isOK() ) {
-				$actionLinks[] = Linker::linkKnown( $this->getPageTitle( 'deactivate' ),
-					$this->msg( 'tags-deactivate' )->escaped(),
+				$actionLinks[] = $linkRenderer->makeKnownLink(
+					$this->getPageTitle( 'deactivate' ),
+					$this->msg( 'tags-deactivate' )->text(),
 					[],
 					[ 'tag' => $tag ] );
 			}
-
 		}
 
-		if ( $actionLinks ) {
+		if ( $showDeleteActions || $showManageActions ) {
 			$newRow .= Xml::tags( 'td', null, $this->getLanguage()->pipeList( $actionLinks ) );
 		}
 
@@ -303,10 +307,10 @@ class SpecialTags extends SpecialPage {
 
 			$headerText = $this->msg( 'tags-create-warnings-above', $tag,
 				count( $status->getWarningsArray() ) )->parseAsBlock() .
-				$out->parse( $status->getWikiText() ) .
+				$out->parseAsInterface( $status->getWikiText() ) .
 				$this->msg( 'tags-create-warnings-below' )->parseAsBlock();
 
-			$subform = new HTMLForm( $fields, $this->getContext() );
+			$subform = HTMLForm::factory( 'ooui', $fields, $this->getContext() );
 			$subform->setAction( $this->getPageTitle( 'create' )->getLocalURL() );
 			$subform->setWrapperLegendMsg( 'tags-create-heading' );
 			$subform->setHeaderText( $headerText );
@@ -317,8 +321,7 @@ class SpecialTags extends SpecialPage {
 			$out->addBacklinkSubtitle( $this->getPageTitle() );
 			return true;
 		} else {
-			$out->addWikiText( "<div class=\"error\">\n" . $status->getWikiText() .
-				"\n</div>" );
+			$out->wrapWikiTextAsInterface( 'error', $status->getWikiText() );
 			return false;
 		}
 	}
@@ -336,8 +339,7 @@ class SpecialTags extends SpecialPage {
 		// is the tag actually able to be deleted?
 		$canDeleteResult = ChangeTags::canDeleteTag( $tag, $user );
 		if ( !$canDeleteResult->isGood() ) {
-			$out->addWikiText( "<div class=\"error\">\n" . $canDeleteResult->getWikiText() .
-				"\n</div>" );
+			$out->wrapWikiTextAsInterface( 'error', $canDeleteResult->getWikiText() );
 			if ( !$canDeleteResult->isOK() ) {
 				return;
 			}
@@ -352,9 +354,9 @@ class SpecialTags extends SpecialPage {
 		$preText .= $this->msg( 'tags-delete-explanation-warning', $tag )->parseAsBlock();
 
 		// see if the tag is in use
-		$this->extensionActivatedTags = array_fill_keys(
-			ChangeTags::listExtensionActivatedTags(), true );
-		if ( isset( $this->extensionActivatedTags[$tag] ) ) {
+		$this->softwareActivatedTags = array_fill_keys(
+			ChangeTags::listSoftwareActivatedTags(), true );
+		if ( isset( $this->softwareActivatedTags[$tag] ) ) {
 			$preText .= $this->msg( 'tags-delete-explanation-active', $tag )->parseAsBlock();
 		}
 
@@ -371,7 +373,7 @@ class SpecialTags extends SpecialPage {
 			'required' => true,
 		];
 
-		$form = new HTMLForm( $fields, $this->getContext() );
+		$form = HTMLForm::factory( 'ooui', $fields, $this->getContext() );
 		$form->setAction( $this->getPageTitle( 'delete' )->getLocalURL() );
 		$form->tagAction = 'delete'; // custom property on HTMLForm object
 		$form->setSubmitCallback( [ $this, 'processTagForm' ] );
@@ -398,8 +400,7 @@ class SpecialTags extends SpecialPage {
 		$func = $activate ? 'canActivateTag' : 'canDeactivateTag';
 		$result = ChangeTags::$func( $tag, $user );
 		if ( !$result->isGood() ) {
-			$out->addWikiText( "<div class=\"error\">\n" . $result->getWikiText() .
-				"\n</div>" );
+			$out->wrapWikiTextAsInterface( 'error', $result->getWikiText() );
 			if ( !$result->isOK() ) {
 				return;
 			}
@@ -422,7 +423,7 @@ class SpecialTags extends SpecialPage {
 			'required' => true,
 		];
 
-		$form = new HTMLForm( $fields, $this->getContext() );
+		$form = HTMLForm::factory( 'ooui', $fields, $this->getContext() );
 		$form->setAction( $this->getPageTitle( $actionStr )->getLocalURL() );
 		$form->tagAction = $actionStr;
 		$form->setSubmitCallback( [ $this, 'processTagForm' ] );
@@ -437,7 +438,7 @@ class SpecialTags extends SpecialPage {
 		$out = $context->getOutput();
 
 		$tag = $data['HiddenTag'];
-		$status = call_user_func( [ 'ChangeTags', "{$form->tagAction}TagWithChecks" ],
+		$status = call_user_func( [ ChangeTags::class, "{$form->tagAction}TagWithChecks" ],
 			$tag, $data['Reason'], $context->getUser(), true );
 
 		if ( $status->isGood() ) {
@@ -445,14 +446,13 @@ class SpecialTags extends SpecialPage {
 			return true;
 		} elseif ( $status->isOK() && $form->tagAction === 'delete' ) {
 			// deletion succeeded, but hooks raised a warning
-			$out->addWikiText( $this->msg( 'tags-delete-warnings-after-delete', $tag,
+			$out->addWikiTextAsInterface( $this->msg( 'tags-delete-warnings-after-delete', $tag,
 				count( $status->getWarningsArray() ) )->text() . "\n" .
 				$status->getWikitext() );
 			$out->addReturnTo( $this->getPageTitle() );
 			return true;
 		} else {
-			$out->addWikiText( "<div class=\"error\">\n" . $status->getWikitext() .
-				"\n</div>" );
+			$out->wrapWikiTextAsInterface( 'error', $status->getWikitext() );
 			return false;
 		}
 	}

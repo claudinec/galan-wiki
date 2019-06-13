@@ -1,28 +1,12 @@
 <?php
 
-class DatabaseSqliteMock extends DatabaseSqlite {
-	private $lastQuery;
-
-	public static function newInstance( array $p = [] ) {
-		$p['dbFilePath'] = ':memory:';
-		$p['schema'] = false;
-
-		return DatabaseBase::factory( 'SqliteMock', $p );
-	}
-
-	function query( $sql, $fname = '', $tempIgnore = false ) {
-		$this->lastQuery = $sql;
-
-		return true;
-	}
-
-	/**
-	 * Override parent visibility to public
-	 */
-	public function replaceVars( $s ) {
-		return parent::replaceVars( $s );
-	}
-}
+use Psr\Log\NullLogger;
+use Wikimedia\Rdbms\Blob;
+use Wikimedia\Rdbms\Database;
+use Wikimedia\Rdbms\DatabaseSqlite;
+use Wikimedia\Rdbms\ResultWrapper;
+use Wikimedia\Rdbms\TransactionProfiler;
+use Wikimedia\TestingAccessWrapper;
 
 /**
  * @group sqlite
@@ -30,7 +14,7 @@ class DatabaseSqliteMock extends DatabaseSqlite {
  * @group medium
  */
 class DatabaseSqliteTest extends MediaWikiTestCase {
-	/** @var DatabaseSqliteMock */
+	/** @var DatabaseSqlite */
 	protected $db;
 
 	protected function setUp() {
@@ -39,15 +23,41 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		if ( !Sqlite::isPresent() ) {
 			$this->markTestSkipped( 'No SQLite support detected' );
 		}
-		$this->db = DatabaseSqliteMock::newInstance();
+		$this->db = $this->getMockBuilder( DatabaseSqlite::class )
+			->setConstructorArgs( [ [
+				'dbFilePath' => ':memory:',
+				'schema' => false,
+				'host' => false,
+				'user' => false,
+				'password' => false,
+				'tablePrefix' => '',
+				'cliMode' => true,
+				'agent' => 'unit-tests',
+				'flags' => DBO_DEFAULT,
+				'variables' => [],
+				'profiler' => null,
+				'trxProfiler' => new TransactionProfiler(),
+				'connLogger' => new NullLogger(),
+				'queryLogger' => new NullLogger(),
+				'errorLogger' => null,
+				'deprecationLogger' => null,
+			] ] )->setMethods( [ 'query' ] )
+			->getMock();
+		$this->db->initConnection();
+		$this->db->method( 'query' )->willReturn( true );
 		if ( version_compare( $this->db->getServerVersion(), '3.6.0', '<' ) ) {
 			$this->markTestSkipped( "SQLite at least 3.6 required, {$this->db->getServerVersion()} found" );
 		}
 	}
 
+	/**
+	 * @param $sql
+	 * @return string|string[]|null
+	 */
 	private function replaceVars( $sql ) {
+		$wrapper = TestingAccessWrapper::newFromObject( $this->db );
 		// normalize spacing to hide implementation details
-		return preg_replace( '/\s+/', ' ', $this->db->replaceVars( $sql ) );
+		return preg_replace( '/\s+/', ' ', $wrapper->replaceVars( $sql ) );
 	}
 
 	private function assertResultIs( $expected, $res ) {
@@ -82,6 +92,10 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 			[ // #4: blob object (must be represented as hex)
 				new Blob( "hello" ),
 				"x'68656c6c6f'",
+			],
+			[ // #5: null
+				null,
+				"''",
 			],
 		];
 	}
@@ -120,7 +134,7 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 
 		$this->assertEquals(
 			"CREATE TABLE /**/foo (foo_key INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
-				. "foo_bar TEXT, foo_name TEXT NOT NULL DEFAULT '', foo_int INTEGER, foo_int2 INTEGER );",
+			. "foo_bar TEXT, foo_name TEXT NOT NULL DEFAULT '', foo_int INTEGER, foo_int2 INTEGER );",
 			$this->replaceVars(
 				"CREATE TABLE /**/foo (foo_key int unsigned NOT NULL PRIMARY KEY AUTO_INCREMENT, "
 				. "foo_bar char(13), foo_name varchar(255) binary NOT NULL DEFAULT '', "
@@ -179,9 +193,9 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
 		$this->assertEquals( 'foo', $db->tableName( 'foo' ) );
 		$this->assertEquals( 'sqlite_master', $db->tableName( 'sqlite_master' ) );
-		$db->tablePrefix( 'foo' );
+		$db->tablePrefix( 'foo_' );
 		$this->assertEquals( 'sqlite_master', $db->tableName( 'sqlite_master' ) );
-		$this->assertEquals( 'foobar', $db->tableName( 'bar' ) );
+		$this->assertEquals( 'foo_bar', $db->tableName( 'bar' ) );
 	}
 
 	/**
@@ -255,28 +269,31 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		$db->query( 'CREATE TABLE a (a_1)', __METHOD__ );
 		$db->query( 'CREATE TABLE b (b_1, b_2)', __METHOD__ );
 		$db->insert( 'a', [
-				[ 'a_1' => 1 ],
-				[ 'a_1' => 2 ],
-				[ 'a_1' => 3 ],
-			],
+			[ 'a_1' => 1 ],
+			[ 'a_1' => 2 ],
+			[ 'a_1' => 3 ],
+		],
 			__METHOD__
 		);
 		$db->insert( 'b', [
-				[ 'b_1' => 2, 'b_2' => 'a' ],
-				[ 'b_1' => 3, 'b_2' => 'b' ],
-			],
+			[ 'b_1' => 2, 'b_2' => 'a' ],
+			[ 'b_1' => 3, 'b_2' => 'b' ],
+		],
 			__METHOD__
 		);
 		$db->deleteJoin( 'a', 'b', 'a_1', 'b_1', [ 'b_2' => 'a' ], __METHOD__ );
 		$res = $db->query( "SELECT * FROM a", __METHOD__ );
 		$this->assertResultIs( [
-				[ 'a_1' => 1 ],
-				[ 'a_1' => 3 ],
-			],
+			[ 'a_1' => 1 ],
+			[ 'a_1' => 3 ],
+		],
 			$res
 		);
 	}
 
+	/**
+	 * @coversNothing
+	 */
 	public function testEntireSchema() {
 		global $IP;
 
@@ -290,6 +307,7 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 	/**
 	 * Runs upgrades of older databases and compares results with current schema
 	 * @todo Currently only checks list of tables
+	 * @coversNothing
 	 */
 	public function testUpgrades() {
 		global $IP, $wgVersion, $wgProfiler;
@@ -302,6 +320,11 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 			'1.16',
 			'1.17',
 			'1.18',
+			'1.19',
+			'1.20',
+			'1.21',
+			'1.22',
+			'1.23',
 		];
 
 		// Mismatches for these columns we can safely ignore
@@ -380,12 +403,34 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
 
 		$databaseCreation = $db->query( 'CREATE TABLE a ( a_1 )', __METHOD__ );
-		$this->assertInstanceOf( 'ResultWrapper', $databaseCreation, "Database creation" );
+		$this->assertInstanceOf( ResultWrapper::class, $databaseCreation, "Database creation" );
 
 		$insertion = $db->insert( 'a', [ 'a_1' => 10 ], __METHOD__ );
 		$this->assertTrue( $insertion, "Insertion worked" );
 
 		$this->assertInternalType( 'integer', $db->insertId(), "Actual typecheck" );
+		$this->assertTrue( $db->close(), "closing database" );
+	}
+
+	/**
+	 * @covers DatabaseSqlite::insert
+	 */
+	public function testInsertAffectedRows() {
+		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
+		$db->query( 'CREATE TABLE testInsertAffectedRows ( foo )', __METHOD__ );
+
+		$insertion = $db->insert(
+			'testInsertAffectedRows',
+			[
+				[ 'foo' => 10 ],
+				[ 'foo' => 12 ],
+				[ 'foo' => 1555 ],
+			],
+			__METHOD__
+		);
+		$this->assertTrue( $insertion, "Insertion worked" );
+
+		$this->assertSame( 3, $db->affectedRows() );
 		$this->assertTrue( $db->close(), "closing database" );
 	}
 
@@ -458,6 +503,9 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		return $indexes;
 	}
 
+	/**
+	 * @coversNothing
+	 */
 	public function testCaseInsensitiveLike() {
 		// TODO: Test this for all databases
 		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
@@ -473,7 +521,7 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
 
 		$databaseCreation = $db->query( 'CREATE TABLE a ( a_1 )', __METHOD__ );
-		$this->assertInstanceOf( 'ResultWrapper', $databaseCreation, "Failed to create table a" );
+		$this->assertInstanceOf( ResultWrapper::class, $databaseCreation, "Failed to create table a" );
 		$res = $db->select( 'a', '*' );
 		$this->assertEquals( 0, $db->numFields( $res ), "expects to get 0 fields for an empty table" );
 		$insertion = $db->insert( 'a', [ 'a_1' => 10 ], __METHOD__ );
@@ -484,11 +532,22 @@ class DatabaseSqliteTest extends MediaWikiTestCase {
 		$this->assertTrue( $db->close(), "closing database" );
 	}
 
+	/**
+	 * @covers \Wikimedia\Rdbms\DatabaseSqlite::__toString
+	 */
 	public function testToString() {
 		$db = DatabaseSqlite::newStandaloneInstance( ':memory:' );
 
 		$toString = (string)$db;
 
 		$this->assertContains( 'SQLite ', $toString );
+	}
+
+	/**
+	 * @covers \Wikimedia\Rdbms\DatabaseSqlite::getAttributes()
+	 */
+	public function testsAttributes() {
+		$attributes = Database::attributesFromType( 'sqlite' );
+		$this->assertTrue( $attributes[Database::ATTR_DB_LEVEL_LOCKING] );
 	}
 }

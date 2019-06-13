@@ -19,106 +19,113 @@
  *
  * @file
  */
+use MediaWiki\MediaWikiServices;
+use Wikimedia\ScopedCallback;
+
 /**
  * Update object handling the cleanup of links tables after a page was deleted.
- **/
-class LinksDeletionUpdate extends SqlDataUpdate implements EnqueueableDataUpdate {
+ */
+class LinksDeletionUpdate extends LinksUpdate implements EnqueueableDataUpdate {
 	/** @var WikiPage */
 	protected $page;
-	/** @var integer */
-	protected $pageId;
+	/** @var string */
+	protected $timestamp;
 
 	/**
 	 * @param WikiPage $page Page we are updating
-	 * @param integer|null $pageId ID of the page we are updating [optional]
+	 * @param int|null $pageId ID of the page we are updating [optional]
+	 * @param string|null $timestamp TS_MW timestamp of deletion
 	 * @throws MWException
 	 */
-	function __construct( WikiPage $page, $pageId = null ) {
-		parent::__construct( false ); // no implicit transaction
-
+	function __construct( WikiPage $page, $pageId = null, $timestamp = null ) {
 		$this->page = $page;
-		if ( $page->exists() ) {
-			$this->pageId = $page->getId();
-		} elseif ( $pageId ) {
-			$this->pageId = $pageId;
+		if ( $pageId ) {
+			$this->mId = $pageId; // page ID at time of deletion
+		} elseif ( $page->exists() ) {
+			$this->mId = $page->getId();
 		} else {
-			throw new MWException( "Page ID not known, perhaps the page doesn't exist?" );
+			throw new InvalidArgumentException( "Page ID not known. Page doesn't exist?" );
 		}
+
+		$this->timestamp = $timestamp ?: wfTimestampNow();
+
+		$fakePO = new ParserOutput();
+		$fakePO->setCacheTime( $timestamp );
+		parent::__construct( $page->getTitle(), $fakePO, false );
 	}
 
-	public function doUpdate() {
-		# Page may already be deleted, so don't just getId()
-		$id = $this->pageId;
-		// Make sure all links update threads see the changes of each other.
-		// This handles the case when updates have to batched into several COMMITs.
-		$scopedLock = LinksUpdate::acquirePageLock( $this->mDb, $id );
+	protected function doIncrementalUpdate() {
+		$services = MediaWikiServices::getInstance();
+		$config = $services->getMainConfig();
+		$lbFactory = $services->getDBLoadBalancerFactory();
+		$batchSize = $config->get( 'UpdateRowsPerQuery' );
 
-		# Delete restrictions for it
-		$this->mDb->delete( 'page_restrictions', [ 'pr_page' => $id ], __METHOD__ );
+		$id = $this->mId;
+		$title = $this->mTitle;
 
-		# Fix category table counts
-		$cats = $this->mDb->selectFieldValues(
-			'categorylinks',
-			'cl_to',
-			[ 'cl_from' => $id ],
-			__METHOD__
-		);
-		$this->page->updateCategoryCounts( [], $cats );
+		$dbw = $this->getDB(); // convenience
 
-		# If using cascading deletes, we can skip some explicit deletes
-		if ( !$this->mDb->cascadingDeletes() ) {
-			# Delete outgoing links
-			$this->mDb->delete( 'pagelinks', [ 'pl_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'imagelinks', [ 'il_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'categorylinks', [ 'cl_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'templatelinks', [ 'tl_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'externallinks', [ 'el_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'langlinks', [ 'll_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'iwlinks', [ 'iwl_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'redirect', [ 'rd_from' => $id ], __METHOD__ );
-			$this->mDb->delete( 'page_props', [ 'pp_page' => $id ], __METHOD__ );
+		parent::doIncrementalUpdate();
+
+		// Typically, a category is empty when deleted, so check that we don't leave
+		// spurious row in the category table.
+		if ( $title->getNamespace() === NS_CATEGORY ) {
+			// T166757: do the update after the main job DB commit
+			DeferredUpdates::addCallableUpdate( function () use ( $title ) {
+				$cat = Category::newFromName( $title->getDBkey() );
+				$cat->refreshCountsIfSmall();
+			} );
 		}
 
-		# If using cleanup triggers, we can skip some manual deletes
-		if ( !$this->mDb->cleanupTriggers() ) {
-			$title = $this->page->getTitle();
-			# Find recentchanges entries to clean up...
-			$rcIdsForTitle = $this->mDb->selectFieldValues( 'recentchanges',
-				'rc_id',
-				[
-					'rc_type != ' . RC_LOG,
-					'rc_namespace' => $title->getNamespace(),
-					'rc_title' => $title->getDBkey()
-				],
-				__METHOD__
-			);
-			$rcIdsForPage = $this->mDb->selectFieldValues( 'recentchanges',
-				'rc_id',
-				[ 'rc_type != ' . RC_LOG, 'rc_cur_id' => $id ],
-				__METHOD__
-			);
+		// Delete restrictions for the deleted page
+		$dbw->delete( 'page_restrictions', [ 'pr_page' => $id ], __METHOD__ );
 
-			# T98706: delete PK to avoid lock contention with RC delete log insertions
-			$rcIds = array_merge( $rcIdsForTitle, $rcIdsForPage );
-			if ( $rcIds ) {
-				$this->mDb->delete( 'recentchanges', [ 'rc_id' => $rcIds ], __METHOD__ );
+		// Delete any redirect entry
+		$dbw->delete( 'redirect', [ 'rd_from' => $id ], __METHOD__ );
+
+		// Find recentchanges entries to clean up...
+		$rcIdsForTitle = $dbw->selectFieldValues(
+			'recentchanges',
+			'rc_id',
+			[
+				'rc_type != ' . RC_LOG,
+				'rc_namespace' => $title->getNamespace(),
+				'rc_title' => $title->getDBkey(),
+				'rc_timestamp < ' .
+					$dbw->addQuotes( $dbw->timestamp( $this->timestamp ) )
+			],
+			__METHOD__
+		);
+		$rcIdsForPage = $dbw->selectFieldValues(
+			'recentchanges',
+			'rc_id',
+			[ 'rc_type != ' . RC_LOG, 'rc_cur_id' => $id ],
+			__METHOD__
+		);
+
+		// T98706: delete by PK to avoid lock contention with RC delete log insertions
+		$rcIdBatches = array_chunk( array_merge( $rcIdsForTitle, $rcIdsForPage ), $batchSize );
+		foreach ( $rcIdBatches as $rcIdBatch ) {
+			$dbw->delete( 'recentchanges', [ 'rc_id' => $rcIdBatch ], __METHOD__ );
+			if ( count( $rcIdBatches ) > 1 ) {
+				$lbFactory->commitAndWaitForReplication(
+					__METHOD__, $this->ticket, [ 'domain' => $dbw->getDomainID() ]
+				);
 			}
 		}
 
-		$this->mDb->onTransactionIdle( function() use ( &$scopedLock ) {
-			// Release the lock *after* the final COMMIT for correctness
-			ScopedCallback::consume( $scopedLock );
-		} );
+		// Commit and release the lock (if set)
+		ScopedCallback::consume( $scopedLock );
 	}
 
 	public function getAsJobSpecification() {
 		return [
-			'wiki' => $this->mDb->getWikiID(),
-			'job'  => new JobSpecification(
+			'domain' => $this->getDB()->getDomainID(),
+			'job' => new JobSpecification(
 				'deleteLinks',
-				[ 'pageId' => $this->pageId ],
+				[ 'pageId' => $this->mId, 'timestamp' => $this->timestamp ],
 				[ 'removeDuplicates' => true ],
-				$this->page->getTitle()
+				$this->mTitle
 			)
 		];
 	}

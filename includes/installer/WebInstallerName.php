@@ -19,6 +19,8 @@
  * @ingroup Deployment
  */
 
+use MediaWiki\MediaWikiServices;
+
 class WebInstallerName extends WebInstallerPage {
 
 	/**
@@ -26,10 +28,8 @@ class WebInstallerName extends WebInstallerPage {
 	 */
 	public function execute() {
 		$r = $this->parent->request;
-		if ( $r->wasPosted() ) {
-			if ( $this->submit() ) {
-				return 'continue';
-			}
+		if ( $r->wasPosted() && $this->submit() ) {
+			return 'continue';
 		}
 
 		$this->startForm();
@@ -49,6 +49,11 @@ class WebInstallerName extends WebInstallerPage {
 			'wgMetaNamespace',
 			wfMessage( 'config-ns-other-default' )->inContentLanguage()->text()
 		);
+
+		$pingbackInfo = ( new Pingback() )->getSystemInfo();
+		// Database isn't available in config yet, so take it
+		// from the installer
+		$pingbackInfo['database'] = $this->getVar( 'wgDBtype' );
 
 		$this->addHTML(
 			$this->parent->getTextBox( [
@@ -71,7 +76,7 @@ class WebInstallerName extends WebInstallerPage {
 			$this->parent->getTextBox( [
 				'var' => 'wgMetaNamespace',
 				'label' => '', // @todo Needs a label?
-				'attribs' => [ 'readonly' => 'readonly', 'class' => 'enabledByOther' ]
+				'attribs' => [ 'class' => 'enabledByOther' ]
 			] ) .
 			$this->getFieldsetStart( 'config-admin-box' ) .
 			$this->parent->getTextBox( [
@@ -99,6 +104,15 @@ class WebInstallerName extends WebInstallerPage {
 				'var' => '_Subscribe',
 				'label' => 'config-subscribe',
 				'help' => $this->parent->getHelpBox( 'config-subscribe-help' )
+			] ) .
+			$this->parent->getCheckBox( [
+				'var' => 'wgPingback',
+				'label' => 'config-pingback',
+				'help' => $this->parent->getHelpBox(
+					'config-pingback-help',
+					FormatJson::encode( $pingbackInfo, true )
+				),
+				'value' => true,
 			] ) .
 			$this->getFieldsetEnd() .
 			$this->parent->getInfoBox( wfMessage( 'config-almost-done' )->text() ) .
@@ -129,7 +143,7 @@ class WebInstallerName extends WebInstallerPage {
 		$retVal = true;
 		$this->parent->setVarsFromRequest( [ 'wgSitename', '_NamespaceType',
 			'_AdminName', '_AdminPassword', '_AdminPasswordConfirm', '_AdminEmail',
-			'_Subscribe', '_SkipOptional', 'wgMetaNamespace' ] );
+			'_Subscribe', '_SkipOptional', 'wgMetaNamespace', 'wgPingback' ] );
 
 		// Validate site name
 		if ( strval( $this->getVar( 'wgSitename' ) ) === '' ) {
@@ -172,8 +186,7 @@ class WebInstallerName extends WebInstallerPage {
 		}
 
 		// Make sure it won't conflict with any existing namespaces
-		global $wgContLang;
-		$nsIndex = $wgContLang->getNsIndex( $name );
+		$nsIndex = MediaWikiServices::getInstance()->getContentLanguage()->getNsIndex( $name );
 		if ( $nsIndex !== false && $nsIndex !== NS_PROJECT ) {
 			$this->parent->showError( 'config-ns-conflict', $name );
 			$retVal = false;
@@ -209,7 +222,7 @@ class WebInstallerName extends WebInstallerPage {
 			$status = $upp->checkUserPasswordForGroups(
 				$user,
 				$pwd,
-				[ 'bureaucrat', 'sysop' ]  // per Installer::createSysop()
+				[ 'bureaucrat', 'sysop', 'interface-admin' ]  // per Installer::createSysop()
 			);
 			$valid = $status->isGood() ? true : $status->getMessage();
 		} else {
@@ -237,7 +250,7 @@ class WebInstallerName extends WebInstallerPage {
 			$retVal = false;
 		}
 		// If they asked to subscribe to mediawiki-announce but didn't give
-		// an e-mail, show an error. Bug 29332
+		// an e-mail, show an error. T31332
 		if ( !$email && $this->getVar( '_Subscribe' ) ) {
 			$this->parent->showError( 'config-subscribe-noemail' );
 			$retVal = false;

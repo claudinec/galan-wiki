@@ -3,9 +3,7 @@
 /**
  * API for MediaWiki 1.14+
  *
- * Created on Jun 18, 2012
- *
- * Copyright © 2012 Brad Jorsch
+ * Copyright © 2012 Wikimedia Foundation and contributors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +22,7 @@
  *
  * @file
  */
+
 use MediaWiki\MediaWikiServices;
 
 /**
@@ -32,17 +31,15 @@ use MediaWiki\MediaWikiServices;
  */
 class ApiSetNotificationTimestamp extends ApiBase {
 
-	private $mPageSet;
+	private $mPageSet = null;
 
 	public function execute() {
 		$user = $this->getUser();
 
 		if ( $user->isAnon() ) {
-			$this->dieUsage( 'Anonymous users cannot use watchlist change notifications', 'notloggedin' );
+			$this->dieWithError( 'watchlistanontext', 'notloggedin' );
 		}
-		if ( !$user->isAllowed( 'editmywatchlist' ) ) {
-			$this->dieUsage( 'You don\'t have permission to edit your watchlist', 'permissiondenied' );
-		}
+		$this->checkUserRightsAny( 'editmywatchlist' );
 
 		$params = $this->extractRequestParams();
 		$this->requireMaxOneParameter( $params, 'timestamp', 'torevid', 'newerthanrevid' );
@@ -52,8 +49,12 @@ class ApiSetNotificationTimestamp extends ApiBase {
 
 		$pageSet = $this->getPageSet();
 		if ( $params['entirewatchlist'] && $pageSet->getDataSource() !== null ) {
-			$this->dieUsage(
-				"Cannot use 'entirewatchlist' at the same time as '{$pageSet->getDataSource()}'",
+			$this->dieWithError(
+				[
+					'apierror-invalidparammix-cannotusewith',
+					$this->encodeParamName( 'entirewatchlist' ),
+					$pageSet->encodeParamName( $pageSet->getDataSource() )
+				],
 				'multisource'
 			);
 		}
@@ -71,12 +72,14 @@ class ApiSetNotificationTimestamp extends ApiBase {
 
 		if ( isset( $params['torevid'] ) ) {
 			if ( $params['entirewatchlist'] || $pageSet->getGoodTitleCount() > 1 ) {
-				$this->dieUsage( 'torevid may only be used with a single page', 'multpages' );
+				$this->dieWithError( [ 'apierror-multpages', $this->encodeParamName( 'torevid' ) ] );
 			}
-			$title = reset( $pageSet->getGoodTitles() );
+			$titles = $pageSet->getGoodTitles();
+			$title = reset( $titles );
 			if ( $title ) {
-				$timestamp = Revision::getTimestampFromId(
-					$title, $params['torevid'], Revision::READ_LATEST );
+				// XXX $title isn't actually used, can we just get rid of the previous six lines?
+				$timestamp = MediaWikiServices::getInstance()->getRevisionStore()
+					->getTimestampFromId( $params['torevid'], IDBAccessObject::READ_LATEST );
 				if ( $timestamp ) {
 					$timestamp = $dbw->timestamp( $timestamp );
 				} else {
@@ -85,14 +88,16 @@ class ApiSetNotificationTimestamp extends ApiBase {
 			}
 		} elseif ( isset( $params['newerthanrevid'] ) ) {
 			if ( $params['entirewatchlist'] || $pageSet->getGoodTitleCount() > 1 ) {
-				$this->dieUsage( 'newerthanrevid may only be used with a single page', 'multpages' );
+				$this->dieWithError( [ 'apierror-multpages', $this->encodeParamName( 'newerthanrevid' ) ] );
 			}
-			$title = reset( $pageSet->getGoodTitles() );
+			$titles = $pageSet->getGoodTitles();
+			$title = reset( $titles );
 			if ( $title ) {
-				$revid = $title->getNextRevisionID(
-					$params['newerthanrevid'], Title::GAID_FOR_UPDATE );
+				$revid = $title->getNextRevisionID( $params['newerthanrevid'], Title::GAID_FOR_UPDATE );
 				if ( $revid ) {
-					$timestamp = $dbw->timestamp( Revision::getTimestampFromId( $title, $revid ) );
+					$timestamp = $dbw->timestamp(
+						MediaWikiServices::getInstance()->getRevisionStore()->getTimestampFromId( $title, $revid )
+					);
 				} else {
 					$timestamp = null;
 				}
@@ -104,10 +109,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 		$result = [];
 		if ( $params['entirewatchlist'] ) {
 			// Entire watchlist mode: Just update the thing and return a success indicator
-			$watchedItemStore->setNotificationTimestampsForUser(
-				$user,
-				$timestamp
-			);
+			$watchedItemStore->resetAllNotificationTimestampsForUser( $user, $timestamp );
 
 			$result['notificationtimestamp'] = is_null( $timestamp )
 				? ''
@@ -148,16 +150,19 @@ class ApiSetNotificationTimestamp extends ApiBase {
 				);
 
 				// Now, put the valid titles into the result
-				/** @var $title Title */
+				/** @var Title $title */
 				foreach ( $pageSet->getTitles() as $title ) {
 					$ns = $title->getNamespace();
 					$dbkey = $title->getDBkey();
 					$r = [
-						'ns' => intval( $ns ),
+						'ns' => (int)$ns,
 						'title' => $title->getPrefixedText(),
 					];
 					if ( !$title->exists() ) {
 						$r['missing'] = true;
+						if ( $title->isKnown() ) {
+							$r['known'] = true;
+						}
 					}
 					if ( isset( $timestamps[$ns] ) && array_key_exists( $dbkey, $timestamps[$ns] ) ) {
 						$r['notificationtimestamp'] = '';
@@ -184,7 +189,7 @@ class ApiSetNotificationTimestamp extends ApiBase {
 	 * @return ApiPageSet
 	 */
 	private function getPageSet() {
-		if ( !isset( $this->mPageSet ) ) {
+		if ( $this->mPageSet === null ) {
 			$this->mPageSet = new ApiPageSet( $this );
 		}
 
@@ -243,6 +248,6 @@ class ApiSetNotificationTimestamp extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:SetNotificationTimestamp';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:SetNotificationTimestamp';
 	}
 }

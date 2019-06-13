@@ -19,6 +19,8 @@
  * @author Daniel Kinzler
  */
 
+use MediaWiki\Interwiki\InterwikiLookup;
+
 /**
  * @covers MediaWikiTitleCodec
  *
@@ -37,21 +39,6 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 			'wgMetaNamespace' => 'Project',
 			'wgLocalInterwikis' => [ 'localtestiw' ],
 			'wgCapitalLinks' => true,
-
-			// NOTE: this is why global state is evil.
-			// TODO: refactor access to the interwiki codes so it can be injected.
-			'wgHooks' => [
-				'InterwikiLoadPrefix' => [
-					function ( $prefix, &$data ) {
-						if ( $prefix === 'localtestiw' ) {
-							$data = [ 'iw_url' => 'localtestiw' ];
-						} elseif ( $prefix === 'remotetestiw' ) {
-							$data = [ 'iw_url' => 'remotetestiw' ];
-						}
-						return false;
-					}
-				]
-			]
 		] );
 		$this->setUserLang( 'en' );
 		$this->setContentLang( 'en' );
@@ -64,7 +51,7 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 	 * @return GenderCache
 	 */
 	private function getGenderCache() {
-		$genderCache = $this->getMockBuilder( 'GenderCache' )
+		$genderCache = $this->getMockBuilder( GenderCache::class )
 			->disableOriginalConstructor()
 			->getMock();
 
@@ -77,12 +64,60 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 		return $genderCache;
 	}
 
+	/**
+	 * Returns a mock InterwikiLookup that only has an isValidInterwiki() method, which recognizes
+	 * 'localtestiw' and 'remotetestiw'. All other methods throw.
+	 *
+	 * @return InterwikiLookup
+	 */
+	private function getInterwikiLookup() : InterwikiLookup {
+		$iwLookup = $this->createMock( InterwikiLookup::class );
+
+		$iwLookup->expects( $this->any() )
+			->method( 'isValidInterwiki' )
+			->will( $this->returnCallback( function ( $prefix ) {
+				return $prefix === 'localtestiw' || $prefix === 'remotetestiw';
+			} ) );
+
+		$iwLookup->expects( $this->never() )
+			->method( $this->callback( function ( $name ) {
+				return $name !== 'isValidInterwiki';
+			} ) );
+
+		return $iwLookup;
+	}
+
+	/**
+	 * Returns a mock NamespaceInfo that has only a hasGenderDistinction() method, which assumes
+	 * only NS_USER and NS_USER_TALK have a gender distinction. All other methods throw.
+	 *
+	 * @return NamespaceInfo
+	 */
+	private function getNamespaceInfo() : NamespaceInfo {
+		$nsInfo = $this->createMock( NamespaceInfo::class );
+
+		$nsInfo->expects( $this->any() )
+			->method( 'hasGenderDistinction' )
+			->will( $this->returnCallback( function ( $ns ) {
+				return $ns === NS_USER || $ns === NS_USER_TALK;
+			} ) );
+
+		$nsInfo->expects( $this->never() )
+			->method( $this->callback( function ( $name ) {
+				return $name !== 'hasGenderDistinction';
+			} ) );
+
+		return $nsInfo;
+	}
+
 	protected function makeCodec( $lang ) {
-		$gender = $this->getGenderCache();
-		$lang = Language::factory( $lang );
-		// language object can came from cache, which does not respect test settings
-		$lang->resetNamespaces();
-		return new MediaWikiTitleCodec( $lang, $gender );
+		return new MediaWikiTitleCodec(
+			Language::factory( $lang ),
+			$this->getGenderCache(),
+			[],
+			$this->getInterwikiLookup(),
+			$this->getNamespaceInfo()
+		);
 	}
 
 	public static function provideFormat() {
@@ -164,7 +199,7 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 			// getGenderCache() provides a mock that considers first
 			// names ending in "a" to be female.
 			[ NS_USER, 'Lisa_Müller', '', 'de', 'Benutzerin:Lisa Müller' ],
-			[ 1000000, 'Invalid_namespace', '', 'en', ':Invalid namespace' ],
+			[ 1000000, 'Invalid_namespace', '', 'en', 'Special:Badtitle/NS1000000:Invalid namespace' ],
 		];
 	}
 
@@ -195,7 +230,7 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 			[ NS_MAIN, 'Remote_page', '', 'remotetestiw', 'en', 'remotetestiw:Remote_page' ],
 
 			// non-existent namespace
-			[ 10000000, 'Foobar', '', '', 'en', ':Foobar' ],
+			[ 10000000, 'Foobar', '', '', 'en', 'Special:Badtitle/NS10000000:Foobar' ],
 		];
 	}
 
@@ -298,7 +333,17 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 				new TitleValue( NS_CATEGORY,
 					'X' . str_repeat( 'x', 247 ) ) ],
 			[ str_repeat( 'x', 252 ), NS_MAIN, 'en',
-				'X' . str_repeat( 'x', 251 ) ]
+				'X' . str_repeat( 'x', 251 ) ],
+			// Test decoding and normalization
+			[ '&quot;n&#x303;&#34;', NS_MAIN, 'en', new TitleValue( NS_MAIN, '"ñ"' ) ],
+			[ 'X#n&#x303;', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', 'ñ' ) ],
+			// target section parsing
+			'empty fragment' => [ 'X#', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X' ) ],
+			'double hash' => [ 'X##', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', '#' ) ],
+			'fragment with hash' => [ 'X#z#z', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', 'z#z' ) ],
+			'fragment with space' => [ 'X#z z', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', 'z z' ) ],
+			'fragment with percent' => [ 'X#z%z', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', 'z%z' ) ],
+			'fragment with amp' => [ 'X#z&z', NS_MAIN, 'en', new TitleValue( NS_MAIN, 'X', 'z&z' ) ],
 		];
 	}
 
@@ -355,9 +400,9 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 			// XML/HTML character entity references
 			// Note: Commented out because they are not marked invalid by the PHP test as
 			// Title::newFromText runs Sanitizer::decodeCharReferencesAndNormalize first.
-			// array( 'A &eacute; B' ),
-			// array( 'A &#233; B' ),
-			// array( 'A &#x00E9; B' ),
+			// [ 'A &eacute; B' ],
+			// [ 'A &#233; B' ],
+			// [ 'A &#x00E9; B' ],
 			// Subject of NS_TALK does not roundtrip to NS_MAIN
 			[ 'Talk:File:Example.svg' ],
 			// Directory navigation
@@ -385,7 +430,7 @@ class MediaWikiTitleCodecTest extends MediaWikiTestCase {
 	 * @dataProvider provideParseTitle_invalid
 	 */
 	public function testParseTitle_invalid( $text ) {
-		$this->setExpectedException( 'MalformedTitleException' );
+		$this->setExpectedException( MalformedTitleException::class );
 
 		$codec = $this->makeCodec( 'en' );
 		$codec->parseTitle( $text, NS_MAIN );

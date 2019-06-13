@@ -8,17 +8,36 @@
 #
 language: php
 
+# Use Ubuntu 14 Trusty (not Ubuntu 12 Precise)
+# <https://docs.travis-ci.com/user/reference/trusty/>
+# - Required for non-buggy xml library for XmlTypeCheck/UploadBaseTest (T75176).
+dist: trusty
+
+# Cache NPM and Composer directories
+# <https://docs.travis-ci.com/user/caching/>
+cache:
+  npm: true
+  directories:
+  # Composer doesn't have a dedicated cache setting in Travis CI config, so set the directory path instead.
+  - vendor
+
 matrix:
   fast_finish: true
   include:
-    - env: dbtype=mysql
-      php: 5.5
-    - env: dbtype=postgres
-      php: 5.5
-    - env: dbtype=mysql
-      php: hhvm
-    - env: dbtype=mysql
+    # On Trusty, mysql user 'travis' doesn't have create database rights
+    # Postgres has no user called 'root'.
+    - env: dbtype=mysql dbuser=root
+      php: 7.3
+    - env: dbtype=mysql dbuser=root
+      php: 7.2
+    - env: dbtype=mysql dbuser=root
+      php: 7.1
+    - env: dbtype=postgres dbuser=travis
+      php: 7.1
+    - env: dbtype=mysql dbuser=root
       php: 7
+  allow_failures:
+    - php: 7.3
 
 services:
   - mysql
@@ -26,17 +45,20 @@ services:
 branches:
   # Test changes in master and arbitrary Travis CI branches only.
   # The latter allows developers to enable Travis CI in their GitHub fork of
-  # wikimedia/mediawiki and then push changes they like to test to branches like
+  # wikimedia/mediawiki and then push changes for testing to branches like
   # "travis-ci/test-this-awesome-change".
   only:
     - master
     - /^travis-ci\/.*$/
 
-before_install:
-  - sudo apt-get install -qq djvulibre-bin tidy
-  - composer self-update --quiet --no-interaction
+addons:
+  apt:
+    packages:
+    - djvulibre-bin
+    - tidy
 
 before_script:
+  - echo 'opcache.enable_cli = 1' >> ~/.phpenv/versions/$(phpenv version-name)/etc/conf.d/travis.ini
   - composer install --prefer-source --quiet --no-interaction
   - if [ "$dbtype" = postgres ]; then psql -c "CREATE DATABASE traviswiki WITH OWNER travis;" -U postgres; fi
   - >
@@ -44,9 +66,11 @@ before_script:
       --pass travis
       --dbtype "$dbtype"
       --dbname traviswiki
-      --dbuser travis
+      --dbuser "$dbuser"
       --dbpass ""
       --scriptpath "/w"
+  - echo -en "\n\nrequire_once __DIR__ . '/includes/DevelopmentSettings.php';\n" >> ./LocalSettings.php
+  - php -l ./LocalSettings.php
 
 script:
   - php tests/phpunit/phpunit.php
@@ -55,8 +79,8 @@ notifications:
   email: false
   irc:
     channels:
-      - "chat.freenode.net#mediawiki-core"
-      - "chat.freenode.net#mediawiki-feed"
+      - "chat.freenode.net#wikimedia-dev"
+    template:
+      - "%{repository}#%{build_number} (%{branch} - %{commit} %{author}): %{message} - %{build_url}"
     on_success: change
-    on_failure: change
-    skip_join: true
+    on_failure: always

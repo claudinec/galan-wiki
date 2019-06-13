@@ -1,34 +1,56 @@
 <?php
 
+use Wikimedia\Rdbms\IDatabase;
+
 /**
  * Deferrable Update for closure/callback updates via IDatabase::doAtomicSection()
  * @since 1.27
  */
-class AtomicSectionUpdate implements DeferrableUpdate {
+class AtomicSectionUpdate implements DeferrableUpdate, DeferrableCallback {
 	/** @var IDatabase */
 	private $dbw;
 	/** @var string */
 	private $fname;
-	/** @var Closure|callable */
+	/** @var callable|null */
 	private $callback;
 
 	/**
-	 * @param IDatabase $dbw
+	 * @param IDatabase $dbw DB handle; update aborts if a transaction now this rolls back
 	 * @param string $fname Caller name (usually __METHOD__)
 	 * @param callable $callback
-	 * @throws InvalidArgumentException
+	 * @param IDatabase[] $conns Abort if a transaction now on one of these rolls back [optional]
 	 * @see IDatabase::doAtomicSection()
 	 */
-	public function __construct( IDatabase $dbw, $fname, $callback ) {
+	public function __construct( IDatabase $dbw, $fname, callable $callback, array $conns = [] ) {
 		$this->dbw = $dbw;
 		$this->fname = $fname;
-		if ( !is_callable( $callback ) ) {
-			throw new InvalidArgumentException( 'Not a valid callback/closure!' );
-		}
 		$this->callback = $callback;
+		// Register DB connections for which uncommitted changes are related to this update
+		$conns[] = $dbw;
+		foreach ( $conns as $conn ) {
+			if ( $conn->trxLevel() ) {
+				$conn->onTransactionResolution( [ $this, 'cancelOnRollback' ], $fname );
+			}
+		}
 	}
 
 	public function doUpdate() {
-		$this->dbw->doAtomicSection( $this->fname, $this->callback );
+		if ( $this->callback ) {
+			$this->dbw->doAtomicSection( $this->fname, $this->callback );
+		}
+	}
+
+	/**
+	 * @private This method is public so that it works with onTransactionResolution()
+	 * @param int $trigger
+	 */
+	public function cancelOnRollback( $trigger ) {
+		if ( $trigger === IDatabase::TRIGGER_ROLLBACK ) {
+			$this->callback = null;
+		}
+	}
+
+	public function getOrigin() {
+		return $this->fname;
 	}
 }

@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright © 2016 Brad Jorsch <bjorsch@wikimedia.org>
+ * Copyright © 2016 Wikimedia Foundation and contributors
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,8 @@
  */
 
 use MediaWiki\Auth\AuthManager;
-use MediaWiki\Auth\AuthenticationRequest;
 use MediaWiki\Auth\AuthenticationResponse;
+use MediaWiki\Auth\CreateFromLoginAuthenticationRequest;
 
 /**
  * Log in to the wiki with AuthManager
@@ -57,8 +57,8 @@ class ApiClientLogin extends ApiBase {
 			$bits = wfParseUrl( $params['returnurl'] );
 			if ( !$bits || $bits['scheme'] === '' ) {
 				$encParamName = $this->encodeParamName( 'returnurl' );
-				$this->dieUsage(
-					"Invalid value '{$params['returnurl']}' for url parameter $encParamName",
+				$this->dieWithError(
+					[ 'apierror-badurl', $encParamName, wfEscapeWikiText( $params['returnurl'] ) ],
 					"badurl_{$encParamName}"
 				);
 			}
@@ -72,6 +72,7 @@ class ApiClientLogin extends ApiBase {
 			$this->getResult()->addValue( null, 'clientlogin', $helper->formatAuthenticationResponse(
 				AuthenticationResponse::newFail( $this->msg( 'userlogin-cannot-' . AuthManager::ACTION_LOGIN ) )
 			) );
+			$helper->logAuthenticationResult( 'login', 'userlogin-cannot-' . AuthManager::ACTION_LOGIN );
 			return;
 		}
 
@@ -90,8 +91,16 @@ class ApiClientLogin extends ApiBase {
 			$res = $manager->beginAuthentication( $reqs, $params['returnurl'] );
 		}
 
+		// Remove CreateFromLoginAuthenticationRequest from $res->neededRequests.
+		// It's there so a RESTART treated as UI will work right, but showing
+		// it to the API client is just confusing.
+		$res->neededRequests = ApiAuthManagerHelper::blacklistAuthenticationRequests(
+			$res->neededRequests, [ CreateFromLoginAuthenticationRequest::class ]
+		);
+
 		$this->getResult()->addValue( null, 'clientlogin',
 			$helper->formatAuthenticationResponse( $res ) );
+		$helper->logAuthenticationResult( 'login', $res );
 	}
 
 	public function isReadMode() {
@@ -123,6 +132,6 @@ class ApiClientLogin extends ApiBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Login';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Login';
 	}
 }

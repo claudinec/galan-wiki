@@ -120,7 +120,7 @@ $dateFormats = [
 
 ];
 
-$separatorTransformTable = [ ',' => "\xc2\xa0", '.' => ',' ];
+$separatorTransformTable = [ ',' => "\u{00A0}", '.' => ',' ];
 
 $specialPageAliases = [
 	'Activeusers'               => [ 'Usuários_ativos' ],
@@ -328,4 +328,3 @@ $magicWords = [
 	'protectionlevel'           => [ '1', 'NIVELDEPROTECAO', 'NÍVELDEPROTEÇÃO', 'PROTECTIONLEVEL' ],
 	'url_path'                  => [ '0', 'CAMINHO', 'PATH' ],
 ];
-

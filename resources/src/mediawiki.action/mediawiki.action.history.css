@@ -1,9 +1,8 @@
-#pagehistory li.before input[name="oldid"],
-#pagehistory li.after input[name="diff"] {
-	visibility: hidden;
-}
+/* stylelint-disable selector-class-pattern */
 
-span.updatedmarker {
-	color: #000;
-	background-color: #0f0;
+/* Styles for the JavaScript enhancements of the history page */
+
+#pagehistory li.before input[ name='oldid' ],
+#pagehistory li.after input[ name='diff' ] {
+	visibility: hidden;
 }

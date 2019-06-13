@@ -1,6 +1,7 @@
 <?php
 /**
  * Internationalisation code.
+ * See https://www.mediawiki.org/wiki/Special:MyLanguage/Localisation for more information.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,14 +26,9 @@
  * @defgroup Language Language
  */
 
-if ( !defined( 'MEDIAWIKI' ) ) {
-	echo "This file is part of MediaWiki, it is not a valid entry point.\n";
-	exit( 1 );
-}
-
-mb_internal_encoding( 'UTF-8' );
-
 use CLDRPluralRuleParser\Evaluator;
+use MediaWiki\MediaWikiServices;
+use Wikimedia\Assert\Assert;
 
 /**
  * Internationalisation code
@@ -40,18 +36,39 @@ use CLDRPluralRuleParser\Evaluator;
  */
 class Language {
 	/**
+	 * Return autonyms in fetchLanguageName(s).
+	 * @since 1.32
+	 */
+	const AS_AUTONYMS = null;
+
+	/**
+	 * Return all known languages in fetchLanguageName(s).
+	 * @since 1.32
+	 */
+	const ALL = 'all';
+
+	/**
+	 * Return in fetchLanguageName(s) only the languages for which we have at
+	 * least some localisation.
+	 * @since 1.32
+	 */
+	const SUPPORTED = 'mwfile';
+
+	/**
 	 * @var LanguageConverter
 	 */
 	public $mConverter;
 
 	public $mVariants, $mCode, $mLoaded = false;
-	public $mMagicExtensions = [], $mMagicHookDone = false;
+	public $mMagicExtensions = [];
 	private $mHtmlCode = null, $mParentLanguage = false;
 
 	public $dateFormatStrings = [];
 	public $mExtendedSpecialPageAliases;
 
-	protected $namespaceNames, $mNamespaceIds, $namespaceAliases;
+	/** @var array|null */
+	protected $namespaceNames;
+	protected $mNamespaceIds, $namespaceAliases;
 
 	/**
 	 * ReplacementArray object caches
@@ -61,42 +78,54 @@ class Language {
 	/**
 	 * @var LocalisationCache
 	 */
-	static public $dataCache;
+	public static $dataCache;
 
-	static public $mLangObjCache = [];
+	public static $mLangObjCache = [];
 
-	static public $mWeekdayMsgs = [
+	/**
+	 * Return a fallback chain for messages in getFallbacksFor
+	 * @since 1.32
+	 */
+	const MESSAGES_FALLBACKS = 0;
+
+	/**
+	 * Return a strict fallback chain in getFallbacksFor
+	 * @since 1.32
+	 */
+	const STRICT_FALLBACKS = 1;
+
+	public static $mWeekdayMsgs = [
 		'sunday', 'monday', 'tuesday', 'wednesday', 'thursday',
 		'friday', 'saturday'
 	];
 
-	static public $mWeekdayAbbrevMsgs = [
+	public static $mWeekdayAbbrevMsgs = [
 		'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'
 	];
 
-	static public $mMonthMsgs = [
+	public static $mMonthMsgs = [
 		'january', 'february', 'march', 'april', 'may_long', 'june',
 		'july', 'august', 'september', 'october', 'november',
 		'december'
 	];
-	static public $mMonthGenMsgs = [
+	public static $mMonthGenMsgs = [
 		'january-gen', 'february-gen', 'march-gen', 'april-gen', 'may-gen', 'june-gen',
 		'july-gen', 'august-gen', 'september-gen', 'october-gen', 'november-gen',
 		'december-gen'
 	];
-	static public $mMonthAbbrevMsgs = [
+	public static $mMonthAbbrevMsgs = [
 		'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug',
 		'sep', 'oct', 'nov', 'dec'
 	];
 
-	static public $mIranianCalendarMonthMsgs = [
+	public static $mIranianCalendarMonthMsgs = [
 		'iranian-calendar-m1', 'iranian-calendar-m2', 'iranian-calendar-m3',
 		'iranian-calendar-m4', 'iranian-calendar-m5', 'iranian-calendar-m6',
 		'iranian-calendar-m7', 'iranian-calendar-m8', 'iranian-calendar-m9',
 		'iranian-calendar-m10', 'iranian-calendar-m11', 'iranian-calendar-m12'
 	];
 
-	static public $mHebrewCalendarMonthMsgs = [
+	public static $mHebrewCalendarMonthMsgs = [
 		'hebrew-calendar-m1', 'hebrew-calendar-m2', 'hebrew-calendar-m3',
 		'hebrew-calendar-m4', 'hebrew-calendar-m5', 'hebrew-calendar-m6',
 		'hebrew-calendar-m7', 'hebrew-calendar-m8', 'hebrew-calendar-m9',
@@ -104,7 +133,7 @@ class Language {
 		'hebrew-calendar-m6a', 'hebrew-calendar-m6b'
 	];
 
-	static public $mHebrewCalendarMonthGenMsgs = [
+	public static $mHebrewCalendarMonthGenMsgs = [
 		'hebrew-calendar-m1-gen', 'hebrew-calendar-m2-gen', 'hebrew-calendar-m3-gen',
 		'hebrew-calendar-m4-gen', 'hebrew-calendar-m5-gen', 'hebrew-calendar-m6-gen',
 		'hebrew-calendar-m7-gen', 'hebrew-calendar-m8-gen', 'hebrew-calendar-m9-gen',
@@ -112,7 +141,7 @@ class Language {
 		'hebrew-calendar-m6a-gen', 'hebrew-calendar-m6b-gen'
 	];
 
-	static public $mHijriCalendarMonthMsgs = [
+	public static $mHijriCalendarMonthMsgs = [
 		'hijri-calendar-m1', 'hijri-calendar-m2', 'hijri-calendar-m3',
 		'hijri-calendar-m4', 'hijri-calendar-m5', 'hijri-calendar-m6',
 		'hijri-calendar-m7', 'hijri-calendar-m8', 'hijri-calendar-m9',
@@ -123,7 +152,7 @@ class Language {
 	 * @since 1.20
 	 * @var array
 	 */
-	static public $durationIntervals = [
+	public static $durationIntervals = [
 		'millennia' => 31556952000,
 		'centuries' => 3155695200,
 		'decades' => 315569520,
@@ -141,20 +170,26 @@ class Language {
 	 * @since 1.21
 	 * @var array
 	 */
-	static private $fallbackLanguageCache = [];
+	private static $fallbackLanguageCache = [];
+
+	/**
+	 * Cache for grammar rules data
+	 * @var MapCacheLRU|null
+	 */
+	private static $grammarTransformations;
 
 	/**
 	 * Cache for language names
 	 * @var HashBagOStuff|null
 	 */
-	static private $languageNameCache;
+	private static $languageNameCache;
 
 	/**
 	 * Unicode directional formatting characters, for embedBidi()
 	 */
-	static private $lre = "\xE2\x80\xAA"; // U+202A LEFT-TO-RIGHT EMBEDDING
-	static private $rle = "\xE2\x80\xAB"; // U+202B RIGHT-TO-LEFT EMBEDDING
-	static private $pdf = "\xE2\x80\xAC"; // U+202C POP DIRECTIONAL FORMATTING
+	private static $lre = "\u{202A}"; // U+202A LEFT-TO-RIGHT EMBEDDING
+	private static $rle = "\u{202B}"; // U+202B RIGHT-TO-LEFT EMBEDDING
+	private static $pdf = "\u{202C}"; // U+202C POP DIRECTIONAL FORMATTING
 
 	/**
 	 * Directionality test regex for embedBidi(). Matches the first strong directionality codepoint:
@@ -165,17 +200,17 @@ class Language {
 	 * The form is '/(?:([strong ltr codepoint])|([strong rtl codepoint]))/u' .
 	 *
 	 * Generated by UnicodeJS (see tools/strongDir) from the UCD; see
-	 * https://git.wikimedia.org/summary/unicodejs.git .
+	 * https://phabricator.wikimedia.org/diffusion/GUJS/ .
 	 */
-	// @codingStandardsIgnoreStart
 	// @codeCoverageIgnoreStart
-	static private $strongDirRegex = '/(?:([\x{41}-\x{5a}\x{61}-\x{7a}\x{aa}\x{b5}\x{ba}\x{c0}-\x{d6}\x{d8}-\x{f6}\x{f8}-\x{2b8}\x{2bb}-\x{2c1}\x{2d0}\x{2d1}\x{2e0}-\x{2e4}\x{2ee}\x{370}-\x{373}\x{376}\x{377}\x{37a}-\x{37d}\x{37f}\x{386}\x{388}-\x{38a}\x{38c}\x{38e}-\x{3a1}\x{3a3}-\x{3f5}\x{3f7}-\x{482}\x{48a}-\x{52f}\x{531}-\x{556}\x{559}-\x{55f}\x{561}-\x{587}\x{589}\x{903}-\x{939}\x{93b}\x{93d}-\x{940}\x{949}-\x{94c}\x{94e}-\x{950}\x{958}-\x{961}\x{964}-\x{980}\x{982}\x{983}\x{985}-\x{98c}\x{98f}\x{990}\x{993}-\x{9a8}\x{9aa}-\x{9b0}\x{9b2}\x{9b6}-\x{9b9}\x{9bd}-\x{9c0}\x{9c7}\x{9c8}\x{9cb}\x{9cc}\x{9ce}\x{9d7}\x{9dc}\x{9dd}\x{9df}-\x{9e1}\x{9e6}-\x{9f1}\x{9f4}-\x{9fa}\x{a03}\x{a05}-\x{a0a}\x{a0f}\x{a10}\x{a13}-\x{a28}\x{a2a}-\x{a30}\x{a32}\x{a33}\x{a35}\x{a36}\x{a38}\x{a39}\x{a3e}-\x{a40}\x{a59}-\x{a5c}\x{a5e}\x{a66}-\x{a6f}\x{a72}-\x{a74}\x{a83}\x{a85}-\x{a8d}\x{a8f}-\x{a91}\x{a93}-\x{aa8}\x{aaa}-\x{ab0}\x{ab2}\x{ab3}\x{ab5}-\x{ab9}\x{abd}-\x{ac0}\x{ac9}\x{acb}\x{acc}\x{ad0}\x{ae0}\x{ae1}\x{ae6}-\x{af0}\x{af9}\x{b02}\x{b03}\x{b05}-\x{b0c}\x{b0f}\x{b10}\x{b13}-\x{b28}\x{b2a}-\x{b30}\x{b32}\x{b33}\x{b35}-\x{b39}\x{b3d}\x{b3e}\x{b40}\x{b47}\x{b48}\x{b4b}\x{b4c}\x{b57}\x{b5c}\x{b5d}\x{b5f}-\x{b61}\x{b66}-\x{b77}\x{b83}\x{b85}-\x{b8a}\x{b8e}-\x{b90}\x{b92}-\x{b95}\x{b99}\x{b9a}\x{b9c}\x{b9e}\x{b9f}\x{ba3}\x{ba4}\x{ba8}-\x{baa}\x{bae}-\x{bb9}\x{bbe}\x{bbf}\x{bc1}\x{bc2}\x{bc6}-\x{bc8}\x{bca}-\x{bcc}\x{bd0}\x{bd7}\x{be6}-\x{bf2}\x{c01}-\x{c03}\x{c05}-\x{c0c}\x{c0e}-\x{c10}\x{c12}-\x{c28}\x{c2a}-\x{c39}\x{c3d}\x{c41}-\x{c44}\x{c58}-\x{c5a}\x{c60}\x{c61}\x{c66}-\x{c6f}\x{c7f}\x{c82}\x{c83}\x{c85}-\x{c8c}\x{c8e}-\x{c90}\x{c92}-\x{ca8}\x{caa}-\x{cb3}\x{cb5}-\x{cb9}\x{cbd}-\x{cc4}\x{cc6}-\x{cc8}\x{cca}\x{ccb}\x{cd5}\x{cd6}\x{cde}\x{ce0}\x{ce1}\x{ce6}-\x{cef}\x{cf1}\x{cf2}\x{d02}\x{d03}\x{d05}-\x{d0c}\x{d0e}-\x{d10}\x{d12}-\x{d3a}\x{d3d}-\x{d40}\x{d46}-\x{d48}\x{d4a}-\x{d4c}\x{d4e}\x{d57}\x{d5f}-\x{d61}\x{d66}-\x{d75}\x{d79}-\x{d7f}\x{d82}\x{d83}\x{d85}-\x{d96}\x{d9a}-\x{db1}\x{db3}-\x{dbb}\x{dbd}\x{dc0}-\x{dc6}\x{dcf}-\x{dd1}\x{dd8}-\x{ddf}\x{de6}-\x{def}\x{df2}-\x{df4}\x{e01}-\x{e30}\x{e32}\x{e33}\x{e40}-\x{e46}\x{e4f}-\x{e5b}\x{e81}\x{e82}\x{e84}\x{e87}\x{e88}\x{e8a}\x{e8d}\x{e94}-\x{e97}\x{e99}-\x{e9f}\x{ea1}-\x{ea3}\x{ea5}\x{ea7}\x{eaa}\x{eab}\x{ead}-\x{eb0}\x{eb2}\x{eb3}\x{ebd}\x{ec0}-\x{ec4}\x{ec6}\x{ed0}-\x{ed9}\x{edc}-\x{edf}\x{f00}-\x{f17}\x{f1a}-\x{f34}\x{f36}\x{f38}\x{f3e}-\x{f47}\x{f49}-\x{f6c}\x{f7f}\x{f85}\x{f88}-\x{f8c}\x{fbe}-\x{fc5}\x{fc7}-\x{fcc}\x{fce}-\x{fda}\x{1000}-\x{102c}\x{1031}\x{1038}\x{103b}\x{103c}\x{103f}-\x{1057}\x{105a}-\x{105d}\x{1061}-\x{1070}\x{1075}-\x{1081}\x{1083}\x{1084}\x{1087}-\x{108c}\x{108e}-\x{109c}\x{109e}-\x{10c5}\x{10c7}\x{10cd}\x{10d0}-\x{1248}\x{124a}-\x{124d}\x{1250}-\x{1256}\x{1258}\x{125a}-\x{125d}\x{1260}-\x{1288}\x{128a}-\x{128d}\x{1290}-\x{12b0}\x{12b2}-\x{12b5}\x{12b8}-\x{12be}\x{12c0}\x{12c2}-\x{12c5}\x{12c8}-\x{12d6}\x{12d8}-\x{1310}\x{1312}-\x{1315}\x{1318}-\x{135a}\x{1360}-\x{137c}\x{1380}-\x{138f}\x{13a0}-\x{13f5}\x{13f8}-\x{13fd}\x{1401}-\x{167f}\x{1681}-\x{169a}\x{16a0}-\x{16f8}\x{1700}-\x{170c}\x{170e}-\x{1711}\x{1720}-\x{1731}\x{1735}\x{1736}\x{1740}-\x{1751}\x{1760}-\x{176c}\x{176e}-\x{1770}\x{1780}-\x{17b3}\x{17b6}\x{17be}-\x{17c5}\x{17c7}\x{17c8}\x{17d4}-\x{17da}\x{17dc}\x{17e0}-\x{17e9}\x{1810}-\x{1819}\x{1820}-\x{1877}\x{1880}-\x{18a8}\x{18aa}\x{18b0}-\x{18f5}\x{1900}-\x{191e}\x{1923}-\x{1926}\x{1929}-\x{192b}\x{1930}\x{1931}\x{1933}-\x{1938}\x{1946}-\x{196d}\x{1970}-\x{1974}\x{1980}-\x{19ab}\x{19b0}-\x{19c9}\x{19d0}-\x{19da}\x{1a00}-\x{1a16}\x{1a19}\x{1a1a}\x{1a1e}-\x{1a55}\x{1a57}\x{1a61}\x{1a63}\x{1a64}\x{1a6d}-\x{1a72}\x{1a80}-\x{1a89}\x{1a90}-\x{1a99}\x{1aa0}-\x{1aad}\x{1b04}-\x{1b33}\x{1b35}\x{1b3b}\x{1b3d}-\x{1b41}\x{1b43}-\x{1b4b}\x{1b50}-\x{1b6a}\x{1b74}-\x{1b7c}\x{1b82}-\x{1ba1}\x{1ba6}\x{1ba7}\x{1baa}\x{1bae}-\x{1be5}\x{1be7}\x{1bea}-\x{1bec}\x{1bee}\x{1bf2}\x{1bf3}\x{1bfc}-\x{1c2b}\x{1c34}\x{1c35}\x{1c3b}-\x{1c49}\x{1c4d}-\x{1c7f}\x{1cc0}-\x{1cc7}\x{1cd3}\x{1ce1}\x{1ce9}-\x{1cec}\x{1cee}-\x{1cf3}\x{1cf5}\x{1cf6}\x{1d00}-\x{1dbf}\x{1e00}-\x{1f15}\x{1f18}-\x{1f1d}\x{1f20}-\x{1f45}\x{1f48}-\x{1f4d}\x{1f50}-\x{1f57}\x{1f59}\x{1f5b}\x{1f5d}\x{1f5f}-\x{1f7d}\x{1f80}-\x{1fb4}\x{1fb6}-\x{1fbc}\x{1fbe}\x{1fc2}-\x{1fc4}\x{1fc6}-\x{1fcc}\x{1fd0}-\x{1fd3}\x{1fd6}-\x{1fdb}\x{1fe0}-\x{1fec}\x{1ff2}-\x{1ff4}\x{1ff6}-\x{1ffc}\x{200e}\x{2071}\x{207f}\x{2090}-\x{209c}\x{2102}\x{2107}\x{210a}-\x{2113}\x{2115}\x{2119}-\x{211d}\x{2124}\x{2126}\x{2128}\x{212a}-\x{212d}\x{212f}-\x{2139}\x{213c}-\x{213f}\x{2145}-\x{2149}\x{214e}\x{214f}\x{2160}-\x{2188}\x{2336}-\x{237a}\x{2395}\x{249c}-\x{24e9}\x{26ac}\x{2800}-\x{28ff}\x{2c00}-\x{2c2e}\x{2c30}-\x{2c5e}\x{2c60}-\x{2ce4}\x{2ceb}-\x{2cee}\x{2cf2}\x{2cf3}\x{2d00}-\x{2d25}\x{2d27}\x{2d2d}\x{2d30}-\x{2d67}\x{2d6f}\x{2d70}\x{2d80}-\x{2d96}\x{2da0}-\x{2da6}\x{2da8}-\x{2dae}\x{2db0}-\x{2db6}\x{2db8}-\x{2dbe}\x{2dc0}-\x{2dc6}\x{2dc8}-\x{2dce}\x{2dd0}-\x{2dd6}\x{2dd8}-\x{2dde}\x{3005}-\x{3007}\x{3021}-\x{3029}\x{302e}\x{302f}\x{3031}-\x{3035}\x{3038}-\x{303c}\x{3041}-\x{3096}\x{309d}-\x{309f}\x{30a1}-\x{30fa}\x{30fc}-\x{30ff}\x{3105}-\x{312d}\x{3131}-\x{318e}\x{3190}-\x{31ba}\x{31f0}-\x{321c}\x{3220}-\x{324f}\x{3260}-\x{327b}\x{327f}-\x{32b0}\x{32c0}-\x{32cb}\x{32d0}-\x{32fe}\x{3300}-\x{3376}\x{337b}-\x{33dd}\x{33e0}-\x{33fe}\x{3400}-\x{4db5}\x{4e00}-\x{9fd5}\x{a000}-\x{a48c}\x{a4d0}-\x{a60c}\x{a610}-\x{a62b}\x{a640}-\x{a66e}\x{a680}-\x{a69d}\x{a6a0}-\x{a6ef}\x{a6f2}-\x{a6f7}\x{a722}-\x{a787}\x{a789}-\x{a7ad}\x{a7b0}-\x{a7b7}\x{a7f7}-\x{a801}\x{a803}-\x{a805}\x{a807}-\x{a80a}\x{a80c}-\x{a824}\x{a827}\x{a830}-\x{a837}\x{a840}-\x{a873}\x{a880}-\x{a8c3}\x{a8ce}-\x{a8d9}\x{a8f2}-\x{a8fd}\x{a900}-\x{a925}\x{a92e}-\x{a946}\x{a952}\x{a953}\x{a95f}-\x{a97c}\x{a983}-\x{a9b2}\x{a9b4}\x{a9b5}\x{a9ba}\x{a9bb}\x{a9bd}-\x{a9cd}\x{a9cf}-\x{a9d9}\x{a9de}-\x{a9e4}\x{a9e6}-\x{a9fe}\x{aa00}-\x{aa28}\x{aa2f}\x{aa30}\x{aa33}\x{aa34}\x{aa40}-\x{aa42}\x{aa44}-\x{aa4b}\x{aa4d}\x{aa50}-\x{aa59}\x{aa5c}-\x{aa7b}\x{aa7d}-\x{aaaf}\x{aab1}\x{aab5}\x{aab6}\x{aab9}-\x{aabd}\x{aac0}\x{aac2}\x{aadb}-\x{aaeb}\x{aaee}-\x{aaf5}\x{ab01}-\x{ab06}\x{ab09}-\x{ab0e}\x{ab11}-\x{ab16}\x{ab20}-\x{ab26}\x{ab28}-\x{ab2e}\x{ab30}-\x{ab65}\x{ab70}-\x{abe4}\x{abe6}\x{abe7}\x{abe9}-\x{abec}\x{abf0}-\x{abf9}\x{ac00}-\x{d7a3}\x{d7b0}-\x{d7c6}\x{d7cb}-\x{d7fb}\x{e000}-\x{fa6d}\x{fa70}-\x{fad9}\x{fb00}-\x{fb06}\x{fb13}-\x{fb17}\x{ff21}-\x{ff3a}\x{ff41}-\x{ff5a}\x{ff66}-\x{ffbe}\x{ffc2}-\x{ffc7}\x{ffca}-\x{ffcf}\x{ffd2}-\x{ffd7}\x{ffda}-\x{ffdc}\x{10000}-\x{1000b}\x{1000d}-\x{10026}\x{10028}-\x{1003a}\x{1003c}\x{1003d}\x{1003f}-\x{1004d}\x{10050}-\x{1005d}\x{10080}-\x{100fa}\x{10100}\x{10102}\x{10107}-\x{10133}\x{10137}-\x{1013f}\x{101d0}-\x{101fc}\x{10280}-\x{1029c}\x{102a0}-\x{102d0}\x{10300}-\x{10323}\x{10330}-\x{1034a}\x{10350}-\x{10375}\x{10380}-\x{1039d}\x{1039f}-\x{103c3}\x{103c8}-\x{103d5}\x{10400}-\x{1049d}\x{104a0}-\x{104a9}\x{10500}-\x{10527}\x{10530}-\x{10563}\x{1056f}\x{10600}-\x{10736}\x{10740}-\x{10755}\x{10760}-\x{10767}\x{11000}\x{11002}-\x{11037}\x{11047}-\x{1104d}\x{11066}-\x{1106f}\x{11082}-\x{110b2}\x{110b7}\x{110b8}\x{110bb}-\x{110c1}\x{110d0}-\x{110e8}\x{110f0}-\x{110f9}\x{11103}-\x{11126}\x{1112c}\x{11136}-\x{11143}\x{11150}-\x{11172}\x{11174}-\x{11176}\x{11182}-\x{111b5}\x{111bf}-\x{111c9}\x{111cd}\x{111d0}-\x{111df}\x{111e1}-\x{111f4}\x{11200}-\x{11211}\x{11213}-\x{1122e}\x{11232}\x{11233}\x{11235}\x{11238}-\x{1123d}\x{11280}-\x{11286}\x{11288}\x{1128a}-\x{1128d}\x{1128f}-\x{1129d}\x{1129f}-\x{112a9}\x{112b0}-\x{112de}\x{112e0}-\x{112e2}\x{112f0}-\x{112f9}\x{11302}\x{11303}\x{11305}-\x{1130c}\x{1130f}\x{11310}\x{11313}-\x{11328}\x{1132a}-\x{11330}\x{11332}\x{11333}\x{11335}-\x{11339}\x{1133d}-\x{1133f}\x{11341}-\x{11344}\x{11347}\x{11348}\x{1134b}-\x{1134d}\x{11350}\x{11357}\x{1135d}-\x{11363}\x{11480}-\x{114b2}\x{114b9}\x{114bb}-\x{114be}\x{114c1}\x{114c4}-\x{114c7}\x{114d0}-\x{114d9}\x{11580}-\x{115b1}\x{115b8}-\x{115bb}\x{115be}\x{115c1}-\x{115db}\x{11600}-\x{11632}\x{1163b}\x{1163c}\x{1163e}\x{11641}-\x{11644}\x{11650}-\x{11659}\x{11680}-\x{116aa}\x{116ac}\x{116ae}\x{116af}\x{116b6}\x{116c0}-\x{116c9}\x{11700}-\x{11719}\x{11720}\x{11721}\x{11726}\x{11730}-\x{1173f}\x{118a0}-\x{118f2}\x{118ff}\x{11ac0}-\x{11af8}\x{12000}-\x{12399}\x{12400}-\x{1246e}\x{12470}-\x{12474}\x{12480}-\x{12543}\x{13000}-\x{1342e}\x{14400}-\x{14646}\x{16800}-\x{16a38}\x{16a40}-\x{16a5e}\x{16a60}-\x{16a69}\x{16a6e}\x{16a6f}\x{16ad0}-\x{16aed}\x{16af5}\x{16b00}-\x{16b2f}\x{16b37}-\x{16b45}\x{16b50}-\x{16b59}\x{16b5b}-\x{16b61}\x{16b63}-\x{16b77}\x{16b7d}-\x{16b8f}\x{16f00}-\x{16f44}\x{16f50}-\x{16f7e}\x{16f93}-\x{16f9f}\x{1b000}\x{1b001}\x{1bc00}-\x{1bc6a}\x{1bc70}-\x{1bc7c}\x{1bc80}-\x{1bc88}\x{1bc90}-\x{1bc99}\x{1bc9c}\x{1bc9f}\x{1d000}-\x{1d0f5}\x{1d100}-\x{1d126}\x{1d129}-\x{1d166}\x{1d16a}-\x{1d172}\x{1d183}\x{1d184}\x{1d18c}-\x{1d1a9}\x{1d1ae}-\x{1d1e8}\x{1d360}-\x{1d371}\x{1d400}-\x{1d454}\x{1d456}-\x{1d49c}\x{1d49e}\x{1d49f}\x{1d4a2}\x{1d4a5}\x{1d4a6}\x{1d4a9}-\x{1d4ac}\x{1d4ae}-\x{1d4b9}\x{1d4bb}\x{1d4bd}-\x{1d4c3}\x{1d4c5}-\x{1d505}\x{1d507}-\x{1d50a}\x{1d50d}-\x{1d514}\x{1d516}-\x{1d51c}\x{1d51e}-\x{1d539}\x{1d53b}-\x{1d53e}\x{1d540}-\x{1d544}\x{1d546}\x{1d54a}-\x{1d550}\x{1d552}-\x{1d6a5}\x{1d6a8}-\x{1d6da}\x{1d6dc}-\x{1d714}\x{1d716}-\x{1d74e}\x{1d750}-\x{1d788}\x{1d78a}-\x{1d7c2}\x{1d7c4}-\x{1d7cb}\x{1d800}-\x{1d9ff}\x{1da37}-\x{1da3a}\x{1da6d}-\x{1da74}\x{1da76}-\x{1da83}\x{1da85}-\x{1da8b}\x{1f110}-\x{1f12e}\x{1f130}-\x{1f169}\x{1f170}-\x{1f19a}\x{1f1e6}-\x{1f202}\x{1f210}-\x{1f23a}\x{1f240}-\x{1f248}\x{1f250}\x{1f251}\x{20000}-\x{2a6d6}\x{2a700}-\x{2b734}\x{2b740}-\x{2b81d}\x{2b820}-\x{2cea1}\x{2f800}-\x{2fa1d}\x{f0000}-\x{ffffd}\x{100000}-\x{10fffd}])|([\x{590}\x{5be}\x{5c0}\x{5c3}\x{5c6}\x{5c8}-\x{5ff}\x{7c0}-\x{7ea}\x{7f4}\x{7f5}\x{7fa}-\x{815}\x{81a}\x{824}\x{828}\x{82e}-\x{858}\x{85c}-\x{89f}\x{200f}\x{fb1d}\x{fb1f}-\x{fb28}\x{fb2a}-\x{fb4f}\x{10800}-\x{1091e}\x{10920}-\x{10a00}\x{10a04}\x{10a07}-\x{10a0b}\x{10a10}-\x{10a37}\x{10a3b}-\x{10a3e}\x{10a40}-\x{10ae4}\x{10ae7}-\x{10b38}\x{10b40}-\x{10e5f}\x{10e7f}-\x{10fff}\x{1e800}-\x{1e8cf}\x{1e8d7}-\x{1edff}\x{1ef00}-\x{1efff}\x{608}\x{60b}\x{60d}\x{61b}-\x{64a}\x{66d}-\x{66f}\x{671}-\x{6d5}\x{6e5}\x{6e6}\x{6ee}\x{6ef}\x{6fa}-\x{710}\x{712}-\x{72f}\x{74b}-\x{7a5}\x{7b1}-\x{7bf}\x{8a0}-\x{8e2}\x{fb50}-\x{fd3d}\x{fd40}-\x{fdcf}\x{fdf0}-\x{fdfc}\x{fdfe}\x{fdff}\x{fe70}-\x{fefe}\x{1ee00}-\x{1eeef}\x{1eef2}-\x{1eeff}]))/u';
+	// phpcs:ignore Generic.Files.LineLength
+	private static $strongDirRegex = '/(?:([\x{41}-\x{5a}\x{61}-\x{7a}\x{aa}\x{b5}\x{ba}\x{c0}-\x{d6}\x{d8}-\x{f6}\x{f8}-\x{2b8}\x{2bb}-\x{2c1}\x{2d0}\x{2d1}\x{2e0}-\x{2e4}\x{2ee}\x{370}-\x{373}\x{376}\x{377}\x{37a}-\x{37d}\x{37f}\x{386}\x{388}-\x{38a}\x{38c}\x{38e}-\x{3a1}\x{3a3}-\x{3f5}\x{3f7}-\x{482}\x{48a}-\x{52f}\x{531}-\x{556}\x{559}-\x{55f}\x{561}-\x{587}\x{589}\x{903}-\x{939}\x{93b}\x{93d}-\x{940}\x{949}-\x{94c}\x{94e}-\x{950}\x{958}-\x{961}\x{964}-\x{980}\x{982}\x{983}\x{985}-\x{98c}\x{98f}\x{990}\x{993}-\x{9a8}\x{9aa}-\x{9b0}\x{9b2}\x{9b6}-\x{9b9}\x{9bd}-\x{9c0}\x{9c7}\x{9c8}\x{9cb}\x{9cc}\x{9ce}\x{9d7}\x{9dc}\x{9dd}\x{9df}-\x{9e1}\x{9e6}-\x{9f1}\x{9f4}-\x{9fa}\x{a03}\x{a05}-\x{a0a}\x{a0f}\x{a10}\x{a13}-\x{a28}\x{a2a}-\x{a30}\x{a32}\x{a33}\x{a35}\x{a36}\x{a38}\x{a39}\x{a3e}-\x{a40}\x{a59}-\x{a5c}\x{a5e}\x{a66}-\x{a6f}\x{a72}-\x{a74}\x{a83}\x{a85}-\x{a8d}\x{a8f}-\x{a91}\x{a93}-\x{aa8}\x{aaa}-\x{ab0}\x{ab2}\x{ab3}\x{ab5}-\x{ab9}\x{abd}-\x{ac0}\x{ac9}\x{acb}\x{acc}\x{ad0}\x{ae0}\x{ae1}\x{ae6}-\x{af0}\x{af9}\x{b02}\x{b03}\x{b05}-\x{b0c}\x{b0f}\x{b10}\x{b13}-\x{b28}\x{b2a}-\x{b30}\x{b32}\x{b33}\x{b35}-\x{b39}\x{b3d}\x{b3e}\x{b40}\x{b47}\x{b48}\x{b4b}\x{b4c}\x{b57}\x{b5c}\x{b5d}\x{b5f}-\x{b61}\x{b66}-\x{b77}\x{b83}\x{b85}-\x{b8a}\x{b8e}-\x{b90}\x{b92}-\x{b95}\x{b99}\x{b9a}\x{b9c}\x{b9e}\x{b9f}\x{ba3}\x{ba4}\x{ba8}-\x{baa}\x{bae}-\x{bb9}\x{bbe}\x{bbf}\x{bc1}\x{bc2}\x{bc6}-\x{bc8}\x{bca}-\x{bcc}\x{bd0}\x{bd7}\x{be6}-\x{bf2}\x{c01}-\x{c03}\x{c05}-\x{c0c}\x{c0e}-\x{c10}\x{c12}-\x{c28}\x{c2a}-\x{c39}\x{c3d}\x{c41}-\x{c44}\x{c58}-\x{c5a}\x{c60}\x{c61}\x{c66}-\x{c6f}\x{c7f}\x{c82}\x{c83}\x{c85}-\x{c8c}\x{c8e}-\x{c90}\x{c92}-\x{ca8}\x{caa}-\x{cb3}\x{cb5}-\x{cb9}\x{cbd}-\x{cc4}\x{cc6}-\x{cc8}\x{cca}\x{ccb}\x{cd5}\x{cd6}\x{cde}\x{ce0}\x{ce1}\x{ce6}-\x{cef}\x{cf1}\x{cf2}\x{d02}\x{d03}\x{d05}-\x{d0c}\x{d0e}-\x{d10}\x{d12}-\x{d3a}\x{d3d}-\x{d40}\x{d46}-\x{d48}\x{d4a}-\x{d4c}\x{d4e}\x{d57}\x{d5f}-\x{d61}\x{d66}-\x{d75}\x{d79}-\x{d7f}\x{d82}\x{d83}\x{d85}-\x{d96}\x{d9a}-\x{db1}\x{db3}-\x{dbb}\x{dbd}\x{dc0}-\x{dc6}\x{dcf}-\x{dd1}\x{dd8}-\x{ddf}\x{de6}-\x{def}\x{df2}-\x{df4}\x{e01}-\x{e30}\x{e32}\x{e33}\x{e40}-\x{e46}\x{e4f}-\x{e5b}\x{e81}\x{e82}\x{e84}\x{e87}\x{e88}\x{e8a}\x{e8d}\x{e94}-\x{e97}\x{e99}-\x{e9f}\x{ea1}-\x{ea3}\x{ea5}\x{ea7}\x{eaa}\x{eab}\x{ead}-\x{eb0}\x{eb2}\x{eb3}\x{ebd}\x{ec0}-\x{ec4}\x{ec6}\x{ed0}-\x{ed9}\x{edc}-\x{edf}\x{f00}-\x{f17}\x{f1a}-\x{f34}\x{f36}\x{f38}\x{f3e}-\x{f47}\x{f49}-\x{f6c}\x{f7f}\x{f85}\x{f88}-\x{f8c}\x{fbe}-\x{fc5}\x{fc7}-\x{fcc}\x{fce}-\x{fda}\x{1000}-\x{102c}\x{1031}\x{1038}\x{103b}\x{103c}\x{103f}-\x{1057}\x{105a}-\x{105d}\x{1061}-\x{1070}\x{1075}-\x{1081}\x{1083}\x{1084}\x{1087}-\x{108c}\x{108e}-\x{109c}\x{109e}-\x{10c5}\x{10c7}\x{10cd}\x{10d0}-\x{1248}\x{124a}-\x{124d}\x{1250}-\x{1256}\x{1258}\x{125a}-\x{125d}\x{1260}-\x{1288}\x{128a}-\x{128d}\x{1290}-\x{12b0}\x{12b2}-\x{12b5}\x{12b8}-\x{12be}\x{12c0}\x{12c2}-\x{12c5}\x{12c8}-\x{12d6}\x{12d8}-\x{1310}\x{1312}-\x{1315}\x{1318}-\x{135a}\x{1360}-\x{137c}\x{1380}-\x{138f}\x{13a0}-\x{13f5}\x{13f8}-\x{13fd}\x{1401}-\x{167f}\x{1681}-\x{169a}\x{16a0}-\x{16f8}\x{1700}-\x{170c}\x{170e}-\x{1711}\x{1720}-\x{1731}\x{1735}\x{1736}\x{1740}-\x{1751}\x{1760}-\x{176c}\x{176e}-\x{1770}\x{1780}-\x{17b3}\x{17b6}\x{17be}-\x{17c5}\x{17c7}\x{17c8}\x{17d4}-\x{17da}\x{17dc}\x{17e0}-\x{17e9}\x{1810}-\x{1819}\x{1820}-\x{1877}\x{1880}-\x{18a8}\x{18aa}\x{18b0}-\x{18f5}\x{1900}-\x{191e}\x{1923}-\x{1926}\x{1929}-\x{192b}\x{1930}\x{1931}\x{1933}-\x{1938}\x{1946}-\x{196d}\x{1970}-\x{1974}\x{1980}-\x{19ab}\x{19b0}-\x{19c9}\x{19d0}-\x{19da}\x{1a00}-\x{1a16}\x{1a19}\x{1a1a}\x{1a1e}-\x{1a55}\x{1a57}\x{1a61}\x{1a63}\x{1a64}\x{1a6d}-\x{1a72}\x{1a80}-\x{1a89}\x{1a90}-\x{1a99}\x{1aa0}-\x{1aad}\x{1b04}-\x{1b33}\x{1b35}\x{1b3b}\x{1b3d}-\x{1b41}\x{1b43}-\x{1b4b}\x{1b50}-\x{1b6a}\x{1b74}-\x{1b7c}\x{1b82}-\x{1ba1}\x{1ba6}\x{1ba7}\x{1baa}\x{1bae}-\x{1be5}\x{1be7}\x{1bea}-\x{1bec}\x{1bee}\x{1bf2}\x{1bf3}\x{1bfc}-\x{1c2b}\x{1c34}\x{1c35}\x{1c3b}-\x{1c49}\x{1c4d}-\x{1c7f}\x{1cc0}-\x{1cc7}\x{1cd3}\x{1ce1}\x{1ce9}-\x{1cec}\x{1cee}-\x{1cf3}\x{1cf5}\x{1cf6}\x{1d00}-\x{1dbf}\x{1e00}-\x{1f15}\x{1f18}-\x{1f1d}\x{1f20}-\x{1f45}\x{1f48}-\x{1f4d}\x{1f50}-\x{1f57}\x{1f59}\x{1f5b}\x{1f5d}\x{1f5f}-\x{1f7d}\x{1f80}-\x{1fb4}\x{1fb6}-\x{1fbc}\x{1fbe}\x{1fc2}-\x{1fc4}\x{1fc6}-\x{1fcc}\x{1fd0}-\x{1fd3}\x{1fd6}-\x{1fdb}\x{1fe0}-\x{1fec}\x{1ff2}-\x{1ff4}\x{1ff6}-\x{1ffc}\x{200e}\x{2071}\x{207f}\x{2090}-\x{209c}\x{2102}\x{2107}\x{210a}-\x{2113}\x{2115}\x{2119}-\x{211d}\x{2124}\x{2126}\x{2128}\x{212a}-\x{212d}\x{212f}-\x{2139}\x{213c}-\x{213f}\x{2145}-\x{2149}\x{214e}\x{214f}\x{2160}-\x{2188}\x{2336}-\x{237a}\x{2395}\x{249c}-\x{24e9}\x{26ac}\x{2800}-\x{28ff}\x{2c00}-\x{2c2e}\x{2c30}-\x{2c5e}\x{2c60}-\x{2ce4}\x{2ceb}-\x{2cee}\x{2cf2}\x{2cf3}\x{2d00}-\x{2d25}\x{2d27}\x{2d2d}\x{2d30}-\x{2d67}\x{2d6f}\x{2d70}\x{2d80}-\x{2d96}\x{2da0}-\x{2da6}\x{2da8}-\x{2dae}\x{2db0}-\x{2db6}\x{2db8}-\x{2dbe}\x{2dc0}-\x{2dc6}\x{2dc8}-\x{2dce}\x{2dd0}-\x{2dd6}\x{2dd8}-\x{2dde}\x{3005}-\x{3007}\x{3021}-\x{3029}\x{302e}\x{302f}\x{3031}-\x{3035}\x{3038}-\x{303c}\x{3041}-\x{3096}\x{309d}-\x{309f}\x{30a1}-\x{30fa}\x{30fc}-\x{30ff}\x{3105}-\x{312d}\x{3131}-\x{318e}\x{3190}-\x{31ba}\x{31f0}-\x{321c}\x{3220}-\x{324f}\x{3260}-\x{327b}\x{327f}-\x{32b0}\x{32c0}-\x{32cb}\x{32d0}-\x{32fe}\x{3300}-\x{3376}\x{337b}-\x{33dd}\x{33e0}-\x{33fe}\x{3400}-\x{4db5}\x{4e00}-\x{9fd5}\x{a000}-\x{a48c}\x{a4d0}-\x{a60c}\x{a610}-\x{a62b}\x{a640}-\x{a66e}\x{a680}-\x{a69d}\x{a6a0}-\x{a6ef}\x{a6f2}-\x{a6f7}\x{a722}-\x{a787}\x{a789}-\x{a7ad}\x{a7b0}-\x{a7b7}\x{a7f7}-\x{a801}\x{a803}-\x{a805}\x{a807}-\x{a80a}\x{a80c}-\x{a824}\x{a827}\x{a830}-\x{a837}\x{a840}-\x{a873}\x{a880}-\x{a8c3}\x{a8ce}-\x{a8d9}\x{a8f2}-\x{a8fd}\x{a900}-\x{a925}\x{a92e}-\x{a946}\x{a952}\x{a953}\x{a95f}-\x{a97c}\x{a983}-\x{a9b2}\x{a9b4}\x{a9b5}\x{a9ba}\x{a9bb}\x{a9bd}-\x{a9cd}\x{a9cf}-\x{a9d9}\x{a9de}-\x{a9e4}\x{a9e6}-\x{a9fe}\x{aa00}-\x{aa28}\x{aa2f}\x{aa30}\x{aa33}\x{aa34}\x{aa40}-\x{aa42}\x{aa44}-\x{aa4b}\x{aa4d}\x{aa50}-\x{aa59}\x{aa5c}-\x{aa7b}\x{aa7d}-\x{aaaf}\x{aab1}\x{aab5}\x{aab6}\x{aab9}-\x{aabd}\x{aac0}\x{aac2}\x{aadb}-\x{aaeb}\x{aaee}-\x{aaf5}\x{ab01}-\x{ab06}\x{ab09}-\x{ab0e}\x{ab11}-\x{ab16}\x{ab20}-\x{ab26}\x{ab28}-\x{ab2e}\x{ab30}-\x{ab65}\x{ab70}-\x{abe4}\x{abe6}\x{abe7}\x{abe9}-\x{abec}\x{abf0}-\x{abf9}\x{ac00}-\x{d7a3}\x{d7b0}-\x{d7c6}\x{d7cb}-\x{d7fb}\x{e000}-\x{fa6d}\x{fa70}-\x{fad9}\x{fb00}-\x{fb06}\x{fb13}-\x{fb17}\x{ff21}-\x{ff3a}\x{ff41}-\x{ff5a}\x{ff66}-\x{ffbe}\x{ffc2}-\x{ffc7}\x{ffca}-\x{ffcf}\x{ffd2}-\x{ffd7}\x{ffda}-\x{ffdc}\x{10000}-\x{1000b}\x{1000d}-\x{10026}\x{10028}-\x{1003a}\x{1003c}\x{1003d}\x{1003f}-\x{1004d}\x{10050}-\x{1005d}\x{10080}-\x{100fa}\x{10100}\x{10102}\x{10107}-\x{10133}\x{10137}-\x{1013f}\x{101d0}-\x{101fc}\x{10280}-\x{1029c}\x{102a0}-\x{102d0}\x{10300}-\x{10323}\x{10330}-\x{1034a}\x{10350}-\x{10375}\x{10380}-\x{1039d}\x{1039f}-\x{103c3}\x{103c8}-\x{103d5}\x{10400}-\x{1049d}\x{104a0}-\x{104a9}\x{10500}-\x{10527}\x{10530}-\x{10563}\x{1056f}\x{10600}-\x{10736}\x{10740}-\x{10755}\x{10760}-\x{10767}\x{11000}\x{11002}-\x{11037}\x{11047}-\x{1104d}\x{11066}-\x{1106f}\x{11082}-\x{110b2}\x{110b7}\x{110b8}\x{110bb}-\x{110c1}\x{110d0}-\x{110e8}\x{110f0}-\x{110f9}\x{11103}-\x{11126}\x{1112c}\x{11136}-\x{11143}\x{11150}-\x{11172}\x{11174}-\x{11176}\x{11182}-\x{111b5}\x{111bf}-\x{111c9}\x{111cd}\x{111d0}-\x{111df}\x{111e1}-\x{111f4}\x{11200}-\x{11211}\x{11213}-\x{1122e}\x{11232}\x{11233}\x{11235}\x{11238}-\x{1123d}\x{11280}-\x{11286}\x{11288}\x{1128a}-\x{1128d}\x{1128f}-\x{1129d}\x{1129f}-\x{112a9}\x{112b0}-\x{112de}\x{112e0}-\x{112e2}\x{112f0}-\x{112f9}\x{11302}\x{11303}\x{11305}-\x{1130c}\x{1130f}\x{11310}\x{11313}-\x{11328}\x{1132a}-\x{11330}\x{11332}\x{11333}\x{11335}-\x{11339}\x{1133d}-\x{1133f}\x{11341}-\x{11344}\x{11347}\x{11348}\x{1134b}-\x{1134d}\x{11350}\x{11357}\x{1135d}-\x{11363}\x{11480}-\x{114b2}\x{114b9}\x{114bb}-\x{114be}\x{114c1}\x{114c4}-\x{114c7}\x{114d0}-\x{114d9}\x{11580}-\x{115b1}\x{115b8}-\x{115bb}\x{115be}\x{115c1}-\x{115db}\x{11600}-\x{11632}\x{1163b}\x{1163c}\x{1163e}\x{11641}-\x{11644}\x{11650}-\x{11659}\x{11680}-\x{116aa}\x{116ac}\x{116ae}\x{116af}\x{116b6}\x{116c0}-\x{116c9}\x{11700}-\x{11719}\x{11720}\x{11721}\x{11726}\x{11730}-\x{1173f}\x{118a0}-\x{118f2}\x{118ff}\x{11ac0}-\x{11af8}\x{12000}-\x{12399}\x{12400}-\x{1246e}\x{12470}-\x{12474}\x{12480}-\x{12543}\x{13000}-\x{1342e}\x{14400}-\x{14646}\x{16800}-\x{16a38}\x{16a40}-\x{16a5e}\x{16a60}-\x{16a69}\x{16a6e}\x{16a6f}\x{16ad0}-\x{16aed}\x{16af5}\x{16b00}-\x{16b2f}\x{16b37}-\x{16b45}\x{16b50}-\x{16b59}\x{16b5b}-\x{16b61}\x{16b63}-\x{16b77}\x{16b7d}-\x{16b8f}\x{16f00}-\x{16f44}\x{16f50}-\x{16f7e}\x{16f93}-\x{16f9f}\x{1b000}\x{1b001}\x{1bc00}-\x{1bc6a}\x{1bc70}-\x{1bc7c}\x{1bc80}-\x{1bc88}\x{1bc90}-\x{1bc99}\x{1bc9c}\x{1bc9f}\x{1d000}-\x{1d0f5}\x{1d100}-\x{1d126}\x{1d129}-\x{1d166}\x{1d16a}-\x{1d172}\x{1d183}\x{1d184}\x{1d18c}-\x{1d1a9}\x{1d1ae}-\x{1d1e8}\x{1d360}-\x{1d371}\x{1d400}-\x{1d454}\x{1d456}-\x{1d49c}\x{1d49e}\x{1d49f}\x{1d4a2}\x{1d4a5}\x{1d4a6}\x{1d4a9}-\x{1d4ac}\x{1d4ae}-\x{1d4b9}\x{1d4bb}\x{1d4bd}-\x{1d4c3}\x{1d4c5}-\x{1d505}\x{1d507}-\x{1d50a}\x{1d50d}-\x{1d514}\x{1d516}-\x{1d51c}\x{1d51e}-\x{1d539}\x{1d53b}-\x{1d53e}\x{1d540}-\x{1d544}\x{1d546}\x{1d54a}-\x{1d550}\x{1d552}-\x{1d6a5}\x{1d6a8}-\x{1d6da}\x{1d6dc}-\x{1d714}\x{1d716}-\x{1d74e}\x{1d750}-\x{1d788}\x{1d78a}-\x{1d7c2}\x{1d7c4}-\x{1d7cb}\x{1d800}-\x{1d9ff}\x{1da37}-\x{1da3a}\x{1da6d}-\x{1da74}\x{1da76}-\x{1da83}\x{1da85}-\x{1da8b}\x{1f110}-\x{1f12e}\x{1f130}-\x{1f169}\x{1f170}-\x{1f19a}\x{1f1e6}-\x{1f202}\x{1f210}-\x{1f23a}\x{1f240}-\x{1f248}\x{1f250}\x{1f251}\x{20000}-\x{2a6d6}\x{2a700}-\x{2b734}\x{2b740}-\x{2b81d}\x{2b820}-\x{2cea1}\x{2f800}-\x{2fa1d}\x{f0000}-\x{ffffd}\x{100000}-\x{10fffd}])|([\x{590}\x{5be}\x{5c0}\x{5c3}\x{5c6}\x{5c8}-\x{5ff}\x{7c0}-\x{7ea}\x{7f4}\x{7f5}\x{7fa}-\x{815}\x{81a}\x{824}\x{828}\x{82e}-\x{858}\x{85c}-\x{89f}\x{200f}\x{fb1d}\x{fb1f}-\x{fb28}\x{fb2a}-\x{fb4f}\x{10800}-\x{1091e}\x{10920}-\x{10a00}\x{10a04}\x{10a07}-\x{10a0b}\x{10a10}-\x{10a37}\x{10a3b}-\x{10a3e}\x{10a40}-\x{10ae4}\x{10ae7}-\x{10b38}\x{10b40}-\x{10e5f}\x{10e7f}-\x{10fff}\x{1e800}-\x{1e8cf}\x{1e8d7}-\x{1edff}\x{1ef00}-\x{1efff}\x{608}\x{60b}\x{60d}\x{61b}-\x{64a}\x{66d}-\x{66f}\x{671}-\x{6d5}\x{6e5}\x{6e6}\x{6ee}\x{6ef}\x{6fa}-\x{710}\x{712}-\x{72f}\x{74b}-\x{7a5}\x{7b1}-\x{7bf}\x{8a0}-\x{8e2}\x{fb50}-\x{fd3d}\x{fd40}-\x{fdcf}\x{fdf0}-\x{fdfc}\x{fdfe}\x{fdff}\x{fe70}-\x{fefe}\x{1ee00}-\x{1eeef}\x{1eef2}-\x{1eeff}]))/u';
 	// @codeCoverageIgnoreEnd
-	// @codingStandardsIgnoreEnd
 
 	/**
 	 * Get a cached or new language object for a given language code
 	 * @param string $code
+	 * @throws MWException
 	 * @return Language
 	 */
 	static function factory( $code ) {
@@ -186,9 +221,7 @@ class Language {
 		}
 
 		// get the language object to process
-		$langObj = isset( self::$mLangObjCache[$code] )
-			? self::$mLangObjCache[$code]
-			: self::newFromCode( $code );
+		$langObj = self::$mLangObjCache[$code] ?? self::newFromCode( $code );
 
 		// merge the language object in to get it up front in the cache
 		self::$mLangObjCache = array_merge( [ $code => $langObj ], self::$mLangObjCache );
@@ -201,45 +234,65 @@ class Language {
 	/**
 	 * Create a language object for a given language code
 	 * @param string $code
+	 * @param bool $fallback Whether we're going through language fallback chain
 	 * @throws MWException
 	 * @return Language
 	 */
-	protected static function newFromCode( $code ) {
-		if ( !Language::isValidCode( $code ) ) {
+	protected static function newFromCode( $code, $fallback = false ) {
+		if ( !self::isValidCode( $code ) ) {
 			throw new MWException( "Invalid language code \"$code\"" );
 		}
 
-		if ( !Language::isValidBuiltInCode( $code ) ) {
+		if ( !self::isValidBuiltInCode( $code ) ) {
 			// It's not possible to customise this code with class files, so
 			// just return a Language object. This is to support uselang= hacks.
 			$lang = new Language;
-			$lang->setCode( $code );
+			$lang->mCode = $code;
 			return $lang;
 		}
 
 		// Check if there is a language class for the code
-		$class = self::classFromCode( $code );
-		if ( class_exists( $class ) ) {
+		$class = self::classFromCode( $code, $fallback );
+		// LanguageCode does not inherit Language
+		if ( class_exists( $class ) && is_a( $class, 'Language', true ) ) {
 			$lang = new $class;
 			return $lang;
 		}
 
 		// Keep trying the fallback list until we find an existing class
-		$fallbacks = Language::getFallbacksFor( $code );
+		$fallbacks = self::getFallbacksFor( $code );
 		foreach ( $fallbacks as $fallbackCode ) {
-			if ( !Language::isValidBuiltInCode( $fallbackCode ) ) {
+			if ( !self::isValidBuiltInCode( $fallbackCode ) ) {
 				throw new MWException( "Invalid fallback '$fallbackCode' in fallback sequence for '$code'" );
 			}
 
 			$class = self::classFromCode( $fallbackCode );
 			if ( class_exists( $class ) ) {
 				$lang = new $class;
-				$lang->setCode( $code );
+				$lang->mCode = $code;
 				return $lang;
 			}
 		}
 
 		throw new MWException( "Invalid fallback sequence for language '$code'" );
+	}
+
+	/**
+	 * Intended for tests that may change configuration in a way that invalidates caches.
+	 *
+	 * @since 1.32
+	 */
+	public static function clearCaches() {
+		if ( !defined( 'MW_PHPUNIT_TEST' ) ) {
+			throw new MWException( __METHOD__ . ' must not be used outside tests' );
+		}
+		self::$dataCache = null;
+		// Reinitialize $dataCache, since it's expected to always be available
+		self::getLocalisationCache();
+		self::$mLangObjCache = [];
+		self::$fallbackLanguageCache = [];
+		self::$grammarTransformations = null;
+		self::$languageNameCache = null;
 	}
 
 	/**
@@ -270,7 +323,7 @@ class Language {
 	 * language, script or variant codes actually exist in the repositories.
 	 *
 	 * Based on regexes by Mark Davis of the Unicode Consortium:
-	 * http://unicode.org/repos/cldr/trunk/tools/java/org/unicode/cldr/util/data/langtagRegex.txt
+	 * https://www.unicode.org/repos/cldr/trunk/tools/java/org/unicode/cldr/util/data/langtagRegex.txt
 	 *
 	 * @param string $code
 	 * @param bool $lenient Whether to allow '_' as separator. The default is only '-'.
@@ -297,7 +350,7 @@ class Language {
 		# Since these are limited, this is safe even later changes to the registry --
 		# the only oddity is that it might change the type of the tag, and thus
 		# the results from the capturing groups.
-		# http://www.iana.org/assignments/language-subtag-registry
+		# https://www.iana.org/assignments/language-subtag-registry
 
 		$grandfathered = "en{$s}GB{$s}oed"
 			. "|i{$s}(?:ami|bnn|default|enochian|hak|klingon|lux|mingo|navajo|pwn|tao|tay|tsu)"
@@ -334,11 +387,12 @@ class Language {
 	 */
 	public static function isValidCode( $code ) {
 		static $cache = [];
+		Assert::parameterType( 'string', $code, '$code' );
 		if ( !isset( $cache[$code] ) ) {
 			// People think language codes are html safe, so enforce it.
 			// Ideally we should only allow a-zA-Z0-9-
 			// but, .+ and other chars are often used for {{int:}} hacks
-			// see bugs 37564, 37587, 36938
+			// see bugs T39564, T39587, T38938
 			$cache[$code] =
 				// Protect against path traversal
 				strcspn( $code, ":/\\\000&<>'\"" ) === strlen( $code )
@@ -353,21 +407,11 @@ class Language {
 	 *
 	 * @param string $code
 	 *
-	 * @throws MWException
 	 * @since 1.18
 	 * @return bool
 	 */
 	public static function isValidBuiltInCode( $code ) {
-
-		if ( !is_string( $code ) ) {
-			if ( is_object( $code ) ) {
-				$addmsg = " of class " . get_class( $code );
-			} else {
-				$addmsg = '';
-			}
-			$type = gettype( $code );
-			throw new MWException( __METHOD__ . " must be passed a string, $type given$addmsg" );
-		}
+		Assert::parameterType( 'string', $code, '$code' );
 
 		return (bool)preg_match( '/^[a-z0-9-]{2,}$/', $code );
 	}
@@ -413,10 +457,10 @@ class Language {
 	function __construct() {
 		$this->mConverter = new FakeConverter( $this );
 		// Set the code to the name of the descendant
-		if ( get_class( $this ) == 'Language' ) {
+		if ( static::class === 'Language' ) {
 			$this->mCode = 'en';
 		} else {
-			$this->mCode = str_replace( '_', '-', strtolower( substr( get_class( $this ), 8 ) ) );
+			$this->mCode = str_replace( '_', '-', strtolower( substr( static::class, 8 ) ) );
 		}
 		self::getLocalisationCache();
 	}
@@ -457,16 +501,18 @@ class Language {
 	 * Returns an array of localised namespaces indexed by their numbers. If the namespace is not
 	 * available in localised form, it will be included in English.
 	 *
-	 * @return array
+	 * @return string[] List of localized namespace names, indexed by numeric namespace ID.
 	 */
 	public function getNamespaces() {
 		if ( is_null( $this->namespaceNames ) ) {
 			global $wgMetaNamespace, $wgMetaNamespaceTalk, $wgExtraNamespaces;
 
-			$this->namespaceNames = self::$dataCache->getItem( $this->mCode, 'namespaceNames' );
-			$validNamespaces = MWNamespace::getCanonicalNamespaces();
+			$validNamespaces = MediaWikiServices::getInstance()->getNamespaceInfo()->
+				getCanonicalNamespaces();
 
-			$this->namespaceNames = $wgExtraNamespaces + $this->namespaceNames + $validNamespaces;
+			$this->namespaceNames = $wgExtraNamespaces +
+				self::$dataCache->getItem( $this->mCode, 'namespaceNames' );
+			$this->namespaceNames += $validNamespaces;
 
 			$this->namespaceNames[NS_PROJECT] = $wgMetaNamespace;
 			if ( $wgMetaNamespaceTalk ) {
@@ -530,7 +576,7 @@ class Language {
 	 * Get a namespace value by key
 	 *
 	 * <code>
-	 * $mw_ns = $wgContLang->getNsText( NS_MEDIAWIKI );
+	 * $mw_ns = $lang->getNsText( NS_MEDIAWIKI );
 	 * echo $mw_ns; // prints 'MediaWiki'
 	 * </code>
 	 *
@@ -539,7 +585,7 @@ class Language {
 	 */
 	public function getNsText( $index ) {
 		$ns = $this->getNamespaces();
-		return isset( $ns[$index] ) ? $ns[$index] : false;
+		return $ns[$index] ?? false;
 	}
 
 	/**
@@ -548,7 +594,7 @@ class Language {
 	 * producing output.
 	 *
 	 * <code>
-	 * $mw_ns = $wgContLang->getFormattedNsText( NS_MEDIAWIKI_TALK );
+	 * $mw_ns = $lang->getFormattedNsText( NS_MEDIAWIKI_TALK );
 	 * echo $mw_ns; // prints 'MediaWiki talk'
 	 * </code>
 	 *
@@ -574,7 +620,7 @@ class Language {
 		$ns = $wgExtraGenderNamespaces +
 			(array)self::$dataCache->getItem( $this->mCode, 'namespaceGenderAliases' );
 
-		return isset( $ns[$index][$gender] ) ? $ns[$index][$gender] : $this->getNsText( $index );
+		return $ns[$index][$gender] ?? $this->getNsText( $index );
 	}
 
 	/**
@@ -610,7 +656,7 @@ class Language {
 	function getLocalNsIndex( $text ) {
 		$lctext = $this->lc( $text );
 		$ids = $this->getNamespaceIds();
-		return isset( $ids[$lctext] ) ? $ids[$lctext] : false;
+		return $ids[$lctext] ?? false;
 	}
 
 	/**
@@ -652,6 +698,14 @@ class Language {
 			}
 
 			$this->namespaceAliases = $aliases + $convertedNames;
+
+			# Filter out aliases to namespaces that don't exist, e.g. from extensions
+			# that aren't loaded here but are included in the l10n cache.
+			# (array_intersect preserves keys from its first argument)
+			$this->namespaceAliases = array_intersect(
+				$this->namespaceAliases,
+				array_keys( $this->getNamespaces() )
+			);
 		}
 
 		return $this->namespaceAliases;
@@ -692,12 +746,13 @@ class Language {
 	 */
 	public function getNsIndex( $text ) {
 		$lctext = $this->lc( $text );
-		$ns = MWNamespace::getCanonicalIndex( $lctext );
+		$ns = MediaWikiServices::getInstance()->getNamespaceInfo()->
+			getCanonicalIndex( $lctext );
 		if ( $ns !== null ) {
 			return $ns;
 		}
 		$ids = $this->getNamespaceIds();
-		return isset( $ids[$lctext] ) ? $ids[$lctext] : false;
+		return $ids[$lctext] ?? false;
 	}
 
 	/**
@@ -722,7 +777,7 @@ class Language {
 	}
 
 	/**
-	 * @return array
+	 * @return string[]|bool List of date format preference keys, or false if disabled.
 	 */
 	public function getDatePreferences() {
 		return self::$dataCache->getItem( $this->mCode, 'datePreferences' );
@@ -756,26 +811,11 @@ class Language {
 	}
 
 	/**
-	 * @param string $image
-	 * @return array|null
-	 */
-	function getImageFile( $image ) {
-		return self::$dataCache->getSubitem( $this->mCode, 'imageFiles', $image );
-	}
-
-	/**
-	 * @return array
-	 * @since 1.24
-	 */
-	public function getImageFiles() {
-		return self::$dataCache->getItem( $this->mCode, 'imageFiles' );
-	}
-
-	/**
 	 * @return array
 	 */
 	public function getExtraUserToggles() {
-		return (array)self::$dataCache->getItem( $this->mCode, 'extraUserToggles' );
+		wfDeprecated( __METHOD__, '1.34' );
+		return [];
 	}
 
 	/**
@@ -789,16 +829,16 @@ class Language {
 	/**
 	 * Get an array of language names, indexed by code.
 	 * @param null|string $inLanguage Code of language in which to return the names
-	 *		Use null for autonyms (native names)
+	 * 		Use self::AS_AUTONYMS for autonyms (native names)
 	 * @param string $include One of:
-	 *		'all' all available languages
-	 *		'mw' only if the language is defined in MediaWiki or wgExtraLanguageNames (default)
-	 *		'mwfile' only if the language is in 'mw' *and* has a message file
-	 * @return array Language code => language name
+	 * 		self::ALL all available languages
+	 * 		'mw' only if the language is defined in MediaWiki or wgExtraLanguageNames (default)
+	 * 		self::SUPPORTED only if the language is in 'mw' *and* has a message file
+	 * @return array Language code => language name (sorted by key)
 	 * @since 1.20
 	 */
-	public static function fetchLanguageNames( $inLanguage = null, $include = 'mw' ) {
-		$cacheKey = $inLanguage === null ? 'null' : $inLanguage;
+	public static function fetchLanguageNames( $inLanguage = self::AS_AUTONYMS, $include = 'mw' ) {
+		$cacheKey = $inLanguage === self::AS_AUTONYMS ? 'null' : $inLanguage;
 		$cacheKey .= ":$include";
 		if ( self::$languageNameCache === null ) {
 			self::$languageNameCache = new HashBagOStuff( [ 'maxKeys' => 20 ] );
@@ -815,18 +855,21 @@ class Language {
 	/**
 	 * Uncached helper for fetchLanguageNames
 	 * @param null|string $inLanguage Code of language in which to return the names
-	 *		Use null for autonyms (native names)
+	 *		Use self::AS_AUTONYMS for autonyms (native names)
 	 * @param string $include One of:
-	 *		'all' all available languages
+	 *		self::ALL all available languages
 	 *		'mw' only if the language is defined in MediaWiki or wgExtraLanguageNames (default)
-	 *		'mwfile' only if the language is in 'mw' *and* has a message file
-	 * @return array Language code => language name
+	 *		self::SUPPORTED only if the language is in 'mw' *and* has a message file
+	 * @return array Language code => language name (sorted by key)
 	 */
-	private static function fetchLanguageNamesUncached( $inLanguage = null, $include = 'mw' ) {
-		global $wgExtraLanguageNames;
+	private static function fetchLanguageNamesUncached(
+		$inLanguage = self::AS_AUTONYMS,
+		$include = 'mw'
+	) {
+		global $wgExtraLanguageNames, $wgUsePigLatinVariant;
 
 		// If passed an invalid language code to use, fallback to en
-		if ( $inLanguage !== null && !Language::isValidCode( $inLanguage ) ) {
+		if ( $inLanguage !== self::AS_AUTONYMS && !self::isValidCode( $inLanguage ) ) {
 			$inLanguage = 'en';
 		}
 
@@ -838,6 +881,11 @@ class Language {
 		}
 
 		$mwNames = $wgExtraLanguageNames + MediaWiki\Languages\Data\Names::$names;
+		if ( $wgUsePigLatinVariant ) {
+			// Pig Latin (for variant development)
+			$mwNames['en-x-piglatin'] = 'Igpay Atinlay';
+		}
+
 		foreach ( $mwNames as $mwCode => $mwName ) {
 			# - Prefer own MediaWiki native name when not using the hook
 			# - For other names just add if not added through the hook
@@ -846,7 +894,7 @@ class Language {
 			}
 		}
 
-		if ( $include === 'all' ) {
+		if ( $include === self::ALL ) {
 			ksort( $names );
 			return $names;
 		}
@@ -857,7 +905,7 @@ class Language {
 			$returnMw[$coreCode] = $names[$coreCode];
 		}
 
-		if ( $include === 'mwfile' ) {
+		if ( $include === self::SUPPORTED ) {
 			$namesMwFile = [];
 			# We do this using a foreach over the codes instead of a directory
 			# loop so that messages files in extensions will work correctly.
@@ -880,12 +928,17 @@ class Language {
 
 	/**
 	 * @param string $code The code of the language for which to get the name
-	 * @param null|string $inLanguage Code of language in which to return the name (null for autonyms)
-	 * @param string $include 'all', 'mw' or 'mwfile'; see fetchLanguageNames()
+	 * @param null|string $inLanguage Code of language in which to return the name
+	 *   (SELF::AS_AUTONYMS for autonyms)
+	 * @param string $include See fetchLanguageNames()
 	 * @return string Language name or empty
 	 * @since 1.20
 	 */
-	public static function fetchLanguageName( $code, $inLanguage = null, $include = 'all' ) {
+	public static function fetchLanguageName(
+		$code,
+		$inLanguage = self::AS_AUTONYMS,
+		$include = self::ALL
+	) {
 		$code = strtolower( $code );
 		$array = self::fetchLanguageNames( $inLanguage, $include );
 		return !array_key_exists( $code, $array ) ? '' : $array[$code];
@@ -1043,6 +1096,8 @@ class Language {
 	 *    xin  n (month number) in Iranian calendar
 	 *    xiy  y (two digit year) in Iranian calendar
 	 *    xiY  Y (full year) in Iranian calendar
+	 *    xit  t (days in month) in Iranian calendar
+	 *    xiz  z (day of the year) in Iranian calendar
 	 *
 	 *    xjj  j (day number) in Hebrew calendar
 	 *    xjF  F (month name) in Hebrew calendar
@@ -1081,15 +1136,15 @@ class Language {
 	 * @param string $ts 14-character timestamp
 	 *      YYYYMMDDHHMMSS
 	 *      01234567890123
-	 * @param DateTimeZone $zone Timezone of $ts
-	 * @param[out] int $ttl The amount of time (in seconds) the output may be cached for.
+	 * @param DateTimeZone|null $zone Timezone of $ts
+	 * @param int &$ttl The amount of time (in seconds) the output may be cached for.
 	 * Only makes sense if $ts is the current time.
 	 * @todo handling of "o" format character for Iranian, Hebrew, Hijri & Thai?
 	 *
 	 * @throws MWException
 	 * @return string
 	 */
-	public function sprintfDate( $format, $ts, DateTimeZone $zone = null, &$ttl = null ) {
+	public function sprintfDate( $format, $ts, DateTimeZone $zone = null, &$ttl = 'unused' ) {
 		$s = '';
 		$raw = false;
 		$roman = false;
@@ -1182,7 +1237,7 @@ class Language {
 				case 'D':
 					$usedDay = true;
 					$s .= $this->getWeekdayAbbreviation(
-						Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'w' ) + 1
+						self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'w' ) + 1
 					);
 					break;
 				case 'j':
@@ -1213,7 +1268,7 @@ class Language {
 				case 'l':
 					$usedDay = true;
 					$s .= $this->getWeekdayName(
-						Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'w' ) + 1
+						self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'w' ) + 1
 					);
 					break;
 				case 'F':
@@ -1338,6 +1393,20 @@ class Language {
 					}
 					$num = substr( $iranian[0], -2 );
 					break;
+				case 'xit':
+					$usedIranianYear = true;
+					if ( !$iranian ) {
+						$iranian = self::tsToIranian( $ts );
+					}
+					$num = self::$IRANIAN_DAYS[$iranian[1] - 1];
+					break;
+				case 'xiz':
+					$usedIranianYear = true;
+					if ( !$iranian ) {
+						$iranian = self::tsToIranian( $ts );
+					}
+					$num = $iranian[3];
+					break;
 				case 'a':
 					$usedAMPM = true;
 					$s .= intval( substr( $ts, 8, 2 ) ) < 12 ? 'am' : 'pm';
@@ -1349,7 +1418,7 @@ class Language {
 				case 'g':
 					$usedHour = true;
 					$h = substr( $ts, 8, 2 );
-					$num = $h % 12 ? $h % 12 : 12;
+					$num = $h % 12 ?: 12;
 					break;
 				case 'G':
 					$usedHour = true;
@@ -1358,7 +1427,7 @@ class Language {
 				case 'h':
 					$usedHour = true;
 					$h = substr( $ts, 8, 2 );
-					$num = sprintf( '%02d', $h % 12 ? $h % 12 : 12 );
+					$num = sprintf( '%02d', $h % 12 ?: 12 );
 					break;
 				case 'H':
 					$usedHour = true;
@@ -1380,36 +1449,36 @@ class Language {
 				case 'O':
 				case 'P':
 				case 'T':
-					$s .= Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$s .= self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 'w':
 				case 'N':
 				case 'z':
 					$usedDay = true;
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 'W':
 					$usedWeek = true;
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 't':
 					$usedMonth = true;
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 'L':
 					$usedIsLeapYear = true;
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 'o':
 					$usedISOYear = true;
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case 'U':
 					$usedSecond = true;
 					// fall through
 				case 'I':
 				case 'Z':
-					$num = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
+					$num = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, $code );
 					break;
 				case '\\':
 					# Backslash escaping
@@ -1443,7 +1512,7 @@ class Language {
 					$s .= $num;
 					$raw = false;
 				} elseif ( $roman ) {
-					$s .= Language::romanNumeral( $num );
+					$s .= self::romanNumeral( $num );
 					$roman = false;
 				} elseif ( $hebrewNum ) {
 					$s .= self::hebrewNumeral( $num );
@@ -1454,7 +1523,9 @@ class Language {
 			}
 		}
 
-		if ( $usedSecond ) {
+		if ( $ttl === 'unused' ) {
+			// No need to calculate the TTL, the caller wont use it anyway.
+		} elseif ( $usedSecond ) {
 			$ttl = 1;
 		} elseif ( $usedMinute ) {
 			$ttl = 60 - substr( $ts, 12, 2 );
@@ -1483,7 +1554,7 @@ class Language {
 				substr( $ts, 10, 2 ) * 60 - substr( $ts, 12, 2 );
 			if ( $usedWeek ) {
 				$possibleTtls[] =
-					( 7 - Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'N' ) ) * 86400 +
+					( 7 - self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'N' ) ) * 86400 +
 					$timeRemainingInDay;
 			} elseif ( $usedISOYear ) {
 				// December 28th falls on the last ISO week of the year, every year.
@@ -1493,29 +1564,29 @@ class Language {
 					substr( $ts, 0, 4 ) . '1228',
 					$zone ?: new DateTimeZone( 'UTC' )
 				)->format( 'W' );
-				$currentISOWeek = Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'W' );
+				$currentISOWeek = self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'W' );
 				$weeksRemaining = $lastWeekOfISOYear - $currentISOWeek;
 				$timeRemainingInWeek =
-					( 7 - Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'N' ) ) * 86400
+					( 7 - self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'N' ) ) * 86400
 					+ $timeRemainingInDay;
 				$possibleTtls[] = $weeksRemaining * 604800 + $timeRemainingInWeek;
 			}
 
 			if ( $usedMonth ) {
 				$possibleTtls[] =
-					( Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 't' ) -
+					( self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 't' ) -
 						substr( $ts, 6, 2 ) ) * 86400
 					+ $timeRemainingInDay;
 			} elseif ( $usedYear ) {
 				$possibleTtls[] =
-					( Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'L' ) + 364 -
-						Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'z' ) ) * 86400
+					( self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'L' ) + 364 -
+						self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'z' ) ) * 86400
 					+ $timeRemainingInDay;
 			} elseif ( $usedIsLeapYear ) {
 				$year = substr( $ts, 0, 4 );
 				$timeRemainingInYear =
-					( Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'L' ) + 364 -
-						Language::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'z' ) ) * 86400
+					( self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'L' ) + 364 -
+						self::dateTimeObjFormat( $dateTimeObj, $ts, $zone, 'z' ) ) * 86400
 					+ $timeRemainingInDay;
 				$mod = $year % 4;
 				if ( $mod || ( !( $year % 100 ) && $year % 400 ) ) {
@@ -1558,9 +1629,9 @@ class Language {
 	 * @return int[]
 	 */
 	private static function tsToIranian( $ts ) {
-		$gy = substr( $ts, 0, 4 ) -1600;
-		$gm = substr( $ts, 4, 2 ) -1;
-		$gd = substr( $ts, 6, 2 ) -1;
+		$gy = substr( $ts, 0, 4 ) - 1600;
+		$gm = substr( $ts, 4, 2 ) - 1;
+		$gd = substr( $ts, 6, 2 ) - 1;
 
 		# Days passed from the beginning (including leap years)
 		$gDayNo = 365 * $gy
@@ -1594,6 +1665,8 @@ class Language {
 			$jDayNo = floor( ( $jDayNo - 1 ) % 365 );
 		}
 
+		$jz = $jDayNo;
+
 		for ( $i = 0; $i < 11 && $jDayNo >= self::$IRANIAN_DAYS[$i]; $i++ ) {
 			$jDayNo -= self::$IRANIAN_DAYS[$i];
 		}
@@ -1601,7 +1674,7 @@ class Language {
 		$jm = $i + 1;
 		$jd = $jDayNo + 1;
 
-		return [ $jy, $jm, $jd ];
+		return [ $jy, $jm, $jd, $jz ];
 	}
 
 	/**
@@ -1609,7 +1682,7 @@ class Language {
 	 *
 	 * Based on a PHP-Nuke block by Sharjeel which is released under GNU/GPL license
 	 *
-	 * @see http://phpnuke.org/modules.php?name=News&file=article&sid=8234&mode=thread&order=0&thold=0
+	 * @see https://phpnuke.org/modules.php?name=News&file=article&sid=8234&mode=thread&order=0&thold=0
 	 *
 	 * @param string $ts
 	 *
@@ -1638,7 +1711,7 @@ class Language {
 								(int)( ( 275 * $zm ) / 9 ) + $zd + 1729777;
 		}
 
-		$zl = $zjd -1948440 + 10632;
+		$zl = $zjd - 1948440 + 10632;
 		$zn = (int)( ( $zl - 1 ) / 10631 );
 		$zl = $zl - 10631 * $zn + 354;
 		$zj = ( (int)( ( 10985 - $zl ) / 5316 ) ) * ( (int)( ( 50 * $zl ) / 17719 ) ) +
@@ -1757,22 +1830,19 @@ class Language {
 		while ( $hebrewMonth <= 12 ) {
 			# Calculate days in this month
 			if ( $isLeap && $hebrewMonth == 6 ) {
-				# Adar in a leap year
-				if ( $isLeap ) {
-					# Leap year - has Adar I, with 30 days, and Adar II, with 29 days
-					$days = 30;
+				# Leap year - has Adar I, with 30 days, and Adar II, with 29 days
+				$days = 30;
+				if ( $hebrewDay <= $days ) {
+					# Day in Adar I
+					$hebrewMonth = 13;
+				} else {
+					# Subtract the days of Adar I
+					$hebrewDay -= $days;
+					# Try Adar II
+					$days = 29;
 					if ( $hebrewDay <= $days ) {
-						# Day in Adar I
-						$hebrewMonth = 13;
-					} else {
-						# Subtract the days of Adar I
-						$hebrewDay -= $days;
-						# Try Adar II
-						$days = 29;
-						if ( $hebrewDay <= $days ) {
-							# Day in Adar II
-							$hebrewMonth = 14;
-						}
+						# Day in Adar II
+						$hebrewMonth = 14;
 					}
 				}
 			} elseif ( $hebrewMonth == 2 && $yearPattern == 2 ) {
@@ -1838,9 +1908,9 @@ class Language {
 	 * Algorithm to convert Gregorian dates to Thai solar dates,
 	 * Minguo dates or Minguo dates.
 	 *
-	 * Link: http://en.wikipedia.org/wiki/Thai_solar_calendar
-	 *       http://en.wikipedia.org/wiki/Minguo_calendar
-	 *       http://en.wikipedia.org/wiki/Japanese_era_name
+	 * Link: https://en.wikipedia.org/wiki/Thai_solar_calendar
+	 *       https://en.wikipedia.org/wiki/Minguo_calendar
+	 *       https://en.wikipedia.org/wiki/Japanese_era_name
 	 *
 	 * @param string $ts 14-character timestamp
 	 * @param string $cName Calender name
@@ -1856,6 +1926,14 @@ class Language {
 			# Add 543 years to the Gregorian calendar
 			# Months and days are identical
 			$gy_offset = $gy + 543;
+			# fix for dates between 1912 and 1941
+			# https://en.wikipedia.org/?oldid=836596673#New_year
+			if ( $gy >= 1912 && $gy <= 1940 ) {
+				if ( $gm <= 3 ) {
+					$gy_offset--;
+				}
+				$gm = ( $gm - 3 ) % 12;
+			}
 		} elseif ( ( !strcmp( $cName, 'minguo' ) ) || !strcmp( $cName, 'juche' ) ) {
 			# Minguo dates
 			# Deduct 1911 years from the Gregorian calendar
@@ -1903,7 +1981,11 @@ class Language {
 					$gy_offset = '元';
 				}
 				$gy_offset = '昭和' . $gy_offset;
-			} else {
+			} elseif (
+				( ( $gy == 1989 ) && ( $gm == 1 ) && ( $gd >= 8 ) ) ||
+				( ( $gy > 1989 ) && ( $gy < 2019 ) ) ||
+				( ( $gy == 2019 ) && ( $gm < 5 ) )
+			) {
 				# Heisei period
 				$gy_gannen = $gy - 1989 + 1;
 				$gy_offset = $gy_gannen;
@@ -1911,6 +1993,14 @@ class Language {
 					$gy_offset = '元';
 				}
 				$gy_offset = '平成' . $gy_offset;
+			} else {
+				# Reiwa period
+				$gy_gannen = $gy - 2019 + 1;
+				$gy_offset = $gy_gannen;
+				if ( $gy_gannen == 1 ) {
+					$gy_offset = '元';
+				}
+				$gy_offset = '令和' . $gy_offset;
 			}
 		} else {
 			$gy_offset = $gy;
@@ -1923,8 +2013,8 @@ class Language {
 	 * Gets directionality of the first strongly directional codepoint, for embedBidi()
 	 *
 	 * This is the rule the BIDI algorithm uses to determine the directionality of
-	 * paragraphs ( http://unicode.org/reports/tr9/#The_Paragraph_Level ) and
-	 * FSI isolates ( http://unicode.org/reports/tr9/#Explicit_Directional_Isolates ).
+	 * paragraphs ( https://www.unicode.org/reports/tr9/#The_Paragraph_Level ) and
+	 * FSI isolates ( https://www.unicode.org/reports/tr9/#Explicit_Directional_Isolates ).
 	 *
 	 * TODO: Does not handle BIDI control characters inside the text.
 	 * TODO: Does not handle unallocated characters.
@@ -2077,17 +2167,15 @@ class Language {
 		$data = explode( '|', $tz, 3 );
 
 		if ( $data[0] == 'ZoneInfo' ) {
-			MediaWiki\suppressWarnings();
-			$userTZ = timezone_open( $data[2] );
-			MediaWiki\restoreWarnings();
-			if ( $userTZ !== false ) {
-				$date = date_create( $ts, timezone_open( 'UTC' ) );
-				date_timezone_set( $date, $userTZ );
-				$date = date_format( $date, 'YmdHis' );
-				return $date;
+			try {
+				$userTZ = new DateTimeZone( $data[2] );
+				$date = new DateTime( $ts, new DateTimeZone( 'UTC' ) );
+				$date->setTimezone( $userTZ );
+				return $date->format( 'YmdHis' );
+			} catch ( Exception $e ) {
+				// Unrecognized timezone, default to 'Offset' with the stored offset.
+				$data[0] = 'Offset';
 			}
-			# Unrecognized timezone, default to 'Offset' with the stored offset.
-			$data[0] = 'Offset';
 		}
 
 		if ( $data[0] == 'System' || $tz == '' ) {
@@ -2110,11 +2198,11 @@ class Language {
 		}
 
 		# No difference ? Return time unchanged
-		if ( 0 == $minDiff ) {
+		if ( $minDiff == 0 ) {
 			return $ts;
 		}
 
-		MediaWiki\suppressWarnings(); // E_STRICT system time bitching
+		Wikimedia\suppressWarnings(); // E_STRICT system time bitching
 		# Generate an adjusted date; take advantage of the fact that mktime
 		# will normalize out-of-range values so we don't have to split $minDiff
 		# into hours and minutes.
@@ -2127,7 +2215,7 @@ class Language {
 			(int)substr( $ts, 0, 4 ) ); # Year
 
 		$date = date( 'YmdHis', $t );
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 
 		return $date;
 	}
@@ -2137,12 +2225,10 @@ class Language {
 	 * the date preference they're supposed to use, it should be used in
 	 * all children.
 	 *
-	 *<code>
-	 * function timeanddate([...], $format = true) {
-	 * 	$datePreference = $this->dateFormat($format);
-	 * [...]
-	 * }
-	 *</code>
+	 *     function timeanddate([...], $format = true) {
+	 *       $datePreference = $this->dateFormat($format);
+	 *       [...]
+	 *     }
 	 *
 	 * @param int|string|bool $usePrefs If true, the user's preference is used
 	 *   if false, the site/language default is used
@@ -2289,7 +2375,7 @@ class Language {
 
 	/**
 	 * Takes a number of seconds and returns an array with a set of corresponding intervals.
-	 * For example 65 will be turned into array( minutes => 1, seconds => 5 ).
+	 * For example 65 will be turned into [ minutes => 1, seconds => 5 ].
 	 *
 	 * @since 1.20
 	 *
@@ -2557,7 +2643,7 @@ class Language {
 
 	/**
 	 * @param string $key
-	 * @return array|null
+	 * @return string|null
 	 */
 	public function getMessage( $key ) {
 		return self::$dataCache->getSubitem( $this->mCode, 'messages', $key );
@@ -2577,16 +2663,13 @@ class Language {
 	 * @return string
 	 */
 	public function iconv( $in, $out, $string ) {
-		# This is a wrapper for iconv in all languages except esperanto,
-		# which does some nasty x-conversions beforehand
-
 		# Even with //IGNORE iconv can whine about illegal characters in
 		# *input* string. We just ignore those too.
-		# REF: http://bugs.php.net/bug.php?id=37166
+		# REF: https://bugs.php.net/bug.php?id=37166
 		# REF: https://phabricator.wikimedia.org/T18885
-		MediaWiki\suppressWarnings();
+		Wikimedia\suppressWarnings();
 		$text = iconv( $in, $out . '//IGNORE', $string );
-		MediaWiki\restoreWarnings();
+		Wikimedia\restoreWarnings();
 		return $text;
 	}
 
@@ -2646,12 +2729,34 @@ class Language {
 	public function uc( $str, $first = false ) {
 		if ( $first ) {
 			if ( $this->isMultibyte( $str ) ) {
-				return mb_strtoupper( mb_substr( $str, 0, 1 ) ) . mb_substr( $str, 1 );
+				return $this->mbUpperChar( mb_substr( $str, 0, 1 ) ) . mb_substr( $str, 1 );
 			} else {
 				return ucfirst( $str );
 			}
 		} else {
 			return $this->isMultibyte( $str ) ? mb_strtoupper( $str ) : strtoupper( $str );
+		}
+	}
+
+	/**
+	 * Convert character to uppercase, allowing overrides of the default mb_upper
+	 * behaviour, which is buggy in many ways. Having a conversion table can be
+	 * useful during transitions between PHP versions where unicode changes happen.
+	 * This can make some resources unreachable on-wiki, see discussion at T219279.
+	 * Providing such a conversion table can allow to manage the transition period.
+	 *
+	 * @since 1.34
+	 *
+	 * @param string $char
+	 *
+	 * @return string
+	 */
+	protected function mbUpperChar( $char ) {
+		global $wgOverrideUcfirstCharacters;
+		if ( array_key_exists( $char, $wgOverrideUcfirstCharacters ) ) {
+			return $wgOverrideUcfirstCharacters[$char];
+		} else {
+			return mb_strtoupper( $char );
 		}
 	}
 
@@ -2771,9 +2876,9 @@ class Language {
 	}
 
 	/**
+	 * TODO: $s is not always a string per T218883
 	 * @param string $s
 	 * @return string
-	 * @throws MWException
 	 */
 	function checkTitleEncoding( $s ) {
 		if ( is_array( $s ) ) {
@@ -2787,7 +2892,7 @@ class Language {
 	}
 
 	/**
-	 * @return array
+	 * @return string
 	 */
 	function fallback8bitEncoding() {
 		return self::$dataCache->getItem( $this->mCode, 'fallback8bitEncoding' );
@@ -2896,78 +3001,36 @@ class Language {
 			if ( $code < 0xac00 || 0xd7a4 <= $code ) {
 				return $matches[1];
 			} elseif ( $code < 0xb098 ) {
-				return "\xe3\x84\xb1";
+				return "\u{3131}";
 			} elseif ( $code < 0xb2e4 ) {
-				return "\xe3\x84\xb4";
+				return "\u{3134}";
 			} elseif ( $code < 0xb77c ) {
-				return "\xe3\x84\xb7";
+				return "\u{3137}";
 			} elseif ( $code < 0xb9c8 ) {
-				return "\xe3\x84\xb9";
+				return "\u{3139}";
 			} elseif ( $code < 0xbc14 ) {
-				return "\xe3\x85\x81";
+				return "\u{3141}";
 			} elseif ( $code < 0xc0ac ) {
-				return "\xe3\x85\x82";
+				return "\u{3142}";
 			} elseif ( $code < 0xc544 ) {
-				return "\xe3\x85\x85";
+				return "\u{3145}";
 			} elseif ( $code < 0xc790 ) {
-				return "\xe3\x85\x87";
+				return "\u{3147}";
 			} elseif ( $code < 0xcc28 ) {
-				return "\xe3\x85\x88";
+				return "\u{3148}";
 			} elseif ( $code < 0xce74 ) {
-				return "\xe3\x85\x8a";
+				return "\u{314A}";
 			} elseif ( $code < 0xd0c0 ) {
-				return "\xe3\x85\x8b";
+				return "\u{314B}";
 			} elseif ( $code < 0xd30c ) {
-				return "\xe3\x85\x8c";
+				return "\u{314C}";
 			} elseif ( $code < 0xd558 ) {
-				return "\xe3\x85\x8d";
+				return "\u{314D}";
 			} else {
-				return "\xe3\x85\x8e";
+				return "\u{314E}";
 			}
 		} else {
 			return '';
-		}
-	}
-
-	function initEncoding() {
-		# Some languages may have an alternate char encoding option
-		# (Esperanto X-coding, Japanese furigana conversion, etc)
-		# If this language is used as the primary content language,
-		# an override to the defaults can be set here on startup.
-	}
-
-	/**
-	 * @param string $s
-	 * @return string
-	 */
-	function recodeForEdit( $s ) {
-		# For some languages we'll want to explicitly specify
-		# which characters make it into the edit box raw
-		# or are converted in some way or another.
-		global $wgEditEncoding;
-		if ( $wgEditEncoding == '' || $wgEditEncoding == 'UTF-8' ) {
-			return $s;
-		} else {
-			return $this->iconv( 'UTF-8', $wgEditEncoding, $s );
-		}
-	}
-
-	/**
-	 * @param string $s
-	 * @return string
-	 */
-	function recodeInput( $s ) {
-		# Take the previous into account.
-		global $wgEditEncoding;
-		if ( $wgEditEncoding != '' ) {
-			$enc = $wgEditEncoding;
-		} else {
-			$enc = 'UTF-8';
-		}
-		if ( $enc == 'UTF-8' ) {
-			return $s;
-		} else {
-			return $this->iconv( $enc, 'UTF-8', $s );
 		}
 	}
 
@@ -2982,12 +3045,12 @@ class Language {
 	 *
 	 * @return string
 	 */
-	function normalize( $s ) {
+	public function normalize( $s ) {
 		global $wgAllUnicodeFixes;
 		$s = UtfNormal\Validator::cleanUp( $s );
 		if ( $wgAllUnicodeFixes ) {
-			$s = $this->transformUsingPairFile( 'normalize-ar.ser', $s );
-			$s = $this->transformUsingPairFile( 'normalize-ml.ser', $s );
+			$s = $this->transformUsingPairFile( 'normalize-ar.php', $s );
+			$s = $this->transformUsingPairFile( 'normalize-ml.php', $s );
 		}
 
 		return $s;
@@ -3007,12 +3070,10 @@ class Language {
 	 * @throws MWException
 	 * @return string
 	 */
-	function transformUsingPairFile( $file, $string ) {
+	protected function transformUsingPairFile( $file, $string ) {
 		if ( !isset( $this->transformData[$file] ) ) {
-			$data = wfGetPrecompiledData( $file );
-			if ( $data === false ) {
-				throw new MWException( __METHOD__ . ": The transformation file $file is missing" );
-			}
+			global $IP;
+			$data = require "$IP/languages/data/{$file}";
 			$this->transformData[$file] = new ReplacementArray( $data );
 		}
 		return $this->transformData[$file]->replace( $string );
@@ -3088,8 +3149,8 @@ class Language {
 	 * @return string
 	 */
 	function getDirMark( $opposite = false ) {
-		$lrm = "\xE2\x80\x8E"; # LEFT-TO-RIGHT MARK, commonly abbreviated LRM
-		$rlm = "\xE2\x80\x8F"; # RIGHT-TO-LEFT MARK, commonly abbreviated RLM
+		$lrm = "\u{200E}"; # LEFT-TO-RIGHT MARK, commonly abbreviated LRM
+		$rlm = "\u{200F}"; # RIGHT-TO-LEFT MARK, commonly abbreviated RLM
 		if ( $opposite ) {
 			return $this->isRTL() ? $lrm : $rlm;
 		}
@@ -3112,18 +3173,18 @@ class Language {
 	 */
 	function getArrow( $direction = 'forwards' ) {
 		switch ( $direction ) {
-		case 'forwards':
-			return $this->isRTL() ? '←' : '→';
-		case 'backwards':
-			return $this->isRTL() ? '→' : '←';
-		case 'left':
-			return '←';
-		case 'right':
-			return '→';
-		case 'up':
-			return '↑';
-		case 'down':
-			return '↓';
+			case 'forwards':
+				return $this->isRTL() ? '←' : '→';
+			case 'backwards':
+				return $this->isRTL() ? '→' : '←';
+			case 'left':
+				return '←';
+			case 'right':
+				return '→';
+			case 'up':
+				return '↑';
+			case 'down':
+				return '↓';
 		}
 	}
 
@@ -3145,33 +3206,13 @@ class Language {
 	}
 
 	/**
-	 * Run the LanguageGetMagic hook once.
-	 */
-	protected function doMagicHook() {
-		if ( $this->mMagicHookDone ) {
-			return;
-		}
-		$this->mMagicHookDone = true;
-		Hooks::run( 'LanguageGetMagic', [ &$this->mMagicExtensions, $this->getCode() ] );
-	}
-
-	/**
 	 * Fill a MagicWord object with data from here
 	 *
 	 * @param MagicWord $mw
 	 */
 	function getMagic( $mw ) {
-		// Saves a function call
-		if ( !$this->mMagicHookDone ) {
-			$this->doMagicHook();
-		}
-
-		if ( isset( $this->mMagicExtensions[$mw->mId] ) ) {
-			$rawEntry = $this->mMagicExtensions[$mw->mId];
-		} else {
-			$rawEntry = self::$dataCache->getSubitem(
-				$this->mCode, 'magicWords', $mw->mId );
-		}
+		$rawEntry = $this->mMagicExtensions[$mw->mId] ??
+			self::$dataCache->getSubitem( $this->mCode, 'magicWords', $mw->mId );
 
 		if ( !is_array( $rawEntry ) ) {
 			wfWarn( "\"$rawEntry\" is not a valid magic word for \"$mw->mId\"" );
@@ -3207,8 +3248,6 @@ class Language {
 			// Initialise array
 			$this->mExtendedSpecialPageAliases =
 				self::$dataCache->getItem( $this->mCode, 'specialPageAliases' );
-			Hooks::run( 'LanguageGetSpecialPageAliases',
-				[ &$this->mExtendedSpecialPageAliases, $this->getCode() ] );
 		}
 
 		return $this->mExtendedSpecialPageAliases;
@@ -3263,7 +3302,7 @@ class Language {
 			}
 		}
 
-		return $number;
+		return (string)$number;
 	}
 
 	/**
@@ -3285,14 +3324,14 @@ class Language {
 	public function parseFormattedNumber( $number ) {
 		$s = $this->digitTransformTable();
 		if ( $s ) {
-			// eliminate empty array values such as ''. (bug 64347)
+			// eliminate empty array values such as ''. (T66347)
 			$s = array_filter( $s );
 			$number = strtr( $number, array_flip( $s ) );
 		}
 
 		$s = $this->separatorTransformTable();
 		if ( $s ) {
-			// eliminate empty array values such as ''. (bug 64347)
+			// eliminate empty array values such as ''. (T66347)
 			$s = array_filter( $s );
 			$number = strtr( $number, array_flip( $s ) );
 		}
@@ -3309,12 +3348,25 @@ class Language {
 	 */
 	function commafy( $number ) {
 		$digitGroupingPattern = $this->digitGroupingPattern();
+		$minimumGroupingDigits = $this->minimumGroupingDigits();
 		if ( $number === null ) {
 			return '';
 		}
 
 		if ( !$digitGroupingPattern || $digitGroupingPattern === "###,###,###" ) {
-			// default grouping is at thousands,  use the same for ###,###,### pattern too.
+			// Default grouping is at thousands, use the same for ###,###,### pattern too.
+			// In some languages it's conventional not to insert a thousands separator
+			// in numbers that are four digits long (1000-9999).
+			if ( $minimumGroupingDigits ) {
+				// Number of '#' characters after last comma in the grouping pattern.
+				// The pattern is hardcoded here, but this would vary for different patterns.
+				$primaryGroupingSize = 3;
+				// Maximum length of a number to suppress digit grouping for.
+				$maximumLength = $minimumGroupingDigits + $primaryGroupingSize - 1;
+				if ( preg_match( '/^\-?\d{1,' . $maximumLength . '}(\.\d+)?$/', $number ) ) {
+					return $number;
+				}
+			}
 			return strrev( (string)preg_replace( '/(\d{3})(?=\d)(?!\d*\.)/', '$1,', strrev( $number ) ) );
 		} else {
 			// Ref: http://cldr.unicode.org/translation/number-patterns
@@ -3342,7 +3394,7 @@ class Language {
 				if ( $start < 0 ) {
 					$start = 0;
 				}
-				$groupedNumber = substr( $number, $start, $end -$start ) . $groupedNumber;
+				$groupedNumber = substr( $number, $start, $end - $start ) . $groupedNumber;
 				$end = $start;
 				if ( $numMatches > 1 ) {
 					// use the last pattern for the rest of the number
@@ -3378,35 +3430,36 @@ class Language {
 	}
 
 	/**
+	 * @return int|null
+	 */
+	function minimumGroupingDigits() {
+		return self::$dataCache->getItem( $this->mCode, 'minimumGroupingDigits' );
+	}
+
+	/**
 	 * Take a list of strings and build a locale-friendly comma-separated
 	 * list, using the local comma-separator message.
 	 * The last two strings are chained with an "and".
-	 * NOTE: This function will only work with standard numeric array keys (0, 1, 2…)
 	 *
-	 * @param string[] $l
+	 * @param string[] $list
 	 * @return string
 	 */
-	function listToText( array $l ) {
-		$m = count( $l ) - 1;
-		if ( $m < 0 ) {
+	public function listToText( array $list ) {
+		$itemCount = count( $list );
+		if ( $itemCount < 1 ) {
 			return '';
 		}
-		if ( $m > 0 ) {
+		$text = array_pop( $list );
+		if ( $itemCount > 1 ) {
 			$and = $this->msg( 'and' )->escaped();
 			$space = $this->msg( 'word-separator' )->escaped();
-			if ( $m > 1 ) {
+			$comma = '';
+			if ( $itemCount > 2 ) {
 				$comma = $this->msg( 'comma-separator' )->escaped();
 			}
+			$text = implode( $comma, $list ) . $and . $space . $text;
 		}
-		$s = $l[$m];
-		for ( $i = $m - 1; $i >= 0; $i-- ) {
-			if ( $i == $m - 1 ) {
-				$s = $l[$i] . $and . $space . $s;
-			} else {
-				$s = $l[$i] . $comma . $s;
-			}
-		}
-		return $s;
+		return $text;
 	}
 
 	/**
@@ -3449,57 +3502,109 @@ class Language {
 
 	/**
 	 * Truncate a string to a specified length in bytes, appending an optional
-	 * string (e.g. for ellipses)
-	 *
-	 * The database offers limited byte lengths for some columns in the database;
-	 * multi-byte character sets mean we need to ensure that only whole characters
-	 * are included, otherwise broken characters can be passed to the user
+	 * string (e.g. for ellipsis)
 	 *
 	 * If $length is negative, the string will be truncated from the beginning
 	 *
+	 * @since 1.31
+	 *
 	 * @param string $string String to truncate
-	 * @param int $length Maximum length (including ellipses)
-	 * @param string $ellipsis String to append to the truncated text
-	 * @param bool $adjustLength Subtract length of ellipsis from $length.
-	 *	$adjustLength was introduced in 1.18, before that behaved as if false.
+	 * @param int $length Maximum length in bytes
+	 * @param string $ellipsis String to append to the end of truncated text
+	 * @param bool $adjustLength Subtract length of ellipsis from $length
+	 *
 	 * @return string
 	 */
-	function truncate( $string, $length, $ellipsis = '...', $adjustLength = true ) {
+	function truncateForDatabase( $string, $length, $ellipsis = '...', $adjustLength = true ) {
+		return $this->truncateInternal(
+			$string, $length, $ellipsis, $adjustLength, 'strlen', 'substr'
+		);
+	}
+
+	/**
+	 * Truncate a string to a specified number of characters, appending an optional
+	 * string (e.g. for ellipsis).
+	 *
+	 * This provides multibyte version of truncateForDatabase() method of this class,
+	 * suitable for truncation based on number of characters, instead of number of bytes.
+	 *
+	 * If $length is negative, the string will be truncated from the beginning.
+	 *
+	 * @since 1.31
+	 *
+	 * @param string $string String to truncate
+	 * @param int $length Maximum number of characters
+	 * @param string $ellipsis String to append to the end of truncated text
+	 * @param bool $adjustLength Subtract length of ellipsis from $length
+	 *
+	 * @return string
+	 */
+	function truncateForVisual( $string, $length, $ellipsis = '...', $adjustLength = true ) {
+		// Passing encoding to mb_strlen and mb_substr is optional.
+		// Encoding defaults to mb_internal_encoding(), which is set to UTF-8 in Setup.php, so
+		// explicit specification of encoding is skipped.
+		// Note: Both multibyte methods are callables invoked in truncateInternal.
+		return $this->truncateInternal(
+			$string, $length, $ellipsis, $adjustLength, 'mb_strlen', 'mb_substr'
+		);
+	}
+
+	/**
+	 * Internal method used for truncation. This method abstracts text truncation into
+	 * one common method, allowing users to provide length measurement function and
+	 * function for finding substring.
+	 *
+	 * For usages, see truncateForDatabase and truncateForVisual.
+	 *
+	 * @param string $string String to truncate
+	 * @param int $length Maximum length of final text
+	 * @param string $ellipsis String to append to the end of truncated text
+	 * @param bool $adjustLength Subtract length of ellipsis from $length
+	 * @param callable $measureLength Callable function used for determining the length of text
+	 * @param callable $getSubstring Callable function used for getting the substrings
+	 *
+	 * @return string
+	 */
+	private function truncateInternal(
+		$string, $length, $ellipsis, $adjustLength, callable $measureLength, callable $getSubstring
+	) {
+		# Check if there is no need to truncate
+		if ( $measureLength( $string ) <= abs( $length ) ) {
+			return $string; // no need to truncate
+		}
+
 		# Use the localized ellipsis character
 		if ( $ellipsis == '...' ) {
 			$ellipsis = wfMessage( 'ellipsis' )->inLanguage( $this )->escaped();
 		}
-		# Check if there is no need to truncate
 		if ( $length == 0 ) {
 			return $ellipsis; // convention
-		} elseif ( strlen( $string ) <= abs( $length ) ) {
-			return $string; // no need to truncate
 		}
+
 		$stringOriginal = $string;
 		# If ellipsis length is >= $length then we can't apply $adjustLength
-		if ( $adjustLength && strlen( $ellipsis ) >= abs( $length ) ) {
+		if ( $adjustLength && $measureLength( $ellipsis ) >= abs( $length ) ) {
 			$string = $ellipsis; // this can be slightly unexpected
 		# Otherwise, truncate and add ellipsis...
 		} else {
-			$eLength = $adjustLength ? strlen( $ellipsis ) : 0;
+			$ellipsisLength = $adjustLength ? $measureLength( $ellipsis ) : 0;
 			if ( $length > 0 ) {
-				$length -= $eLength;
-				$string = substr( $string, 0, $length ); // xyz...
+				$length -= $ellipsisLength;
+				$string = $getSubstring( $string, 0, $length ); // xyz...
 				$string = $this->removeBadCharLast( $string );
-				$string = rtrim( $string );
-				$string = $string . $ellipsis;
+				$string = rtrim( $string ) . $ellipsis;
 			} else {
-				$length += $eLength;
-				$string = substr( $string, $length ); // ...xyz
+				$length += $ellipsisLength;
+				$string = $getSubstring( $string, $length ); // ...xyz
 				$string = $this->removeBadCharFirst( $string );
-				$string = ltrim( $string );
-				$string = $ellipsis . $string;
+				$string = $ellipsis . ltrim( $string );
 			}
 		}
-		# Do not truncate if the ellipsis makes the string longer/equal (bug 22181).
+
+		# Do not truncate if the ellipsis makes the string longer/equal (T24181).
 		# This check is *not* redundant if $adjustLength, due to the single case where
 		# LEN($ellipsis) > ABS($limit arg); $stringOriginal could be shorter than $string.
-		if ( strlen( $string ) < strlen( $stringOriginal ) ) {
+		if ( $measureLength( $string ) < $measureLength( $stringOriginal ) ) {
 			return $string;
 		} else {
 			return $stringOriginal;
@@ -3602,6 +3707,7 @@ class Language {
 					}
 				} elseif ( $dispLen > $length && $dispLen > strlen( $ellipsis ) ) {
 					# String in fact does need truncation, the truncation point was OK.
+					// @phan-suppress-next-line PhanTypeInvalidExpressionArrayDestructuring
 					list( $ret, $openTags ) = $maybeState; // reload state
 					$ret = $this->removeBadCharLast( $ret ); // multi-byte char fix
 					$ret .= $ellipsis; // add ellipsis
@@ -3734,8 +3840,46 @@ class Language {
 			return $wgGrammarForms[$this->getCode()][$case][$word];
 		}
 
+		$grammarTransformations = $this->getGrammarTransformations();
+
+		if ( isset( $grammarTransformations[$case] ) ) {
+			$forms = $grammarTransformations[$case];
+
+			// Some names of grammar rules are aliases for other rules.
+			// In such cases the value is a string rather than object,
+			// so load the actual rules.
+			if ( is_string( $forms ) ) {
+				$forms = $grammarTransformations[$forms];
+			}
+
+			foreach ( array_values( $forms ) as $rule ) {
+				$form = $rule[0];
+
+				if ( $form === '@metadata' ) {
+					continue;
+				}
+
+				$replacement = $rule[1];
+
+				$regex = '/' . addcslashes( $form, '/' ) . '/u';
+				$patternMatches = preg_match( $regex, $word );
+
+				if ( $patternMatches === false ) {
+					wfLogWarning(
+						'An error occurred while processing grammar. ' .
+						"Word: '$word'. Regex: /$form/."
+					);
+				} elseif ( $patternMatches === 1 ) {
+					$word = preg_replace( $regex, $replacement, $word );
+
+					break;
+				}
+			}
+		}
+
 		return $word;
 	}
+
 	/**
 	 * Get the grammar forms for the content language
 	 * @return array Array of grammar forms
@@ -3751,6 +3895,46 @@ class Language {
 
 		return [];
 	}
+
+	/**
+	 * Get the grammar transformations data for the language.
+	 * Used like grammar forms, with {{GRAMMAR}} and cases,
+	 * but uses pairs of regexes and replacements instead of code.
+	 *
+	 * @return array[] Array of grammar transformations.
+	 * @throws MWException
+	 * @since 1.28
+	 */
+	public function getGrammarTransformations() {
+		$languageCode = $this->getCode();
+
+		if ( self::$grammarTransformations === null ) {
+			self::$grammarTransformations = new MapCacheLRU( 10 );
+		}
+
+		if ( self::$grammarTransformations->has( $languageCode ) ) {
+			return self::$grammarTransformations->get( $languageCode );
+		}
+
+		$data = [];
+
+		$grammarDataFile = __DIR__ . "/data/grammarTransformations/$languageCode.json";
+		if ( is_readable( $grammarDataFile ) ) {
+			$data = FormatJson::decode(
+				file_get_contents( $grammarDataFile ),
+				true
+			);
+
+			if ( $data === null ) {
+				throw new MWException( "Invalid grammar data for \"$languageCode\"." );
+			}
+
+			self::$grammarTransformations->set( $languageCode, $data );
+		}
+
+		return $data;
+	}
+
 	/**
 	 * Provides an alternative text depending on specified gender.
 	 * Usage {{gender:username|masculine|feminine|unknown}}.
@@ -3781,7 +3965,7 @@ class Language {
 		if ( $gender === 'female' ) {
 			return $forms[1];
 		}
-		return isset( $forms[2] ) ? $forms[2] : $forms[0];
+		return $forms[2] ?? $forms[0];
 	}
 
 	/**
@@ -3846,15 +4030,12 @@ class Language {
 	 * Checks that convertPlural was given an array and pads it to requested
 	 * amount of forms by copying the last one.
 	 *
-	 * @param array $forms Array of forms given to convertPlural
+	 * @param array $forms
 	 * @param int $count How many forms should there be at least
-	 * @return array Padded array of forms or an exception if not an array
+	 * @return array Padded array of forms
 	 */
 	protected function preConvertPlural( /* Array */ $forms, $count ) {
-		while ( count( $forms ) < $count ) {
-			$forms[] = $forms[count( $forms ) - 1];
-		}
-		return $forms;
+		return array_pad( $forms, $count, end( $forms ) );
 	}
 
 	/**
@@ -3874,7 +4055,7 @@ class Language {
 	 * @return string Text, wrapped in LRE...PDF or RLE...PDF or nothing
 	 */
 	public function embedBidi( $text = '' ) {
-		$dir = Language::strongDirFromContent( $text );
+		$dir = self::strongDirFromContent( $text );
 		if ( $dir === 'ltr' ) {
 			// Wrap in LEFT-TO-RIGHT EMBEDDING ... POP DIRECTIONAL FORMATTING
 			return self::$lre . $text . self::$pdf;
@@ -3895,11 +4076,12 @@ class Language {
 	 * match up with it.
 	 *
 	 * @param string $str The validated block duration in English
-	 * @param User $user User object to use timezone from or null for $wgUser
+	 * @param User|null $user User object to use timezone from or null for $wgUser
+	 * @param int $now Current timestamp, for formatting relative block durations
 	 * @return string Somehow translated block duration
 	 * @see LanguageFi.php for example implementation
 	 */
-	function translateBlockExpiry( $str, User $user = null ) {
+	function translateBlockExpiry( $str, User $user = null, $now = 0 ) {
 		$duration = SpecialBlock::getSuggestedDurations( $this );
 		foreach ( $duration as $show => $value ) {
 			if ( strcmp( $str, $value ) == 0 ) {
@@ -3916,12 +4098,13 @@ class Language {
 		}
 
 		// If all else fails, return a standard duration or timestamp description.
-		$time = strtotime( $str, 0 );
+		$time = strtotime( $str, $now );
 		if ( $time === false ) { // Unknown format. Return it as-is in case.
 			return $str;
-		} elseif ( $time !== strtotime( $str, 1 ) ) { // It's a relative timestamp.
-			// $time is relative to 0 so it's a duration length.
-			return $this->formatDuration( $time );
+		} elseif ( $time !== strtotime( $str, $now + 1 ) ) { // It's a relative timestamp.
+			// The result differs based on current time, so the difference
+			// is a fixed duration length.
+			return $this->formatDuration( $time - $now );
 		} else { // It's an absolute timestamp.
 			if ( $time === 0 ) {
 				// wfTimestamp() handles 0 as current time instead of epoch.
@@ -3966,6 +4149,18 @@ class Language {
 	}
 
 	/**
+	 * convert text to a variant
+	 *
+	 * @param string $text text to convert
+	 * @param string|bool $variant variant to convert to, or false to use the user's preferred
+	 *      variant (if logged in), or the project default variant
+	 * @return string the converted string
+	 */
+	public function autoConvert( $text, $variant = false ) {
+		return $this->mConverter->autoConvert( $text, $variant );
+	}
+
+	/**
 	 * convert text to all supported variants
 	 *
 	 * @param string $text
@@ -3978,8 +4173,13 @@ class Language {
 	/**
 	 * convert text to different variants of a language.
 	 *
-	 * @param string $text
-	 * @return string
+	 * @warning Glossary state is maintained between calls. This means
+	 *  if you pass unescaped text to this method it can cause an XSS
+	 *  in later calls to this method, even if the later calls have properly
+	 *  escaped the input. Never feed this method user controlled text that
+	 *  is not properly escaped!
+	 * @param string $text Content that has been already escaped for use in HTML
+	 * @return string HTML
 	 */
 	public function convert( $text ) {
 		return $this->mConverter->convert( $text );
@@ -3998,11 +4198,13 @@ class Language {
 	/**
 	 * Convert a namespace index to a string in the preferred variant
 	 *
-	 * @param int $ns
-	 * @return string
+	 * @param int $ns namespace index (https://www.mediawiki.org/wiki/Manual:Namespace)
+	 * @param string|null $variant variant to convert to, or null to use the user's preferred
+	 *      variant (if logged in), or the project default variant
+	 * @return string a string representation of the namespace
 	 */
-	public function convertNamespace( $ns ) {
-		return $this->mConverter->convertNamespace( $ns );
+	public function convertNamespace( $ns, $variant = null ) {
+		return $this->mConverter->convertNamespace( $ns, $variant );
 	}
 
 	/**
@@ -4015,25 +4217,27 @@ class Language {
 	}
 
 	/**
-	 * Check if the language has the specific variant
+	 * Strict check if the language has the specific variant.
+	 *
+	 * Compare to LanguageConverter::validateVariant() which does a more
+	 * lenient check and attempts to coerce the given code to a valid one.
 	 *
 	 * @since 1.19
 	 * @param string $variant
 	 * @return bool
 	 */
 	public function hasVariant( $variant ) {
-		return (bool)$this->mConverter->validateVariant( $variant );
+		return $variant && ( $variant === $this->mConverter->validateVariant( $variant ) );
 	}
 
 	/**
 	 * Perform output conversion on a string, and encode for safe HTML output.
 	 * @param string $text Text to be converted
-	 * @param bool $isTitle Whether this conversion is for the article title
 	 * @return string
 	 * @todo this should get integrated somewhere sane
 	 */
-	public function convertHtml( $text, $isTitle = false ) {
-		return htmlspecialchars( $this->convert( $text, $isTitle ) );
+	public function convertHtml( $text ) {
+		return htmlspecialchars( $this->convert( $text ) );
 	}
 
 	/**
@@ -4048,7 +4252,7 @@ class Language {
 	 * Get the list of variants supported by this language
 	 * see sample implementation in LanguageZh.php
 	 *
-	 * @return array An array of language codes
+	 * @return string[] An array of language codes
 	 */
 	public function getVariants() {
 		return $this->mConverter->getVariants();
@@ -4123,27 +4327,6 @@ class Language {
 	}
 
 	/**
-	 * Prepare external link text for conversion. When the text is
-	 * a URL, it shouldn't be converted, and it'll be wrapped in
-	 * the "raw" tag (-{R| }-) to prevent conversion.
-	 *
-	 * This function is called "markNoConversion" for historical
-	 * reasons.
-	 *
-	 * @param string $text Text to be used for external link
-	 * @param bool $noParse Wrap it without confirming it's a real URL first
-	 * @return string The tagged text
-	 */
-	public function markNoConversion( $text, $noParse = false ) {
-		// Excluding protocal-relative URLs may avoid many false positives.
-		if ( $noParse || preg_match( '/^(?:' . wfUrlProtocolsWithoutProtRel() . ')/', $text ) ) {
-			return $this->mConverter->markNoConversion( $text );
-		} else {
-			return $text;
-		}
-	}
-
-	/**
 	 * A regular expression to match legal word-trailing characters
 	 * which should be merged onto a link of the form [[foo]]bar.
 	 *
@@ -4180,7 +4363,7 @@ class Language {
 			$this->mParentLanguage = null;
 			return null;
 		}
-		$lang = Language::factory( $code );
+		$lang = self::factory( $code );
 		if ( !$lang->hasVariant( $this->getCode() ) ) {
 			$this->mParentLanguage = null;
 			return null;
@@ -4195,10 +4378,10 @@ class Language {
 	 *
 	 * @since 1.28
 	 * @param Language $lang
-	 * @return boolean
+	 * @return bool
 	 */
 	public function equals( Language $lang ) {
-		return $lang->getCode() === $this->mCode;
+		return $lang === $this || $lang->getCode() === $this->mCode;
 	}
 
 	/**
@@ -4225,19 +4408,9 @@ class Language {
 	 */
 	public function getHtmlCode() {
 		if ( is_null( $this->mHtmlCode ) ) {
-			$this->mHtmlCode = wfBCP47( $this->getCode() );
+			$this->mHtmlCode = LanguageCode::bcp47( $this->getCode() );
 		}
 		return $this->mHtmlCode;
-	}
-
-	/**
-	 * @param string $code
-	 */
-	public function setCode( $code ) {
-		$this->mCode = $code;
-		// Ensure we don't leave incorrect cached data lying around
-		$this->mHtmlCode = null;
-		$this->mParentLanguage = false;
 	}
 
 	/**
@@ -4259,10 +4432,11 @@ class Language {
 
 	/**
 	 * @param string $code
+	 * @param bool $fallback Whether we're going through language fallback chain
 	 * @return string Name of the language class
 	 */
-	public static function classFromCode( $code ) {
-		if ( $code == 'en' ) {
+	public static function classFromCode( $code, $fallback = true ) {
+		if ( $fallback && $code == 'en' ) {
 			return 'Language';
 		} else {
 			return 'Language' . str_replace( '-', '_', ucfirst( $code ) );
@@ -4277,7 +4451,7 @@ class Language {
 	 * @throws MWException
 	 * @return string $prefix . $mangledCode . $suffix
 	 */
-	public static function getFileName( $prefix = 'Language', $code, $suffix = '.php' ) {
+	public static function getFileName( $prefix, $code, $suffix = '.php' ) {
 		if ( !self::isValidBuiltInCode( $code ) ) {
 			throw new MWException( "Invalid language code \"$code\"" );
 		}
@@ -4332,15 +4506,29 @@ class Language {
 	 *
 	 * @since 1.19
 	 * @param string $code Language code
-	 * @return array Non-empty array, ending in "en"
+	 * @param int $mode Fallback mode, either MESSAGES_FALLBACKS (which always falls back to 'en'),
+	 * or STRICT_FALLBACKS (whic honly falls back to 'en' when explicitly defined)
+	 * @throws MWException
+	 * @return array List of language codes
 	 */
-	public static function getFallbacksFor( $code ) {
-		if ( $code === 'en' || !Language::isValidBuiltInCode( $code ) ) {
+	public static function getFallbacksFor( $code, $mode = self::MESSAGES_FALLBACKS ) {
+		if ( $code === 'en' || !self::isValidBuiltInCode( $code ) ) {
 			return [];
 		}
-		// For unknown languages, fallbackSequence returns an empty array,
-		// hardcode fallback to 'en' in that case.
-		return self::getLocalisationCache()->getItem( $code, 'fallbackSequence' ) ?: [ 'en' ];
+		switch ( $mode ) {
+			case self::MESSAGES_FALLBACKS:
+				// For unknown languages, fallbackSequence returns an empty array,
+				// hardcode fallback to 'en' in that case as English messages are
+				// always defined.
+				return self::getLocalisationCache()->getItem( $code, 'fallbackSequence' ) ?: [ 'en' ];
+			case self::STRICT_FALLBACKS:
+				// Use this mode when you don't want to fallback to English unless
+				// explicitly defined, for example when you have language-variant icons
+				// and an international language-independent fallback.
+				return self::getLocalisationCache()->getItem( $code, 'originalFallbackSequence' );
+			default:
+				throw new MWException( "Invalid fallback mode \"$mode\"" );
+		}
 	}
 
 	/**
@@ -4412,7 +4600,7 @@ class Language {
 
 	/**
 	 * @param string $talk
-	 * @return mixed
+	 * @return string
 	 */
 	function fixVariableInNamespace( $talk ) {
 		if ( strpos( $talk, '$1' ) === false ) {
@@ -4427,7 +4615,7 @@ class Language {
 		# such as action=raw much more expensive than they need to be.
 		# This will hopefully cover most cases.
 		$talk = preg_replace_callback( '/{{grammar:(.*?)\|(.*?)}}/i',
-			[ &$this, 'replaceGrammarInNamespace' ], $talk );
+			[ $this, 'replaceGrammarInNamespace' ], $talk );
 		return str_replace( ' ', '_', $talk );
 	}
 
@@ -4452,7 +4640,7 @@ class Language {
 	public function formatExpiry( $expiry, $format = true, $infinity = 'infinity' ) {
 		static $dbInfinity;
 		if ( $dbInfinity === null ) {
-			$dbInfinity = wfGetDB( DB_SLAVE )->getInfinity();
+			$dbInfinity = wfGetDB( DB_REPLICA )->getInfinity();
 		}
 
 		if ( $expiry == '' || $expiry === 'infinity' || $expiry == $dbInfinity ) {
@@ -4467,14 +4655,16 @@ class Language {
 	}
 
 	/**
-	 * @todo Document
+	 * Formats a time given in seconds into a string representation of that time.
+	 *
 	 * @param int|float $seconds
-	 * @param array $format Optional
-	 *   If $format['avoid'] === 'avoidseconds': don't mention seconds if $seconds >= 1 hour.
-	 *   If $format['avoid'] === 'avoidminutes': don't mention seconds/minutes if $seconds > 48 hours.
+	 * @param array $format An optional argument that formats the returned string in different ways:
+	 *   If $format['avoid'] === 'avoidhours': don't show hours, just show days
+	 *   If $format['avoid'] === 'avoidseconds': don't show seconds if $seconds >= 1 hour,
+	 *   If $format['avoid'] === 'avoidminutes': don't show seconds/minutes if $seconds > 48 hours,
 	 *   If $format['noabbrevs'] is true: use 'seconds' and friends instead of 'seconds-abbrev'
 	 *     and friends.
-	 *   For backwards compatibility, $format may also be one of the strings 'avoidseconds'
+	 * @note For backwards compatibility, $format may also be one of the strings 'avoidseconds'
 	 *     or 'avoidminutes'.
 	 * @return string
 	 */
@@ -4528,12 +4718,19 @@ class Language {
 			$s = $hoursMsg->params( $this->formatNum( $hours ) )->text();
 			$s .= ' ';
 			$s .= $minutesMsg->params( $this->formatNum( $minutes ) )->text();
-			if ( !in_array( $format['avoid'], [ 'avoidseconds', 'avoidminutes' ] ) ) {
+			if ( !in_array( $format['avoid'], [ 'avoidseconds', 'avoidminutes', 'avoidhours' ] ) ) {
 				$s .= ' ' . $secondsMsg->params( $this->formatNum( $secondsPart ) )->text();
 			}
 		} else {
 			$days = floor( $seconds / 86400 );
-			if ( $format['avoid'] === 'avoidminutes' ) {
+			if ( $format['avoid'] === 'avoidhours' ) {
+				$hours = round( ( $seconds - $days * 86400 ) / 3600 );
+				if ( $hours == 24 ) {
+					$hours = 0;
+					$days++;
+				}
+				$s = $daysMsg->params( $this->formatNum( $days ) )->text();
+			} elseif ( $format['avoid'] === 'avoidminutes' ) {
 				$hours = round( ( $seconds - $days * 86400 ) / 3600 );
 				if ( $hours == 24 ) {
 					$hours = 0;
@@ -4637,7 +4834,7 @@ class Language {
 	 * @param string $details HTML safe text between brackets
 	 * @param bool $oppositedm Add the direction mark opposite to your
 	 *   language, to display text properly
-	 * @return HTML escaped string
+	 * @return string HTML escaped
 	 */
 	function specialList( $page, $details, $oppositedm = true ) {
 		if ( !$details ) {
@@ -4645,8 +4842,7 @@ class Language {
 		}
 
 		$dirmark = ( $oppositedm ? $this->getDirMark( true ) : '' ) . $this->getDirMark();
-		return
-			$page .
+		return $page .
 			$dirmark .
 			$this->msg( 'word-separator' )->escaped() .
 			$this->msg( 'parentheses' )->rawParams( $details )->escaped();
@@ -4661,6 +4857,8 @@ class Language {
 	 * @param array $query Optional URL query parameter string
 	 * @param bool $atend Optional param for specified if this is the last page
 	 * @return string
+	 * @deprecated since 1.34, use PrevNextNavigationRenderer::buildPrevNextNavigation()
+	 *  instead.
 	 */
 	public function viewPrevNext( Title $title, $offset, $limit,
 		array $query = [], $atend = false
@@ -4735,7 +4933,7 @@ class Language {
 	 */
 	public function getCompiledPluralRules() {
 		$pluralRules = self::$dataCache->getItem( strtolower( $this->mCode ), 'compiledPluralRules' );
-		$fallbacks = Language::getFallbacksFor( $this->mCode );
+		$fallbacks = self::getFallbacksFor( $this->mCode );
 		if ( !$pluralRules ) {
 			foreach ( $fallbacks as $fallbackCode ) {
 				$pluralRules = self::$dataCache->getItem( strtolower( $fallbackCode ), 'compiledPluralRules' );
@@ -4754,7 +4952,7 @@ class Language {
 	 */
 	public function getPluralRules() {
 		$pluralRules = self::$dataCache->getItem( strtolower( $this->mCode ), 'pluralRules' );
-		$fallbacks = Language::getFallbacksFor( $this->mCode );
+		$fallbacks = self::getFallbacksFor( $this->mCode );
 		if ( !$pluralRules ) {
 			foreach ( $fallbacks as $fallbackCode ) {
 				$pluralRules = self::$dataCache->getItem( strtolower( $fallbackCode ), 'pluralRules' );
@@ -4773,7 +4971,7 @@ class Language {
 	 */
 	public function getPluralRuleTypes() {
 		$pluralRuleTypes = self::$dataCache->getItem( strtolower( $this->mCode ), 'pluralRuleTypes' );
-		$fallbacks = Language::getFallbacksFor( $this->mCode );
+		$fallbacks = self::getFallbacksFor( $this->mCode );
 		if ( !$pluralRuleTypes ) {
 			foreach ( $fallbacks as $fallbackCode ) {
 				$pluralRuleTypes = self::$dataCache->getItem( strtolower( $fallbackCode ), 'pluralRuleTypes' );
@@ -4807,10 +5005,6 @@ class Language {
 	public function getPluralRuleType( $number ) {
 		$index = $this->getPluralRuleIndexNumber( $number );
 		$pluralRuleTypes = $this->getPluralRuleTypes();
-		if ( isset( $pluralRuleTypes[$index] ) ) {
-			return $pluralRuleTypes[$index];
-		} else {
-			return 'other';
-		}
+		return $pluralRuleTypes[$index] ?? 'other';
 	}
 }

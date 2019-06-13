@@ -33,18 +33,20 @@ class ZhConverter extends LanguageConverter {
 	 * @param array $flags
 	 * @param array $manualLevel
 	 */
-	function __construct( $langobj, $maincode,
-								$variants = [],
-								$variantfallbacks = [],
-								$flags = [],
-								$manualLevel = [] ) {
+	function __construct( Language $langobj, $maincode,
+		$variants = [],
+		$variantfallbacks = [],
+		$flags = [],
+		$manualLevel = []
+	) {
 		$this->mDescCodeSep = '：';
 		$this->mDescVarSep = '；';
 		parent::__construct( $langobj, $maincode,
-									$variants,
-									$variantfallbacks,
-									$flags,
-									$manualLevel );
+			$variants,
+			$variantfallbacks,
+			$flags,
+			$manualLevel
+		);
 		$names = [
 			'zh' => '原文',
 			'zh-hans' => '简体',
@@ -143,9 +145,10 @@ class LanguageZh extends LanguageZh_hans {
 		];
 
 		$this->mConverter = new ZhConverter( $this, 'zh',
-								$variants, $variantfallbacks,
-								[],
-								$ml );
+			$variants, $variantfallbacks,
+			[],
+			$ml
+		);
 	}
 
 	/**
@@ -174,7 +177,6 @@ class LanguageZh extends LanguageZh_hans {
 	 * @return string
 	 */
 	function normalizeForSearch( $string, $autoVariant = 'zh-hans' ) {
-
 		// always convert to zh-hans before indexing. it should be
 		// better to use zh-hans for search, since conversion from
 		// Traditional to Simplified is less ambiguous than the
@@ -183,7 +185,6 @@ class LanguageZh extends LanguageZh_hans {
 		// LanguageZh_hans::normalizeForSearch
 		$s = parent::normalizeForSearch( $s );
 		return $s;
-
 	}
 
 	/**

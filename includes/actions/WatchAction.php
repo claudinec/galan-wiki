@@ -35,17 +35,12 @@ class WatchAction extends FormAction {
 		return false;
 	}
 
-	/**
-	 * @return string HTML
-	 */
 	protected function getDescription() {
-		return $this->msg( 'addwatch' )->escaped();
+		return '';
 	}
 
 	public function onSubmit( $data ) {
-		self::doWatch( $this->getTitle(), $this->getUser() );
-
-		return true;
+		return self::doWatch( $this->getTitle(), $this->getUser() );
 	}
 
 	protected function checkCanExecute( User $user ) {
@@ -57,20 +52,31 @@ class WatchAction extends FormAction {
 		parent::checkCanExecute( $user );
 	}
 
+	protected function usesOOUI() {
+		return true;
+	}
+
+	protected function getFormFields() {
+		return [
+			'intro' => [
+				'type' => 'info',
+				'vertical-label' => true,
+				'raw' => true,
+				'default' => $this->msg( 'confirm-watch-top' )->parse()
+			]
+		];
+	}
+
 	protected function alterForm( HTMLForm $form ) {
+		$form->setWrapperLegendMsg( 'addwatch' );
 		$form->setSubmitTextMsg( 'confirm-watch-button' );
 		$form->setTokenSalt( 'watch' );
 	}
 
-	protected function preText() {
-		return $this->msg( 'confirm-watch-top' )->parse();
-	}
-
 	public function onSuccess() {
-		$this->getOutput()->addWikiMsg( 'addedwatchtext', $this->getTitle()->getPrefixedText() );
+		$msgKey = $this->getTitle()->isTalkPage() ? 'addedwatchtext-talk' : 'addedwatchtext';
+		$this->getOutput()->addWikiMsg( $msgKey, $this->getTitle()->getPrefixedText() );
 	}
-
-	/* Static utility methods */
 
 	/**
 	 * Watch or unwatch a page
@@ -165,19 +171,6 @@ class WatchAction extends FormAction {
 		}
 		// Match ApiWatch and ResourceLoaderUserTokensModule
 		return $user->getEditToken( $action );
-	}
-
-	/**
-	 * Get token to unwatch (or watch) a page for a user
-	 *
-	 * @param Title $title Title object of page to unwatch
-	 * @param User $user User for whom the action is going to be performed
-	 * @param string $action Optionally override the action to 'watch'
-	 * @return string Token
-	 * @since 1.18
-	 */
-	public static function getUnwatchToken( Title $title, User $user, $action = 'unwatch' ) {
-		return self::getWatchToken( $title, $user, $action );
 	}
 
 	public function doesWrites() {

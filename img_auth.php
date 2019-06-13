@@ -17,7 +17,8 @@
  *  just that it was. If you want to change this, you can set $wgImgAuthDetails to 'true'
  *  in localsettings.php and it will give the user the reason why access was denied.
  *
- * Your server needs to support PATH_INFO; CGI-based configurations usually don't.
+ * Your server needs to support REQUEST_URI or PATH_INFO; CGI-based
+ * configurations sometimes don't.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -68,7 +69,7 @@ function wfImageAuthMain() {
 		$path = "/" . $path;
 	}
 
-	// Check for bug 28235: QUERY_STRING overriding the correct extension
+	// Check for T30235: QUERY_STRING overriding the correct extension
 	$whitelist = [];
 	$extension = FileBackend::extensionFromPath( $path, 'rawcase' );
 	if ( $extension != '' ) {
@@ -147,7 +148,7 @@ function wfImageAuthMain() {
 		}
 
 		// Run hook for extension authorization plugins
-		/** @var $result array */
+		/** @var array $result */
 		$result = null;
 		if ( !Hooks::run( 'ImgAuthBeforeStream', [ &$title, &$path, &$name, &$result ] ) ) {
 			wfForbidden( $result[0], $result[1], array_slice( $result, 2 ) );
@@ -162,13 +163,21 @@ function wfImageAuthMain() {
 		}
 	}
 
+	$options = []; // HTTP header options
+	if ( isset( $_SERVER['HTTP_RANGE'] ) ) {
+		$options['range'] = $_SERVER['HTTP_RANGE'];
+	}
+	if ( isset( $_SERVER['HTTP_IF_MODIFIED_SINCE'] ) ) {
+		$options['if-modified-since'] = $_SERVER['HTTP_IF_MODIFIED_SINCE'];
+	}
+
 	if ( $request->getCheck( 'download' ) ) {
 		$headers[] = 'Content-Disposition: attachment';
 	}
 
 	// Stream the requested file
 	wfDebugLog( 'img_auth', "Streaming `" . $filename . "`." );
-	$repo->streamFile( $filename, $headers );
+	$repo->streamFileWithStatus( $filename, $headers, $options );
 }
 
 /**
@@ -177,13 +186,12 @@ function wfImageAuthMain() {
  * subsequent arguments to $msg2 will be passed as parameters only for replacing in $msg2
  * @param string $msg1
  * @param string $msg2
+ * @param mixed ...$args To pass as params to wfMessage() with $msg2. Either variadic, or a single
+ *   array argument.
  */
-function wfForbidden( $msg1, $msg2 ) {
+function wfForbidden( $msg1, $msg2, ...$args ) {
 	global $wgImgAuthDetails;
 
-	$args = func_get_args();
-	array_shift( $args );
-	array_shift( $args );
 	$args = ( isset( $args[0] ) && is_array( $args[0] ) ) ? $args[0] : $args;
 
 	$msgHdr = wfMessage( $msg1 )->escaped();

@@ -23,6 +23,7 @@
 
 namespace MediaWiki\Session;
 
+use MediaWiki\MediaWikiServices;
 use MWException;
 use Psr\Log\LoggerInterface;
 use BagOStuff;
@@ -31,12 +32,20 @@ use Config;
 use FauxRequest;
 use User;
 use WebRequest;
+use Wikimedia\ObjectFactory;
 
 /**
  * This serves as the entry point to the MediaWiki session handling system.
  *
+ * Most methods here are for internal use by session handling code. Other callers
+ * should only use getGlobalSession and the methods of SessionManagerInterface;
+ * the rest of the functionality is exposed via MediaWiki\Session\Session methods.
+ *
+ * To provide custom session handling, implement a MediaWiki\Session\SessionProvider.
+ *
  * @ingroup Session
  * @since 1.27
+ * @see https://www.mediawiki.org/wiki/Manual:SessionManager_and_AuthManager
  */
 final class SessionManager implements SessionManagerInterface {
 	/** @var SessionManager|null */
@@ -145,7 +154,7 @@ final class SessionManager implements SessionManagerInterface {
 				);
 			}
 		} else {
-			$this->config = \ConfigFactory::getDefaultInstance()->makeConfig( 'main' );
+			$this->config = MediaWikiServices::getInstance()->getMainConfig();
 		}
 
 		if ( isset( $options['logger'] ) ) {
@@ -206,7 +215,7 @@ final class SessionManager implements SessionManagerInterface {
 		}
 
 		// Test if the session is in storage, and if so try to load it.
-		$key = wfMemcKey( 'MWSession', $id );
+		$key = $this->store->makeKey( 'MWSession', $id );
 		if ( is_array( $this->store->get( $key ) ) ) {
 			$create = false; // If loading fails, don't bother creating because it probably will fail too.
 			if ( $this->loadSessionInfoFromStore( $info, $request ) ) {
@@ -247,7 +256,7 @@ final class SessionManager implements SessionManagerInterface {
 				throw new \InvalidArgumentException( 'Invalid session ID' );
 			}
 
-			$key = wfMemcKey( 'MWSession', $id );
+			$key = $this->store->makeKey( 'MWSession', $id );
 			if ( is_array( $this->store->get( $key ) ) ) {
 				throw new \InvalidArgumentException( 'Session ID already exists' );
 			}
@@ -304,11 +313,6 @@ final class SessionManager implements SessionManagerInterface {
 	public function invalidateSessionsForUser( User $user ) {
 		$user->setToken();
 		$user->saveSettings();
-
-		$authUser = \MediaWiki\Auth\AuthManager::callLegacyAuthPlugin( 'getUserInstance', [ &$user ] );
-		if ( $authUser ) {
-			$authUser->resetAuthToken();
-		}
 
 		foreach ( $this->getProviders() as $provider ) {
 			$provider->invalidateSessionsForUser( $user );
@@ -369,210 +373,6 @@ final class SessionManager implements SessionManagerInterface {
 	 */
 
 	/**
-	 * Auto-create the given user, if necessary
-	 * @private Don't call this yourself. Let Setup.php do it for you at the right time.
-	 * @deprecated since 1.27, use MediaWiki\Auth\AuthManager::autoCreateUser instead
-	 * @param User $user User to auto-create
-	 * @return bool Success
-	 */
-	public static function autoCreateUser( User $user ) {
-		global $wgAuth, $wgDisableAuthManager;
-
-		// @codeCoverageIgnoreStart
-		if ( !$wgDisableAuthManager ) {
-			wfDeprecated( __METHOD__, '1.27' );
-			return \MediaWiki\Auth\AuthManager::singleton()->autoCreateUser(
-				$user,
-				\MediaWiki\Auth\AuthManager::AUTOCREATE_SOURCE_SESSION,
-				false
-			)->isGood();
-		}
-		// @codeCoverageIgnoreEnd
-
-		$logger = self::singleton()->logger;
-
-		// Much of this code is based on that in CentralAuth
-
-		// Try the local user from the slave DB
-		$localId = User::idFromName( $user->getName() );
-		$flags = 0;
-
-		// Fetch the user ID from the master, so that we don't try to create the user
-		// when they already exist, due to replication lag
-		// @codeCoverageIgnoreStart
-		if ( !$localId && wfGetLB()->getReaderIndex() != 0 ) {
-			$localId = User::idFromName( $user->getName(), User::READ_LATEST );
-			$flags = User::READ_LATEST;
-		}
-		// @codeCoverageIgnoreEnd
-
-		if ( $localId ) {
-			// User exists after all.
-			$user->setId( $localId );
-			$user->loadFromId( $flags );
-			return false;
-		}
-
-		// Denied by AuthPlugin? But ignore AuthPlugin itself.
-		if ( get_class( $wgAuth ) !== 'AuthPlugin' && !$wgAuth->autoCreate() ) {
-			$logger->debug( __METHOD__ . ': denied by AuthPlugin' );
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Wiki is read-only?
-		if ( wfReadOnly() ) {
-			$logger->debug( __METHOD__ . ': denied by wfReadOnly()' );
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		$userName = $user->getName();
-
-		// Check the session, if we tried to create this user already there's
-		// no point in retrying.
-		$session = self::getGlobalSession();
-		$reason = $session->get( 'MWSession::AutoCreateBlacklist' );
-		if ( $reason ) {
-			$logger->debug( __METHOD__ . ": blacklisted in session ($reason)" );
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Is the IP user able to create accounts?
-		$anon = new User;
-		if ( !$anon->isAllowedAny( 'createaccount', 'autocreateaccount' )
-			|| $anon->isBlockedFromCreateAccount()
-		) {
-			// Blacklist the user to avoid repeated DB queries subsequently
-			$logger->debug( __METHOD__ . ': user is blocked from this wiki, blacklisting' );
-			$session->set( 'MWSession::AutoCreateBlacklist', 'blocked', 600 );
-			$session->persist();
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Check for validity of username
-		if ( !User::isCreatableName( $userName ) ) {
-			$logger->debug( __METHOD__ . ': Invalid username, blacklisting' );
-			$session->set( 'MWSession::AutoCreateBlacklist', 'invalid username', 600 );
-			$session->persist();
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Give other extensions a chance to stop auto creation.
-		$user->loadDefaults( $userName );
-		$abortMessage = '';
-		if ( !\Hooks::run( 'AbortAutoAccount', [ $user, &$abortMessage ] ) ) {
-			// In this case we have no way to return the message to the user,
-			// but we can log it.
-			$logger->debug( __METHOD__ . ": denied by hook: $abortMessage" );
-			$session->set( 'MWSession::AutoCreateBlacklist', "hook aborted: $abortMessage", 600 );
-			$session->persist();
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Make sure the name has not been changed
-		if ( $user->getName() !== $userName ) {
-			$user->setId( 0 );
-			$user->loadFromId();
-			throw new \UnexpectedValueException(
-				'AbortAutoAccount hook tried to change the user name'
-			);
-		}
-
-		// Ignore warnings about master connections/writes...hard to avoid here
-		\Profiler::instance()->getTransactionProfiler()->resetExpectations();
-
-		$cache = \ObjectCache::getLocalClusterInstance();
-		$backoffKey = wfMemcKey( 'MWSession', 'autocreate-failed', md5( $userName ) );
-		if ( $cache->get( $backoffKey ) ) {
-			$logger->debug( __METHOD__ . ': denied by prior creation attempt failures' );
-			$user->setId( 0 );
-			$user->loadFromId();
-			return false;
-		}
-
-		// Checks passed, create the user...
-		$from = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : 'CLI';
-		$logger->info( __METHOD__ . ': creating new user ({username}) - from: {url}',
-			[
-				'username' => $userName,
-				'url' => $from,
-		] );
-
-		try {
-			// Insert the user into the local DB master
-			$status = $user->addToDatabase();
-			if ( !$status->isOK() ) {
-				// @codeCoverageIgnoreStart
-				// double-check for a race condition (T70012)
-				$id = User::idFromName( $user->getName(), User::READ_LATEST );
-				if ( $id ) {
-					$logger->info( __METHOD__ . ': tried to autocreate existing user',
-						[
-							'username' => $userName,
-						] );
-				} else {
-					$logger->error(
-						__METHOD__ . ': failed with message ' . $status->getWikiText( false, false, 'en' ),
-						[
-							'username' => $userName,
-						]
-					);
-				}
-				$user->setId( $id );
-				$user->loadFromId( User::READ_LATEST );
-				return false;
-				// @codeCoverageIgnoreEnd
-			}
-		} catch ( \Exception $ex ) {
-			// @codeCoverageIgnoreStart
-			$logger->error( __METHOD__ . ': failed with exception {exception}', [
-				'exception' => $ex,
-				'username' => $userName,
-			] );
-			// Do not keep throwing errors for a while
-			$cache->set( $backoffKey, 1, 600 );
-			// Bubble up error; which should normally trigger DB rollbacks
-			throw $ex;
-			// @codeCoverageIgnoreEnd
-		}
-
-		# Notify AuthPlugin
-		// @codeCoverageIgnoreStart
-		$tmpUser = $user;
-		$wgAuth->initUser( $tmpUser, true );
-		if ( $tmpUser !== $user ) {
-			$logger->warning( __METHOD__ . ': ' .
-				get_class( $wgAuth ) . '::initUser() replaced the user object' );
-		}
-		// @codeCoverageIgnoreEnd
-
-		# Notify hooks (e.g. Newuserlog)
-		\Hooks::run( 'AuthPluginAutoCreate', [ $user ] );
-		\Hooks::run( 'LocalUserCreated', [ $user, true ] );
-
-		$user->saveSettings();
-
-		# Update user count
-		\DeferredUpdates::addUpdate( new \SiteStatsUpdate( 0, 0, 0, 0, 1 ) );
-
-		# Watch user's userpage and talk page
-		$user->addWatch( $user->getUserPage(), User::IGNORE_USER_RIGHTS );
-
-		return true;
-	}
-
-	/**
 	 * Prevent future sessions for the user
 	 *
 	 * The intention is that the named account will never again be usable for
@@ -608,7 +408,7 @@ final class SessionManager implements SessionManagerInterface {
 		if ( $this->sessionProviders === null ) {
 			$this->sessionProviders = [];
 			foreach ( $this->config->get( 'SessionProviders' ) as $spec ) {
-				$provider = \ObjectFactory::getObjectFromSpec( $spec );
+				$provider = ObjectFactory::getObjectFromSpec( $spec );
 				$provider->setLogger( $this->logger );
 				$provider->setConfig( $this->config );
 				$provider->setManager( $this );
@@ -633,7 +433,7 @@ final class SessionManager implements SessionManagerInterface {
 	 */
 	public function getProvider( $name ) {
 		$providers = $this->getProviders();
-		return isset( $providers[$name] ) ? $providers[$name] : null;
+		return $providers[$name] ?? null;
 	}
 
 	/**
@@ -724,7 +524,7 @@ final class SessionManager implements SessionManagerInterface {
 	 * @return bool Whether the session info matches the stored data (if any)
 	 */
 	private function loadSessionInfoFromStore( SessionInfo &$info, WebRequest $request ) {
-		$key = wfMemcKey( 'MWSession', $info->getId() );
+		$key = $this->store->makeKey( 'MWSession', $info->getId() );
 		$blob = $this->store->get( $key );
 
 		// If we got data from the store and the SessionInfo says to force use,
@@ -952,7 +752,8 @@ final class SessionManager implements SessionManagerInterface {
 					return $failHandler();
 				}
 			} elseif ( !$info->getUserInfo()->isVerified() ) {
-				$this->logger->warning(
+				// probably just a session timeout
+				$this->logger->info(
 					'Session "{session}": Unverified user provided and no metadata to auth it',
 					[
 						'session' => $info,
@@ -1006,9 +807,9 @@ final class SessionManager implements SessionManagerInterface {
 	}
 
 	/**
-	 * Create a session corresponding to the passed SessionInfo
+	 * Create a Session corresponding to the passed SessionInfo
 	 * @private For use by a SessionProvider that needs to specially create its
-	 *  own session.
+	 *  own Session. Most session providers won't need this.
 	 * @param SessionInfo $info
 	 * @param WebRequest $request
 	 * @return Session
@@ -1060,7 +861,7 @@ final class SessionManager implements SessionManagerInterface {
 			$session->resetId();
 		}
 
-		\ScopedCallback::consume( $delay );
+		\Wikimedia\ScopedCallback::consume( $delay );
 		return $session;
 	}
 
@@ -1112,7 +913,7 @@ final class SessionManager implements SessionManagerInterface {
 	public function generateSessionId() {
 		do {
 			$id = \Wikimedia\base_convert( \MWCryptRand::generateHex( 40 ), 16, 32, 32 );
-			$key = wfMemcKey( 'MWSession', $id );
+			$key = $this->store->makeKey( 'MWSession', $id );
 		} while ( isset( $this->allSessionIds[$id] ) || is_array( $this->store->get( $key ) ) );
 		return $id;
 	}
@@ -1128,6 +929,7 @@ final class SessionManager implements SessionManagerInterface {
 
 	/**
 	 * Reset the internal caching for unit testing
+	 * @protected Unit tests only
 	 */
 	public static function resetCache() {
 		if ( !defined( 'MW_PHPUNIT_TEST' ) ) {

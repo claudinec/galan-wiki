@@ -18,6 +18,8 @@
  * @file
  */
 
+use Wikimedia\Timestamp\TimestampException;
+
 class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 	protected $preventClickjacking = false;
 
@@ -32,33 +34,56 @@ class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 	protected $mTitle;
 
 	/**
+	 * @since 1.14
+	 * @var ImagePage
+	 */
+	public $mImagePage;
+
+	/**
+	 * @since 1.14
+	 * @var File[]
+	 */
+	public $mHist;
+
+	/**
+	 * @since 1.14
+	 * @var int[]
+	 */
+	public $mRange;
+
+	/**
 	 * @param ImagePage $imagePage
 	 */
-	function __construct( $imagePage ) {
+	public function __construct( $imagePage ) {
 		parent::__construct( $imagePage->getContext() );
 		$this->mImagePage = $imagePage;
-		$this->mTitle = clone $imagePage->getTitle();
-		$this->mTitle->setFragment( '#filehistory' );
+		$this->mTitle = $imagePage->getTitle()->createFragmentTarget( 'filehistory' );
 		$this->mImg = null;
 		$this->mHist = [];
 		$this->mRange = [ 0, 0 ]; // display range
+
+		// Only display 10 revisions at once by default, otherwise the list is overwhelming
+		$this->mLimitsShown = array_merge( [ 10 ], $this->mLimitsShown );
+		$this->mDefaultLimit = 10;
+		list( $this->mLimit, /* $offset */ ) =
+			$this->mRequest->getLimitOffset( $this->mDefaultLimit, '' );
 	}
 
 	/**
 	 * @return Title
 	 */
-	function getTitle() {
+	public function getTitle() {
 		return $this->mTitle;
 	}
 
-	function getQueryInfo() {
+	public function getQueryInfo() {
 		return false;
 	}
 
 	/**
 	 * @return string
 	 */
-	function getIndexField() {
+	public function getIndexField() {
 		return '';
 	}
 
@@ -66,14 +91,14 @@ class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 	 * @param object $row
 	 * @return string
 	 */
-	function formatRow( $row ) {
+	public function formatRow( $row ) {
 		return '';
 	}
 
 	/**
 	 * @return string
 	 */
-	function getBody() {
+	public function getBody() {
 		$s = '';
 		$this->doQuery();
 		if ( count( $this->mHist ) ) {
@@ -107,13 +132,21 @@ class ImageHistoryPseudoPager extends ReverseChronologicalPager {
 		return $s;
 	}
 
-	function doQuery() {
+	public function doQuery() {
 		if ( $this->mQueryDone ) {
 			return;
 		}
 		$this->mImg = $this->mImagePage->getPage()->getFile(); // ensure loading
 		if ( !$this->mImg->exists() ) {
 			return;
+		}
+		// Make sure the date (probably from user input) is valid; if not, drop it.
+		if ( $this->mOffset !== null ) {
+			try {
+				$sadlyWeCannotPassThisTimestampDownTheStack = $this->mDb->timestamp( $this->mOffset );
+			} catch ( TimestampException $e ) {
+				$this->mOffset = null;
+			}
 		}
 		$queryLimit = $this->mLimit + 1; // limit plus extra row
 		if ( $this->mIsBackwards ) {

@@ -18,7 +18,6 @@
  * http://www.gnu.org/copyleft/gpl.html
  *
  * @file
- * @ingroup Cache
  */
 
 use Wikimedia\Assert\Assert;
@@ -49,26 +48,18 @@ class CdnCacheUpdate implements DeferrableUpdate, MergeableUpdate {
 	/**
 	 * Create an update object from an array of Title objects, or a TitleArray object
 	 *
-	 * @param Traversable|array $titles
+	 * @param Traversable|Title[] $titles
 	 * @param string[] $urlArr
 	 * @return CdnCacheUpdate
 	 */
 	public static function newFromTitles( $titles, $urlArr = [] ) {
+		( new LinkBatch( $titles ) )->execute();
 		/** @var Title $title */
 		foreach ( $titles as $title ) {
 			$urlArr = array_merge( $urlArr, $title->getCdnUrls() );
 		}
 
 		return new CdnCacheUpdate( $urlArr );
-	}
-
-	/**
-	 * @param Title $title
-	 * @return CdnCacheUpdate
-	 * @deprecated 1.27
-	 */
-	public static function newSimplePurge( Title $title ) {
-		return new CdnCacheUpdate( $title->getCdnUrls() );
 	}
 
 	/**
@@ -80,25 +71,22 @@ class CdnCacheUpdate implements DeferrableUpdate, MergeableUpdate {
 		self::purge( $this->urls );
 
 		if ( $wgCdnReboundPurgeDelay > 0 ) {
-			JobQueueGroup::singleton()->lazyPush( new CdnPurgeJob(
-				Title::makeTitle( NS_SPECIAL, 'Badtitle/' . __CLASS__ ),
-				[
-					'urls' => $this->urls,
-					'jobReleaseTimestamp' => time() + $wgCdnReboundPurgeDelay
-				]
-			) );
+			JobQueueGroup::singleton()->lazyPush( new CdnPurgeJob( [
+				'urls' => $this->urls,
+				'jobReleaseTimestamp' => time() + $wgCdnReboundPurgeDelay
+			] ) );
 		}
 	}
 
 	/**
-	 * Purges a list of CDN nodes defined in $wgSquidServers.
+	 * Purges a list of CDN nodes defined in $wgCdnServers.
 	 * $urlArr should contain the full URLs to purge as values
 	 * (example: $urlArr[] = 'http://my.host/something')
 	 *
 	 * @param string[] $urlArr List of full URLs to purge
 	 */
 	public static function purge( array $urlArr ) {
-		global $wgSquidServers, $wgHTCPRouting;
+		global $wgCdnServers, $wgHTCPRouting;
 
 		if ( !$urlArr ) {
 			return;
@@ -132,20 +120,20 @@ class CdnCacheUpdate implements DeferrableUpdate, MergeableUpdate {
 		}
 
 		// Do direct server purges if enabled (this does not scale very well)
-		if ( $wgSquidServers ) {
-			// Maximum number of parallel connections per squid
-			$maxSocketsPerSquid = 8;
+		if ( $wgCdnServers ) {
+			// Maximum number of parallel connections per CDN
+			$maxSocketsPerCdn = 8;
 			// Number of requests to send per socket
 			// 400 seems to be a good tradeoff, opening a socket takes a while
 			$urlsPerSocket = 400;
-			$socketsPerSquid = ceil( count( $urlArr ) / $urlsPerSocket );
-			if ( $socketsPerSquid > $maxSocketsPerSquid ) {
-				$socketsPerSquid = $maxSocketsPerSquid;
+			$socketsPerCdn = ceil( count( $urlArr ) / $urlsPerSocket );
+			if ( $socketsPerCdn > $maxSocketsPerCdn ) {
+				$socketsPerCdn = $maxSocketsPerCdn;
 			}
 
 			$pool = new SquidPurgeClientPool;
-			$chunks = array_chunk( $urlArr, ceil( count( $urlArr ) / $socketsPerSquid ) );
-			foreach ( $wgSquidServers as $server ) {
+			$chunks = array_chunk( $urlArr, ceil( count( $urlArr ) / $socketsPerCdn ) );
+			foreach ( $wgCdnServers as $server ) {
 				foreach ( $chunks as $chunk ) {
 					$client = new SquidPurgeClient( $server );
 					foreach ( $chunk as $url ) {
@@ -285,11 +273,4 @@ class CdnCacheUpdate implements DeferrableUpdate, MergeableUpdate {
 
 		return false;
 	}
-}
-
-/**
- * @deprecated since 1.27
- */
-class SquidUpdate extends CdnCacheUpdate {
-	// Keep class name for b/c
 }

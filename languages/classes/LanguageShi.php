@@ -28,7 +28,7 @@
  *
  *
  * Based on:
- *   - http://en.wikipedia.org/wiki/Shilha_language
+ *   - https://en.wikipedia.org/wiki/Shilha_language
  *   - LanguageSr.php
  *
  * @ingroup Language
@@ -40,7 +40,7 @@ class ShiConverter extends LanguageConverter {
 		'ⴰ' => 'a', 'ⴱ' => 'b', 'ⴳ' => 'g', 'ⴷ' => 'd', 'ⴹ' => 'ḍ', 'ⴻ' => 'e',
 		'ⴼ' => 'f', 'ⴽ' => 'k', 'ⵀ' => 'h', 'ⵃ' => 'ḥ', 'ⵄ' => 'ε', 'ⵅ' => 'x',
 		'ⵇ' => 'q', 'ⵉ' => 'i', 'ⵊ' => 'j', 'ⵍ' => 'l', 'ⵎ' => 'm', 'ⵏ' => 'n',
-		'ⵓ' => 'u', 'ⵔ' => 'r', 'ⵕ' => 'ṛ', 'ⵖ' => 'γ', 'ⵙ' => 's', 'ⵚ' => 'ṣ',
+		'ⵓ' => 'u', 'ⵔ' => 'r', 'ⵕ' => 'ṛ', 'ⵙ' => 's', 'ⵚ' => 'ṣ',
 		'ⵛ' => 'š', 'ⵜ' => 't', 'ⵟ' => 'ṭ', 'ⵡ' => 'w', 'ⵢ' => 'y', 'ⵣ' => 'z',
 		'ⵥ' => 'ẓ', 'ⵯ' => 'ʷ', 'ⵖ' => 'ɣ', 'ⵠ' => 'v', 'ⵒ' => 'p',
 	];
@@ -70,44 +70,6 @@ class ShiConverter extends LanguageConverter {
 			'shi-latn' => new ReplacementArray( $this->mToLatin ),
 			'shi' => new ReplacementArray()
 		];
-	}
-
-	/**
-	 * rules should be defined as -{Tifinagh | Latin-} -or-
-	 * -{code:text | code:text | ...}-
-	 * update: delete all rule parsing because it's not used
-	 * currently, and just produces a couple of bugs
-	 *
-	 * @param string $rule
-	 * @param array $flags
-	 * @return array
-	 */
-	function parseManualRule( $rule, $flags = [] ) {
-		if ( in_array( 'T', $flags ) ) {
-			return parent::parseManualRule( $rule, $flags );
-		}
-
-		$carray = [];
-		// otherwise ignore all formatting
-		foreach ( $this->mVariants as $v ) {
-			$carray[$v] = $rule;
-		}
-
-		return $carray;
-	}
-
-	/**
-	 * Do not convert content on talk pages
-	 *
-	 * @param string $text
-	 * @param Parser $parser
-	 * @return string
-	 */
-	function parserConvert( $text, &$parser ) {
-		$this->mDoContentConvert = !( is_object( $parser->getTitle() )
-			&& $parser->getTitle()->isTalkPage() );
-
-		return parent::parserConvert( $text, $parser );
 	}
 
 	/**

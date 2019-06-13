@@ -2,8 +2,6 @@
 /**
  * API for MediaWiki 1.17+
  *
- * Created on May 14, 2011
- *
  * Copyright © 2011 Sam Reed
  * Copyright © 2006 Yuri Astrakhan "<Firstname><Lastname>@gmail.com"
  *
@@ -44,14 +42,21 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 	}
 
 	/**
-	 * @param ApiPageSet $resultPageSet
+	 * @param ApiPageSet|null $resultPageSet
 	 * @return void
 	 */
 	public function run( $resultPageSet = null ) {
 		$params = $this->extractRequestParams();
 
 		if ( isset( $params['title'] ) && !isset( $params['lang'] ) ) {
-			$this->dieUsageMsg( [ 'missingparam', 'lang' ] );
+			$this->dieWithError(
+				[
+					'apierror-invalidparammix-mustusewith',
+					$this->encodeParamName( 'title' ),
+					$this->encodeParamName( 'lang' )
+				],
+				'nolang'
+			);
 		}
 
 		if ( !is_null( $params['continue'] ) ) {
@@ -62,7 +67,7 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 			$op = $params['dir'] == 'descending' ? '<' : '>';
 			$prefix = $db->addQuotes( $cont[0] );
 			$title = $db->addQuotes( $cont[1] );
-			$from = intval( $cont[2] );
+			$from = (int)$cont[2];
 			$this->addWhere(
 				"ll_lang $op $prefix OR " .
 				"(ll_lang = $prefix AND " .
@@ -125,7 +130,7 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 			if ( !is_null( $resultPageSet ) ) {
 				$pages[] = Title::newFromRow( $row );
 			} else {
-				$entry = [ 'pageid' => $row->page_id ];
+				$entry = [ 'pageid' => (int)$row->page_id ];
 
 				$title = Title::makeTitle( $row->page_namespace, $row->page_title );
 				ApiQueryBase::addTitleInfo( $entry, $title );
@@ -207,6 +212,6 @@ class ApiQueryLangBacklinks extends ApiQueryGeneratorBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Langbacklinks';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Langbacklinks';
 	}
 }

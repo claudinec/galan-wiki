@@ -39,8 +39,8 @@ class CategoryMembershipChangeTest extends MediaWikiLangTestCase {
 	 */
 	private static $pageName = 'CategoryMembershipChangeTestPage';
 
-	public static function newForCategorizationCallback() {
-		self::$lastNotifyArgs = func_get_args();
+	public static function newForCategorizationCallback( ...$args ) {
+		self::$lastNotifyArgs = $args;
 		self::$notifyCallCounter += 1;
 		return self::$mockRecentChange;
 	}
@@ -48,7 +48,7 @@ class CategoryMembershipChangeTest extends MediaWikiLangTestCase {
 	public function setUp() {
 		parent::setUp();
 		self::$notifyCallCounter = 0;
-		self::$mockRecentChange = self::getMock( 'RecentChange' );
+		self::$mockRecentChange = self::getMock( RecentChange::class );
 
 		$this->setContentLang( 'qqx' );
 	}

@@ -177,7 +177,13 @@ class Autopromote {
 				}
 				return false;
 			case APCOND_EDITCOUNT:
-				return $user->getEditCount() >= $cond[1];
+				$reqEditCount = $cond[1];
+
+				// T157718: Avoid edit count lookup if specified edit count is 0 or invalid
+				if ( $reqEditCount <= 0 ) {
+					return true;
+				}
+				return $user->getEditCount() >= $reqEditCount;
 			case APCOND_AGE:
 				$age = time() - wfTimestampOrNull( TS_UNIX, $user->getRegistration() );
 				return $age >= $cond[1];
@@ -192,7 +198,8 @@ class Autopromote {
 			case APCOND_IPINRANGE:
 				return IP::isInRange( $user->getRequest()->getIP(), $cond[1] );
 			case APCOND_BLOCKED:
-				return $user->isBlocked();
+				// @TODO Should partial blocks prevent auto promote?
+				return (bool)$user->getBlock();
 			case APCOND_ISBOT:
 				return in_array( 'bot', User::getGroupPermissions( $user->getGroups() ) );
 			default:

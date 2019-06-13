@@ -23,12 +23,11 @@
 
 /**
  * Class to both describe a background job and handle jobs.
- * The queue aspects of this class are now deprecated.
- * Using the class to push jobs onto queues is deprecated (use JobSpecification).
+ * To push jobs onto queues, use JobQueueGroup::singleton()->push();
  *
  * @ingroup JobQueue
  */
-abstract class Job implements IJobSpecification {
+abstract class Job implements RunnableJob {
 	/** @var string */
 	public $command;
 
@@ -42,7 +41,7 @@ abstract class Job implements IJobSpecification {
 	protected $title;
 
 	/** @var bool Expensive jobs may set this to true */
-	protected $removeDuplicates;
+	protected $removeDuplicates = false;
 
 	/** @var string Text for error that occurred last */
 	protected $error;
@@ -50,31 +49,64 @@ abstract class Job implements IJobSpecification {
 	/** @var callable[] */
 	protected $teardownCallbacks = [];
 
-	/**
-	 * Run the job
-	 * @return bool Success
-	 */
-	abstract public function run();
+	/** @var int Bitfield of JOB_* class constants */
+	protected $executionFlags = 0;
+
+	/** @var int Job must not be wrapped in the usual explicit LBFactory transaction round */
+	const JOB_NO_EXPLICIT_TRX_ROUND = 1;
 
 	/**
 	 * Create the appropriate object to handle a specific job
 	 *
 	 * @param string $command Job command
-	 * @param Title $title Associated title
-	 * @param array $params Job parameters
-	 * @throws MWException
+	 * @param array|Title $params Job parameters
+	 * @throws InvalidArgumentException
 	 * @return Job
 	 */
-	public static function factory( $command, Title $title, $params = [] ) {
+	public static function factory( $command, $params = [] ) {
 		global $wgJobClasses;
 
+		if ( $params instanceof Title ) {
+			// Backwards compatibility for old signature ($command, $title, $params)
+			$title = $params;
+			$params = func_num_args() >= 3 ? func_get_arg( 2 ) : [];
+		} elseif ( isset( $params['namespace'] ) && isset( $params['title'] ) ) {
+			// Handle job classes that take title as constructor parameter.
+			// If a newer classes like GenericParameterJob uses these parameters,
+			// then this happens in Job::__construct instead.
+			$title = Title::makeTitle( $params['namespace'], $params['title'] );
+		} else {
+			// Default title for job classes not implementing GenericParameterJob.
+			// This must be a valid title because it not directly passed to
+			// our Job constructor, but rather it's subclasses which may expect
+			// to be able to use it.
+			$title = Title::makeTitle( NS_SPECIAL, 'Blankpage' );
+		}
+
 		if ( isset( $wgJobClasses[$command] ) ) {
-			$class = $wgJobClasses[$command];
+			$handler = $wgJobClasses[$command];
 
-			$job = new $class( $title, $params );
-			$job->command = $command;
+			if ( is_callable( $handler ) ) {
+				$job = call_user_func( $handler, $title, $params );
+			} elseif ( class_exists( $handler ) ) {
+				if ( is_subclass_of( $handler, GenericParameterJob::class ) ) {
+					$job = new $handler( $params );
+				} else {
+					$job = new $handler( $title, $params );
+				}
+			} else {
+				$job = null;
+			}
 
-			return $job;
+			if ( $job instanceof Job ) {
+				$job->command = $command;
+
+				return $job;
+			} else {
+				throw new InvalidArgumentException(
+					"Could not instantiate job '$command': bad spec!"
+				);
+			}
 		}
 
 		throw new InvalidArgumentException( "Invalid job command '{$command}'" );
@@ -82,37 +114,53 @@ abstract class Job implements IJobSpecification {
 
 	/**
 	 * @param string $command
-	 * @param Title $title
-	 * @param array|bool $params Can not be === true
+	 * @param array|Title|null $params
 	 */
-	public function __construct( $command, $title, $params = false ) {
+	public function __construct( $command, $params = null ) {
+		if ( $params instanceof Title ) {
+			// Backwards compatibility for old signature ($command, $title, $params)
+			$title = $params;
+			$params = func_num_args() >= 3 ? func_get_arg( 2 ) : [];
+		} else {
+			// Newer jobs may choose to not have a top-level title (e.g. GenericParameterJob)
+			$title = null;
+		}
+
+		if ( !is_array( $params ) ) {
+			throw new InvalidArgumentException( '$params must be an array' );
+		}
+
+		if (
+			$title &&
+			!isset( $params['namespace'] ) &&
+			!isset( $params['title'] )
+		) {
+			// When constructing this class for submitting to the queue,
+			// normalise the $title arg of old job classes as part of $params.
+			$params['namespace'] = $title->getNamespace();
+			$params['title'] = $title->getDBKey();
+		}
+
 		$this->command = $command;
-		$this->title = $title;
-		$this->params = is_array( $params ) ? $params : []; // sanity
+		$this->params = $params + [ 'requestId' => WebRequest::getRequestId() ];
 
-		// expensive jobs may set this to true
-		$this->removeDuplicates = false;
-
-		if ( !isset( $this->params['requestId'] ) ) {
-			$this->params['requestId'] = WebRequest::getRequestId();
+		if ( $this->title === null ) {
+			// Set this field for access via getTitle().
+			$this->title = ( isset( $params['namespace'] ) && isset( $params['title'] ) )
+				? Title::makeTitle( $params['namespace'], $params['title'] )
+				// GenericParameterJob classes without namespace/title params
+				// should not use getTitle(). Set an invalid title as placeholder.
+				: Title::makeTitle( NS_SPECIAL, '' );
 		}
 	}
 
 	/**
-	 * Batch-insert a group of jobs into the queue.
-	 * This will be wrapped in a transaction with a forced commit.
-	 *
-	 * This may add duplicate at insert time, but they will be
-	 * removed later on, when the first one is popped.
-	 *
-	 * @param Job[] $jobs Array of Job objects
+	 * @param int $flag JOB_* class constant
 	 * @return bool
-	 * @deprecated since 1.21
+	 * @since 1.31
 	 */
-	public static function batchInsert( $jobs ) {
-		wfDeprecated( __METHOD__, '1.21' );
-		JobQueueGroup::singleton()->push( $jobs );
-		return true;
+	public function hasExecutionFlag( $flag ) {
+		return ( $this->executionFlags & $flag ) === $flag;
 	}
 
 	/**
@@ -125,7 +173,7 @@ abstract class Job implements IJobSpecification {
 	/**
 	 * @return Title
 	 */
-	public function getTitle() {
+	final public function getTitle() {
 		return $this->title;
 	}
 
@@ -134,6 +182,36 @@ abstract class Job implements IJobSpecification {
 	 */
 	public function getParams() {
 		return $this->params;
+	}
+
+	/**
+	 * @param string|null $field Metadata field or null to get all the metadata
+	 * @return mixed|null Value; null if missing
+	 * @since 1.33
+	 */
+	public function getMetadata( $field = null ) {
+		if ( $field === null ) {
+			return $this->metadata;
+		}
+
+		return $this->metadata[$field] ?? null;
+	}
+
+	/**
+	 * @param string $field Key name to set the value for
+	 * @param mixed $value The value to set the field for
+	 * @return mixed|null The prior field value; null if missing
+	 * @since 1.33
+	 */
+	public function setMetadata( $field, $value ) {
+		$old = $this->getMetadata( $field );
+		if ( $value === null ) {
+			unset( $this->metadata[$field] );
+		} else {
+			$this->metadata[$field] = $value;
+		}
+
+		return $old;
 	}
 
 	/**
@@ -163,9 +241,7 @@ abstract class Job implements IJobSpecification {
 	 * @since 1.27
 	 */
 	public function getRequestId() {
-		return isset( $this->params['requestId'] )
-			? $this->params['requestId']
-			: null;
+		return $this->params['requestId'] ?? null;
 	}
 
 	/**
@@ -220,8 +296,6 @@ abstract class Job implements IJobSpecification {
 	public function getDeduplicationInfo() {
 		$info = [
 			'type' => $this->getType(),
-			'namespace' => $this->getTitle()->getNamespace(),
-			'title' => $this->getTitle()->getDBkey(),
 			'params' => $this->getParams()
 		];
 		if ( is_array( $info['params'] ) ) {
@@ -273,12 +347,8 @@ abstract class Job implements IJobSpecification {
 	 */
 	public function getRootJobParams() {
 		return [
-			'rootJobSignature' => isset( $this->params['rootJobSignature'] )
-				? $this->params['rootJobSignature']
-				: null,
-			'rootJobTimestamp' => isset( $this->params['rootJobTimestamp'] )
-				? $this->params['rootJobTimestamp']
-				: null
+			'rootJobSignature' => $this->params['rootJobSignature'] ?? null,
+			'rootJobTimestamp' => $this->params['rootJobTimestamp'] ?? null
 		];
 	}
 
@@ -301,7 +371,9 @@ abstract class Job implements IJobSpecification {
 	}
 
 	/**
-	 * @param callable $callback
+	 * @param callable $callback A function with one parameter, the success status, which will be
+	 *   false if the job failed or it succeeded but the DB changes could not be committed or
+	 *   any deferred updates threw an exception. (This parameter was added in 1.28.)
 	 * @since 1.27
 	 */
 	protected function addTeardownCallback( $callback ) {
@@ -310,23 +382,13 @@ abstract class Job implements IJobSpecification {
 
 	/**
 	 * Do any final cleanup after run(), deferred updates, and all DB commits happen
-	 *
+	 * @param bool $status Whether the job, its deferred updates, and DB commit all succeeded
 	 * @since 1.27
 	 */
-	public function teardown() {
+	public function teardown( $status ) {
 		foreach ( $this->teardownCallbacks as $callback ) {
-			call_user_func( $callback );
+			call_user_func( $callback, $status );
 		}
-	}
-
-	/**
-	 * Insert a single job into the queue.
-	 * @return bool True on success
-	 * @deprecated since 1.21
-	 */
-	public function insert() {
-		JobQueueGroup::singleton()->push( $this );
-		return true;
 	}
 
 	/**

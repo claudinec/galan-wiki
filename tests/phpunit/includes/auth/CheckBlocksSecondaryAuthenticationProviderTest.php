@@ -2,24 +2,18 @@
 
 namespace MediaWiki\Auth;
 
+use MediaWiki\Block\DatabaseBlock;
+use Wikimedia\TestingAccessWrapper;
+
 /**
  * @group AuthManager
  * @group Database
- * @covers MediaWiki\Auth\CheckBlocksSecondaryAuthenticationProvider
+ * @covers \MediaWiki\Auth\CheckBlocksSecondaryAuthenticationProvider
  */
 class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase {
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
-
 	public function testConstructor() {
 		$provider = new CheckBlocksSecondaryAuthenticationProvider();
-		$providerPriv = \TestingAccessWrapper::newFromObject( $provider );
+		$providerPriv = TestingAccessWrapper::newFromObject( $provider );
 		$config = new \HashConfig( [
 			'BlockDisablesLogin' => false
 		] );
@@ -29,7 +23,7 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$provider = new CheckBlocksSecondaryAuthenticationProvider(
 			[ 'blockDisablesLogin' => true ]
 		);
-		$providerPriv = \TestingAccessWrapper::newFromObject( $provider );
+		$providerPriv = TestingAccessWrapper::newFromObject( $provider );
 		$config = new \HashConfig( [
 			'BlockDisablesLogin' => false
 		] );
@@ -75,7 +69,7 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 			\TestUser::setPasswordForUser( $user, 'UTBlockeePassword' );
 			$user->saveSettings();
 		}
-		$oldBlock = \Block::newFromTarget( 'UTBlockee' );
+		$oldBlock = DatabaseBlock::newFromTarget( 'UTBlockee' );
 		if ( $oldBlock ) {
 			// An old block will prevent our new one from saving.
 			$oldBlock->delete();
@@ -83,11 +77,12 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$blockOptions = [
 			'address' => 'UTBlockee',
 			'user' => $user->getID(),
+			'by' => $this->getTestSysop()->getUser()->getId(),
 			'reason' => __METHOD__,
 			'expiry' => time() + 100500,
 			'createAccount' => true,
 		];
-		$block = new \Block( $blockOptions );
+		$block = new DatabaseBlock( $blockOptions );
 		$block->insert();
 		return $user;
 	}
@@ -142,12 +137,12 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		);
 
 		$status = $provider->testUserForCreation( $blockedUser, AuthManager::AUTOCREATE_SOURCE_SESSION );
-		$this->assertInstanceOf( 'StatusValue', $status );
+		$this->assertInstanceOf( \StatusValue::class, $status );
 		$this->assertFalse( $status->isOK() );
 		$this->assertTrue( $status->hasMessage( 'cantcreateaccount-text' ) );
 
 		$status = $provider->testUserForCreation( $blockedUser, false );
-		$this->assertInstanceOf( 'StatusValue', $status );
+		$this->assertInstanceOf( \StatusValue::class, $status );
 		$this->assertFalse( $status->isOK() );
 		$this->assertTrue( $status->hasMessage( 'cantcreateaccount-text' ) );
 	}
@@ -156,12 +151,13 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$blockOptions = [
 			'address' => '127.0.0.0/24',
 			'reason' => __METHOD__,
+			'by' => $this->getTestSysop()->getUser()->getId(),
 			'expiry' => time() + 100500,
 			'createAccount' => true,
 		];
-		$block = new \Block( $blockOptions );
+		$block = new DatabaseBlock( $blockOptions );
 		$block->insert();
-		$scopeVariable = new \ScopedCallback( [ $block, 'delete' ] );
+		$scopeVariable = new \Wikimedia\ScopedCallback( [ $block, 'delete' ] );
 
 		$user = \User::newFromName( 'UTNormalUser' );
 		if ( $user->getID() == 0 ) {
@@ -170,6 +166,7 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 			$user->saveSettings();
 		}
 		$this->setMwGlobals( [ 'wgUser' => $user ] );
+		\RequestContext::getMain()->setUser( $user );
 		$newuser = \User::newFromName( 'RandomUser' );
 
 		$provider = new CheckBlocksSecondaryAuthenticationProvider(
@@ -183,12 +180,12 @@ class CheckBlocksSecondaryAuthenticationProviderTest extends \MediaWikiTestCase 
 		$this->assertEquals( AuthenticationResponse::FAIL, $ret->status );
 
 		$status = $provider->testUserForCreation( $newuser, AuthManager::AUTOCREATE_SOURCE_SESSION );
-		$this->assertInstanceOf( 'StatusValue', $status );
+		$this->assertInstanceOf( \StatusValue::class, $status );
 		$this->assertFalse( $status->isOK() );
 		$this->assertTrue( $status->hasMessage( 'cantcreateaccount-range-text' ) );
 
 		$status = $provider->testUserForCreation( $newuser, false );
-		$this->assertInstanceOf( 'StatusValue', $status );
+		$this->assertInstanceOf( \StatusValue::class, $status );
 		$this->assertFalse( $status->isOK() );
 		$this->assertTrue( $status->hasMessage( 'cantcreateaccount-range-text' ) );
 	}

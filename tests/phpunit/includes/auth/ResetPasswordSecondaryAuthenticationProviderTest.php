@@ -2,20 +2,13 @@
 
 namespace MediaWiki\Auth;
 
+use Wikimedia\TestingAccessWrapper;
+
 /**
  * @group AuthManager
- * @covers MediaWiki\Auth\ResetPasswordSecondaryAuthenticationProvider
+ * @covers \MediaWiki\Auth\ResetPasswordSecondaryAuthenticationProvider
  */
 class ResetPasswordSecondaryAuthenticationProviderTest extends \MediaWikiTestCase {
-	protected function setUp() {
-		global $wgDisableAuthManager;
-
-		parent::setUp();
-		if ( $wgDisableAuthManager ) {
-			$this->markTestSkipped( '$wgDisableAuthManager is set' );
-		}
-	}
-
 	/**
 	 * @dataProvider provideGetAuthenticationRequests
 	 * @param string $action
@@ -94,7 +87,7 @@ class ResetPasswordSecondaryAuthenticationProviderTest extends \MediaWikiTestCas
 		] );
 		$manager = new AuthManager( new \FauxRequest, $config );
 		$provider->setManager( $manager );
-		$provider = \TestingAccessWrapper::newFromObject( $provider );
+		$provider = TestingAccessWrapper::newFromObject( $provider );
 
 		$msg = wfMessage( 'foo' );
 		$skipReq = new ButtonAuthenticationRequest(
@@ -216,7 +209,9 @@ class ResetPasswordSecondaryAuthenticationProviderTest extends \MediaWikiTestCas
 		$this->assertSame( AuthenticationResponse::UI, $res->status );
 		$this->assertEquals( $msg, $res->message );
 		$this->assertCount( 2, $res->neededRequests );
-		$this->assertEquals( $passReq, $res->neededRequests[0] );
+		$expectedPassReq = clone $passReq;
+		$expectedPassReq->required = AuthenticationRequest::OPTIONAL;
+		$this->assertEquals( $expectedPassReq, $res->neededRequests[0] );
 		$this->assertEquals( $skipReq, $res->neededRequests[1] );
 		$this->assertNotNull( $manager->getAuthenticationSessionData( 'reset-pass' ) );
 		$this->assertFalse( $passReq->done );
@@ -304,7 +299,9 @@ class ResetPasswordSecondaryAuthenticationProviderTest extends \MediaWikiTestCas
 		$this->assertSame( AuthenticationResponse::UI, $res->status );
 		$this->assertEquals( $msg, $res->message );
 		$this->assertCount( 2, $res->neededRequests );
-		$this->assertEquals( $passReq2, $res->neededRequests[0] );
+		$expectedPassReq = clone $passReq2;
+		$expectedPassReq->required = AuthenticationRequest::OPTIONAL;
+		$this->assertEquals( $expectedPassReq, $res->neededRequests[0] );
 		$this->assertEquals( $skipReq, $res->neededRequests[1] );
 		$this->assertNotNull( $manager->getAuthenticationSessionData( 'reset-pass' ) );
 		$this->assertFalse( $passReq->done );

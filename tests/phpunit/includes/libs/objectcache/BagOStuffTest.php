@@ -1,4 +1,7 @@
 <?php
+
+use Wikimedia\ScopedCallback;
+
 /**
  * @author Matthias Mullie <mmullie@wikimedia.org>
  * @group BagOStuff
@@ -7,11 +10,13 @@ class BagOStuffTest extends MediaWikiTestCase {
 	/** @var BagOStuff */
 	private $cache;
 
+	const TEST_KEY = 'test';
+
 	protected function setUp() {
 		parent::setUp();
 
 		// type defined through parameter
-		if ( $this->getCliArg( 'use-bagostuff' ) ) {
+		if ( $this->getCliArg( 'use-bagostuff' ) !== null ) {
 			$name = $this->getCliArg( 'use-bagostuff' );
 
 			$this->cache = ObjectCache::newFromId( $name );
@@ -20,7 +25,8 @@ class BagOStuffTest extends MediaWikiTestCase {
 			$this->cache = new HashBagOStuff;
 		}
 
-		$this->cache->delete( wfMemcKey( 'test' ) );
+		$this->cache->delete( $this->cache->makeKey( self::TEST_KEY ) );
+		$this->cache->delete( $this->cache->makeKey( self::TEST_KEY ) . ':lock' );
 	}
 
 	/**
@@ -59,106 +65,88 @@ class BagOStuffTest extends MediaWikiTestCase {
 
 	/**
 	 * @covers BagOStuff::merge
-	 * @covers BagOStuff::mergeViaLock
+	 * @covers BagOStuff::mergeViaCas
 	 */
 	public function testMerge() {
-		$key = wfMemcKey( 'test' );
+		$key = $this->cache->makeKey( self::TEST_KEY );
 
-		$usleep = 0;
-
-		/**
-		 * Callback method: append "merged" to whatever is in cache.
-		 *
-		 * @param BagOStuff $cache
-		 * @param string $key
-		 * @param int $existingValue
-		 * @use int $usleep
-		 * @return int
-		 */
-		$callback = function ( BagOStuff $cache, $key, $existingValue ) use ( &$usleep ) {
-			// let's pretend this is an expensive callback to test concurrent merge attempts
-			usleep( $usleep );
-
-			if ( $existingValue === false ) {
-				return 'merged';
+		$calls = 0;
+		$casRace = false; // emulate a race
+		$callback = function ( BagOStuff $cache, $key, $oldVal ) use ( &$calls, &$casRace ) {
+			++$calls;
+			if ( $casRace ) {
+				// Uses CAS instead?
+				$cache->set( $key, 'conflict', 5 );
 			}
 
-			return $existingValue . 'merged';
+			return ( $oldVal === false ) ? 'merged' : $oldVal . 'merged';
 		};
 
 		// merge on non-existing value
-		$merged = $this->cache->merge( $key, $callback, 0 );
+		$merged = $this->cache->merge( $key, $callback, 5 );
 		$this->assertTrue( $merged );
-		$this->assertEquals( $this->cache->get( $key ), 'merged' );
+		$this->assertEquals( 'merged', $this->cache->get( $key ) );
 
 		// merge on existing value
-		$merged = $this->cache->merge( $key, $callback, 0 );
+		$merged = $this->cache->merge( $key, $callback, 5 );
 		$this->assertTrue( $merged );
-		$this->assertEquals( $this->cache->get( $key ), 'mergedmerged' );
+		$this->assertEquals( 'mergedmerged', $this->cache->get( $key ) );
 
-		/*
-		 * Test concurrent merges by forking this process, if:
-		 * - not manually called with --use-bagostuff
-		 * - pcntl_fork is supported by the system
-		 * - cache type will correctly support calls over forks
-		 */
-		$fork = (bool)$this->getCliArg( 'use-bagostuff' );
-		$fork &= function_exists( 'pcntl_fork' );
-		$fork &= !$this->cache instanceof HashBagOStuff;
-		$fork &= !$this->cache instanceof EmptyBagOStuff;
-		$fork &= !$this->cache instanceof MultiWriteBagOStuff;
-		if ( $fork ) {
-			// callback should take awhile now so that we can test concurrent merge attempts
-			$pid = pcntl_fork();
-			if ( $pid == -1 ) {
-				// can't fork, ignore this test...
-			} elseif ( $pid ) {
-				// wait a little, making sure that the child process is calling merge
-				usleep( 3000 );
-
-				// attempt a merge - this should fail
-				$merged = $this->cache->merge( $key, $callback, 0, 1 );
-
-				// merge has failed because child process was merging (and we only attempted once)
-				$this->assertFalse( $merged );
-
-				// make sure the child's merge is completed and verify
-				usleep( 3000 );
-				$this->assertEquals( $this->cache->get( $key ), 'mergedmergedmerged' );
-			} else {
-				$this->cache->merge( $key, $callback, 0, 1 );
-
-				// Note: I'm not even going to check if the merge worked, I'll
-				// compare values in the parent process to test if this merge worked.
-				// I'm just going to exit this child process, since I don't want the
-				// child to output any test results (would be rather confusing to
-				// have test output twice)
-				exit;
-			}
+		$calls = 0;
+		$casRace = true;
+		$this->assertFalse(
+			$this->cache->merge( $key, $callback, 5, 1 ),
+			'Non-blocking merge (CAS)'
+		);
+		if ( $this->cache instanceof MultiWriteBagOStuff ) {
+			$wrapper = \Wikimedia\TestingAccessWrapper::newFromObject( $this->cache );
+			$n = count( $wrapper->caches );
+		} else {
+			$n = 1;
 		}
+		$this->assertEquals( $n, $calls );
+	}
+
+	/**
+	 * @covers BagOStuff::changeTTL
+	 */
+	public function testChangeTTL() {
+		$key = $this->cache->makeKey( self::TEST_KEY );
+		$value = 'meow';
+
+		$this->cache->add( $key, $value, 5 );
+		$this->assertTrue( $this->cache->changeTTL( $key, 5 ) );
+		$this->assertEquals( $this->cache->get( $key ), $value );
+		$this->cache->delete( $key );
+		$this->assertFalse( $this->cache->changeTTL( $key, 5 ) );
 	}
 
 	/**
 	 * @covers BagOStuff::add
 	 */
 	public function testAdd() {
-		$key = wfMemcKey( 'test' );
-		$this->assertTrue( $this->cache->add( $key, 'test' ) );
+		$key = $this->cache->makeKey( self::TEST_KEY );
+		$this->assertTrue( $this->cache->add( $key, 'test', 5 ) );
 	}
 
+	/**
+	 * @covers BagOStuff::get
+	 */
 	public function testGet() {
 		$value = [ 'this' => 'is', 'a' => 'test' ];
 
-		$key = wfMemcKey( 'test' );
-		$this->cache->add( $key, $value );
+		$key = $this->cache->makeKey( self::TEST_KEY );
+		$this->cache->add( $key, $value, 5 );
 		$this->assertEquals( $this->cache->get( $key ), $value );
 	}
 
 	/**
+	 * @covers BagOStuff::get
+	 * @covers BagOStuff::set
 	 * @covers BagOStuff::getWithSetCallback
 	 */
 	public function testGetWithSetCallback() {
-		$key = wfMemcKey( 'test' );
+		$key = $this->cache->makeKey( self::TEST_KEY );
 		$value = $this->cache->getWithSetCallback(
 			$key,
 			30,
@@ -175,8 +163,8 @@ class BagOStuffTest extends MediaWikiTestCase {
 	 * @covers BagOStuff::incr
 	 */
 	public function testIncr() {
-		$key = wfMemcKey( 'test' );
-		$this->cache->add( $key, 0 );
+		$key = $this->cache->makeKey( self::TEST_KEY );
+		$this->cache->add( $key, 0, 5 );
 		$this->cache->incr( $key );
 		$expectedValue = 1;
 		$actualValue = $this->cache->get( $key );
@@ -187,7 +175,7 @@ class BagOStuffTest extends MediaWikiTestCase {
 	 * @covers BagOStuff::incrWithInit
 	 */
 	public function testIncrWithInit() {
-		$key = wfMemcKey( 'test' );
+		$key = $this->cache->makeKey( self::TEST_KEY );
 		$val = $this->cache->incrWithInit( $key, 0, 1, 3 );
 		$this->assertEquals( 3, $val, "Correct init value" );
 
@@ -204,18 +192,24 @@ class BagOStuffTest extends MediaWikiTestCase {
 		$value3 = [ 'testing a key that may be encoded when sent to cache backend' ];
 		$value4 = [ 'another test where chars in key will be encoded' ];
 
-		$key1 = wfMemcKey( 'test1' );
-		$key2 = wfMemcKey( 'test2' );
+		$key1 = $this->cache->makeKey( 'test-1' );
+		$key2 = $this->cache->makeKey( 'test-2' );
 		// internally, MemcachedBagOStuffs will encode to will-%25-encode
-		$key3 = wfMemcKey( 'will-%-encode' );
-		$key4 = wfMemcKey(
+		$key3 = $this->cache->makeKey( 'will-%-encode' );
+		$key4 = $this->cache->makeKey(
 			'flowdb:flow_ref:wiki:by-source:v3:Parser\'s_"broken"_+_(page)_&_grill:testwiki:1:4.7'
 		);
 
-		$this->cache->add( $key1, $value1 );
-		$this->cache->add( $key2, $value2 );
-		$this->cache->add( $key3, $value3 );
-		$this->cache->add( $key4, $value4 );
+		// cleanup
+		$this->cache->delete( $key1 );
+		$this->cache->delete( $key2 );
+		$this->cache->delete( $key3 );
+		$this->cache->delete( $key4 );
+
+		$this->cache->add( $key1, $value1, 5 );
+		$this->cache->add( $key2, $value2, 5 );
+		$this->cache->add( $key3, $value3, 5 );
+		$this->cache->add( $key4, $value4, 5 );
 
 		$this->assertEquals(
 			[ $key1 => $value1, $key2 => $value2, $key3 => $value3, $key4 => $value4 ],
@@ -230,27 +224,55 @@ class BagOStuffTest extends MediaWikiTestCase {
 	}
 
 	/**
+	 * @covers BagOStuff::setMulti
+	 * @covers BagOStuff::deleteMulti
+	 */
+	public function testSetDeleteMulti() {
+		$map = [
+			$this->cache->makeKey( 'test-1' ) => 'Siberian',
+			$this->cache->makeKey( 'test-2' ) => [ 'Huskies' ],
+			$this->cache->makeKey( 'test-3' ) => [ 'are' => 'the' ],
+			$this->cache->makeKey( 'test-4' ) => (object)[ 'greatest' => 'animal' ],
+			$this->cache->makeKey( 'test-5' ) => 4,
+			$this->cache->makeKey( 'test-6' ) => 'ever'
+		];
+
+		$this->cache->setMulti( $map, 5 );
+		$this->assertEquals(
+			$map,
+			$this->cache->getMulti( array_keys( $map ) )
+		);
+
+		$this->assertTrue( $this->cache->deleteMulti( array_keys( $map ), 5 ) );
+
+		$this->assertEquals(
+			[],
+			$this->cache->getMulti( array_keys( $map ) )
+		);
+	}
+
+	/**
 	 * @covers BagOStuff::getScopedLock
 	 */
 	public function testGetScopedLock() {
-		$key = wfMemcKey( 'test' );
+		$key = $this->cache->makeKey( self::TEST_KEY );
 		$value1 = $this->cache->getScopedLock( $key, 0 );
 		$value2 = $this->cache->getScopedLock( $key, 0 );
 
-		$this->assertType( 'ScopedCallback', $value1, 'First call returned lock' );
+		$this->assertType( ScopedCallback::class, $value1, 'First call returned lock' );
 		$this->assertNull( $value2, 'Duplicate call returned no lock' );
 
 		unset( $value1 );
 
 		$value3 = $this->cache->getScopedLock( $key, 0 );
-		$this->assertType( 'ScopedCallback', $value3, 'Lock returned callback after release' );
+		$this->assertType( ScopedCallback::class, $value3, 'Lock returned callback after release' );
 		unset( $value3 );
 
 		$value1 = $this->cache->getScopedLock( $key, 0, 5, 'reentry' );
 		$value2 = $this->cache->getScopedLock( $key, 0, 5, 'reentry' );
 
-		$this->assertType( 'ScopedCallback', $value1, 'First reentrant call returned lock' );
-		$this->assertType( 'ScopedCallback', $value1, 'Second reentrant call returned lock' );
+		$this->assertType( ScopedCallback::class, $value1, 'First reentrant call returned lock' );
+		$this->assertType( ScopedCallback::class, $value1, 'Second reentrant call returned lock' );
 	}
 
 	/**
@@ -258,7 +280,7 @@ class BagOStuffTest extends MediaWikiTestCase {
 	 * @covers BagOStuff::trackDuplicateKeys
 	 */
 	public function testReportDupes() {
-		$logger = $this->getMock( 'Psr\Log\NullLogger' );
+		$logger = $this->createMock( Psr\Log\NullLogger::class );
 		$logger->expects( $this->once() )
 			->method( 'warning' )
 			->with( 'Duplicate get(): "{key}" fetched {count} times', [
@@ -276,5 +298,22 @@ class BagOStuffTest extends MediaWikiTestCase {
 		$cache->get( 'foo' );
 
 		DeferredUpdates::doUpdates();
+	}
+
+	/**
+	 * @covers BagOStuff::lock()
+	 * @covers BagOStuff::unlock()
+	 */
+	public function testLocking() {
+		$key = 'test';
+		$this->assertTrue( $this->cache->lock( $key ) );
+		$this->assertFalse( $this->cache->lock( $key ) );
+		$this->assertTrue( $this->cache->unlock( $key ) );
+
+		$key2 = 'test2';
+		$this->assertTrue( $this->cache->lock( $key2, 5, 5, 'rclass' ) );
+		$this->assertTrue( $this->cache->lock( $key2, 5, 5, 'rclass' ) );
+		$this->assertTrue( $this->cache->unlock( $key2 ) );
+		$this->assertTrue( $this->cache->unlock( $key2 ) );
 	}
 }

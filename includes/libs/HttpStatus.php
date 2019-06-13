@@ -84,7 +84,7 @@ class HttpStatus {
 			507 => 'Insufficient Storage',
 			511 => 'Network Authentication Required',
 		];
-		return isset( $statusMessage[$code] ) ? $statusMessage[$code] : null;
+		return $statusMessage[$code] ?? null;
 	}
 
 	/**
@@ -98,9 +98,10 @@ class HttpStatus {
 		$message = self::getMessage( $code );
 		if ( $message === null ) {
 			trigger_error( "Unknown HTTP status code $code", E_USER_WARNING );
-			return false;
+			return;
 		}
 
+		MediaWiki\HeaderCallback::warnIfHeadersSent();
 		if ( $version === null ) {
 			$version = isset( $_SERVER['SERVER_PROTOCOL'] ) &&
 				$_SERVER['SERVER_PROTOCOL'] === 'HTTP/1.0' ?

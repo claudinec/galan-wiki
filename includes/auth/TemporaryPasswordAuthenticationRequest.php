@@ -21,6 +21,8 @@
 
 namespace MediaWiki\Auth;
 
+use MediaWiki\MediaWikiServices;
+
 /**
  * This represents the intention to set a temporary password for the user.
  * @ingroup Auth
@@ -32,12 +34,6 @@ class TemporaryPasswordAuthenticationRequest extends AuthenticationRequest {
 
 	/** @var bool Email password to the user. */
 	public $mailpassword = false;
-
-	/**
-	 * @var bool Do not fail certain operations if the password cannot be mailed, there is a
-	 *   backchannel present.
-	 */
-	public $hasBackchannel = false;
 
 	/** @var string Username or IP address of the caller */
 	public $caller;
@@ -67,17 +63,14 @@ class TemporaryPasswordAuthenticationRequest extends AuthenticationRequest {
 	 * @return TemporaryPasswordAuthenticationRequest
 	 */
 	public static function newRandom() {
-		$config = \ConfigFactory::getDefaultInstance()->makeConfig( 'main' );
+		$config = MediaWikiServices::getInstance()->getMainConfig();
 
 		// get the min password length
 		$minLength = $config->get( 'MinimalPasswordLength' );
 		$policy = $config->get( 'PasswordPolicy' );
 		foreach ( $policy['policies'] as $p ) {
-			if ( isset( $p['MinimalPasswordLength'] ) ) {
-				$minLength = max( $minLength, $p['MinimalPasswordLength'] );
-			}
-			if ( isset( $p['MinimalPasswordLengthToLogin'] ) ) {
-				$minLength = max( $minLength, $p['MinimalPasswordLengthToLogin'] );
+			foreach ( [ 'MinimalPasswordLength', 'MinimumPasswordLengthToLogin' ] as $check ) {
+				$minLength = max( $minLength, $p[$check]['value'] ?? $p[$check] ?? 0 );
 			}
 		}
 

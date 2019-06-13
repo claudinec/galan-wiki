@@ -46,7 +46,7 @@ $magicWords = [
 
 $bookstoreList = [
 	'OZ.by' => 'http://oz.by/search.phtml?what=books&isbn=$1',
-	'Amazon.com' => 'http://www.amazon.com/exec/obidos/ISBN=$1'
+	'Amazon.com' => 'https://www.amazon.com/exec/obidos/ISBN=$1'
 ];
 
 $datePreferences = [
@@ -65,9 +65,8 @@ $dateFormats = [
 
 # Per discussion on https://translatewiki.net/wiki/Thread:Support/Customization_of number format
 $separatorTransformTable = [
-	',' => "\xc2\xa0", # nbsp
+	',' => "\u{00A0}", # nbsp
 	'.' => ','
 ];
 
 $linkTrail = '/^([абвгґджзеёжзійклмнопрстуўфхцчшыьэюяćčłńśšŭźža-z]+)(.*)$/sDu';
-

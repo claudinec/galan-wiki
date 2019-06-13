@@ -25,7 +25,7 @@
  * Let users reset tokens like the watchlist token.
  *
  * @ingroup SpecialPage
- * @deprecated 1.26
+ * @deprecated since 1.26
  */
 class SpecialResetTokens extends FormSpecialPage {
 	private $tokensList;
@@ -74,7 +74,7 @@ class SpecialResetTokens extends FormSpecialPage {
 
 	public function onSuccess() {
 		$this->getOutput()->wrapWikiMsg(
-			"<div class='successbox'>\n$1\n</div>",
+			Html::successBox( '$1' ),
 			'resettokens-done'
 		);
 	}
@@ -121,6 +121,7 @@ class SpecialResetTokens extends FormSpecialPage {
 	 * @param HTMLForm $form
 	 */
 	protected function alterForm( HTMLForm $form ) {
+		$form->setSubmitDestructive();
 		if ( $this->getTokensList() ) {
 			$form->setSubmitTextMsg( 'resettokens-resetbutton' );
 		} else {

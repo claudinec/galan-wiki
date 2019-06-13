@@ -1,7 +1,7 @@
-( function ( mw ) {
+( function () {
 
 	QUnit.module( 'mediawiki.template.mustache', {
-		setup: function () {
+		beforeEach: function () {
 			// Stub register some templates
 			this.sandbox.stub( mw.templates, 'get' ).returns( {
 				'test_greeting.mustache': '<div>{{foo}}{{>suffix}}</div>',
@@ -10,7 +10,7 @@
 		}
 	} );
 
-	QUnit.test( 'render', 2, function ( assert ) {
+	QUnit.test( 'render', function ( assert ) {
 		var html, htmlPartial, data, partials,
 			template = mw.template.get( 'stub', 'test_greeting.mustache' ),
 			partial = mw.template.get( 'stub', 'test_greeting_suffix.mustache' );
@@ -29,4 +29,4 @@
 		assert.strictEqual( htmlPartial, 'Hello goodbye', 'Render with partial' );
 	} );
 
-}( mediaWiki ) );
+}() );

@@ -1,7 +1,5 @@
 <?php
 /**
- * Copyright © 2008 Aaron Schulz
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -36,14 +34,9 @@ class ActiveUsersPager extends UsersPager {
 	protected $opts;
 
 	/**
-	 * @var array
+	 * @var string[]
 	 */
-	protected $hideGroups = [];
-
-	/**
-	 * @var array
-	 */
-	protected $hideRights = [];
+	protected $groups;
 
 	/**
 	 * @var array
@@ -51,10 +44,10 @@ class ActiveUsersPager extends UsersPager {
 	private $blockStatusByUid;
 
 	/**
-	 * @param IContextSource $context
+	 * @param IContextSource|null $context
 	 * @param FormOptions $opts
 	 */
-	function __construct( IContextSource $context = null, FormOptions $opts ) {
+	public function __construct( IContextSource $context = null, FormOptions $opts ) {
 		parent::__construct( $context );
 
 		$this->RCMaxAge = $this->getConfig()->get( 'ActiveUserDays' );
@@ -68,11 +61,14 @@ class ActiveUsersPager extends UsersPager {
 			}
 		}
 
-		if ( $opts->getValue( 'hidebots' ) == 1 ) {
-			$this->hideRights[] = 'bot';
+		$this->groups = $opts->getValue( 'groups' );
+		$this->excludegroups = $opts->getValue( 'excludegroups' );
+		// Backwards-compatibility with old URLs
+		if ( $opts->getValue( 'hidebots' ) ) {
+			$this->excludegroups[] = 'bot';
 		}
-		if ( $opts->getValue( 'hidesysops' ) == 1 ) {
-			$this->hideGroups[] = 'sysop';
+		if ( $opts->getValue( 'hidesysops' ) ) {
+			$this->excludegroups[] = 'sysop';
 		}
 	}
 
@@ -80,45 +76,124 @@ class ActiveUsersPager extends UsersPager {
 		return 'qcc_title';
 	}
 
-	function getQueryInfo() {
+	function getQueryInfo( $data = null ) {
 		$dbr = $this->getDatabase();
+
+		$useActor = (bool)(
+			$this->getConfig()->get( 'ActorTableSchemaMigrationStage' ) & SCHEMA_COMPAT_READ_NEW
+		);
 
 		$activeUserSeconds = $this->getConfig()->get( 'ActiveUserDays' ) * 86400;
 		$timestamp = $dbr->timestamp( wfTimestamp( TS_UNIX ) - $activeUserSeconds );
+		$fname = __METHOD__ . ' (' . $this->getSqlComment() . ')';
+
+		// Inner subselect to pull the active users out of querycachetwo
+		$tables = [ 'querycachetwo', 'user' ];
+		$fields = [ 'qcc_title', 'user_id' ];
+		$jconds = [
+			'user' => [ 'JOIN', 'user_name = qcc_title' ],
+		];
 		$conds = [
 			'qcc_type' => 'activeusers',
 			'qcc_namespace' => NS_USER,
-			'user_name = qcc_title',
-			'rc_user_text = qcc_title',
-			'rc_type != ' . $dbr->addQuotes( RC_EXTERNAL ), // Don't count wikidata.
-			'rc_type != ' . $dbr->addQuotes( RC_CATEGORIZE ), // Don't count categorization changes.
-			'rc_log_type IS NULL OR rc_log_type != ' . $dbr->addQuotes( 'newusers' ),
-			'rc_timestamp >= ' . $dbr->addQuotes( $timestamp ),
 		];
+		$options = [];
+		if ( $data !== null ) {
+			$options['ORDER BY'] = 'qcc_title ' . $data['order'];
+			$options['LIMIT'] = $data['limit'];
+			$conds = array_merge( $conds, $data['conds'] );
+		}
 		if ( $this->requestedUser != '' ) {
 			$conds[] = 'qcc_title >= ' . $dbr->addQuotes( $this->requestedUser );
+		}
+		if ( $this->groups !== [] ) {
+			$tables['ug1'] = 'user_groups';
+			$jconds['ug1'] = [ 'JOIN', 'ug1.ug_user = user_id' ];
+			$conds['ug1.ug_group'] = $this->groups;
+			$conds[] = 'ug1.ug_expiry IS NULL OR ug1.ug_expiry >= ' . $dbr->addQuotes( $dbr->timestamp() );
+		}
+		if ( $this->excludegroups !== [] ) {
+			$tables['ug2'] = 'user_groups';
+			$jconds['ug2'] = [ 'LEFT JOIN', [
+				'ug2.ug_user = user_id',
+				'ug2.ug_group' => $this->excludegroups,
+				'ug2.ug_expiry IS NULL OR ug2.ug_expiry >= ' . $dbr->addQuotes( $dbr->timestamp() ),
+			] ];
+			$conds['ug2.ug_user'] = null;
 		}
 		if ( !$this->getUser()->isAllowed( 'hideuser' ) ) {
 			$conds[] = 'NOT EXISTS (' . $dbr->selectSQLText(
 					'ipblocks', '1', [ 'ipb_user=user_id', 'ipb_deleted' => 1 ]
 				) . ')';
 		}
-
-		if ( $dbr->implicitGroupby() ) {
-			$options = [ 'GROUP BY' => [ 'qcc_title' ] ];
-		} else {
-			$options = [ 'GROUP BY' => [ 'user_name', 'user_id', 'qcc_title' ] ];
+		if ( $useActor ) {
+			$tables[] = 'actor';
+			$jconds['actor'] = [
+				'JOIN',
+				'actor_user = user_id',
+			];
+			$fields[] = 'actor_id';
 		}
+		$subquery = $dbr->buildSelectSubquery( $tables, $fields, $conds, $fname, $options, $jconds );
+
+		// Outer query to select the recent edit counts for the selected active users
+		$tables = [ 'qcc_users' => $subquery, 'recentchanges' ];
+		$jconds = [ 'recentchanges' => [ 'LEFT JOIN', [
+			$useActor ? 'rc_actor = actor_id' : 'rc_user_text = qcc_title',
+			'rc_type != ' . $dbr->addQuotes( RC_EXTERNAL ), // Don't count wikidata.
+			'rc_type != ' . $dbr->addQuotes( RC_CATEGORIZE ), // Don't count categorization changes.
+			'rc_log_type IS NULL OR rc_log_type != ' . $dbr->addQuotes( 'newusers' ),
+			'rc_timestamp >= ' . $dbr->addQuotes( $timestamp ),
+		] ] ];
+		$conds = [];
 
 		return [
-			'tables' => [ 'querycachetwo', 'user', 'recentchanges' ],
-			'fields' => [ 'user_name', 'user_id', 'recentedits' => 'COUNT(*)', 'qcc_title' ],
-			'options' => $options,
-			'conds' => $conds
+			'tables' => $tables,
+			'fields' => [
+				'qcc_title',
+				'user_name' => 'qcc_title',
+				'user_id' => 'user_id',
+				'recentedits' => 'COUNT(rc_id)'
+			],
+			'options' => [ 'GROUP BY' => [ 'qcc_title' ] ],
+			'conds' => $conds,
+			'join_conds' => $jconds,
 		];
 	}
 
-	function doBatchLookups() {
+	protected function buildQueryInfo( $offset, $limit, $order ) {
+		$fname = __METHOD__ . ' (' . $this->getSqlComment() . ')';
+
+		$sortColumns = array_merge( [ $this->mIndexField ], $this->mExtraSortFields );
+		if ( $order === self::QUERY_ASCENDING ) {
+			$dir = 'ASC';
+			$orderBy = $sortColumns;
+			$operator = $this->mIncludeOffset ? '>=' : '>';
+		} else {
+			$dir = 'DESC';
+			$orderBy = [];
+			foreach ( $sortColumns as $col ) {
+				$orderBy[] = $col . ' DESC';
+			}
+			$operator = $this->mIncludeOffset ? '<=' : '<';
+		}
+		$info = $this->getQueryInfo( [
+			'limit' => intval( $limit ),
+			'order' => $dir,
+			'conds' =>
+				$offset != '' ? [ $this->mIndexField . $operator . $this->mDb->addQuotes( $offset ) ] : [],
+		] );
+
+		$tables = $info['tables'];
+		$fields = $info['fields'];
+		$conds = $info['conds'];
+		$options = $info['options'];
+		$join_conds = $info['join_conds'];
+		$options['ORDER BY'] = $orderBy;
+		return [ $tables, $fields, $conds, $fname, $options, $join_conds ];
+	}
+
+	protected function doBatchLookups() {
 		parent::doBatchLookups();
 
 		$uids = [];
@@ -131,14 +206,17 @@ class ActiveUsersPager extends UsersPager {
 		// is done in two queries to avoid huge quicksorts and to make COUNT(*) correct.
 		$dbr = $this->getDatabase();
 		$res = $dbr->select( 'ipblocks',
-			[ 'ipb_user', 'MAX(ipb_deleted) AS block_status' ],
+			[ 'ipb_user', 'MAX(ipb_deleted) AS deleted, MAX(ipb_sitewide) AS sitewide' ],
 			[ 'ipb_user' => $uids ],
 			__METHOD__,
 			[ 'GROUP BY' => [ 'ipb_user' ] ]
 		);
 		$this->blockStatusByUid = [];
 		foreach ( $res as $row ) {
-			$this->blockStatusByUid[$row->ipb_user] = $row->block_status; // 0 or 1
+			$this->blockStatusByUid[$row->ipb_user] = [
+				'deleted' => $row->deleted,
+				'sitewide' => $row->sitewide,
+			];
 		}
 		$this->mResult->seek( 0 );
 	}
@@ -147,47 +225,46 @@ class ActiveUsersPager extends UsersPager {
 		$userName = $row->user_name;
 
 		$ulinks = Linker::userLink( $row->user_id, $userName );
-		$ulinks .= Linker::userToolLinks( $row->user_id, $userName );
+		$ulinks .= Linker::userToolLinks(
+			$row->user_id,
+			$userName,
+			// Should the contributions link be red if the user has no edits (using default)
+			false,
+			// Customisation flags (using default 0)
+			0,
+			// User edit count (using default)
+			null,
+			// do not wrap the message in parentheses (CSS will provide these)
+			false
+		);
 
 		$lang = $this->getLanguage();
 
 		$list = [];
-		$user = User::newFromId( $row->user_id );
 
-		// User right filter
-		foreach ( $this->hideRights as $right ) {
-			// Calling User::getRights() within the loop so that
-			// if the hideRights() filter is empty, we don't have to
-			// trigger the lazy-init of the big userrights array in the
-			// User object
-			if ( in_array( $right, $user->getRights() ) ) {
-				return '';
-			}
-		}
-
-		// User group filter
-		// Note: This is a different loop than for user rights,
-		// because we're reusing it to build the group links
-		// at the same time
-		$groups_list = self::getGroups( intval( $row->user_id ), $this->userGroupCache );
-		foreach ( $groups_list as $group ) {
-			if ( in_array( $group, $this->hideGroups ) ) {
-				return '';
-			}
-			$list[] = self::buildGroupLink( $group, $userName );
+		$ugms = self::getGroupMemberships( intval( $row->user_id ), $this->userGroupCache );
+		foreach ( $ugms as $ugm ) {
+			$list[] = $this->buildGroupLink( $ugm, $userName );
 		}
 
 		$groups = $lang->commaList( $list );
 
 		$item = $lang->specialList( $ulinks, $groups );
 
+		// If there is a block, 'deleted' and 'sitewide' are both set on
+		// $this->blockStatusByUid[$row->user_id].
+		$blocked = '';
 		$isBlocked = isset( $this->blockStatusByUid[$row->user_id] );
-		if ( $isBlocked && $this->blockStatusByUid[$row->user_id] == 1 ) {
-			$item = "<span class=\"deleted\">$item</span>";
+		if ( $isBlocked ) {
+			if ( $this->blockStatusByUid[$row->user_id]['deleted'] == 1 ) {
+				$item = "<span class=\"deleted\">$item</span>";
+			}
+			if ( $this->blockStatusByUid[$row->user_id]['sitewide'] == 1 ) {
+				$blocked = ' ' . $this->msg( 'listusers-blocked', $userName )->escaped();
+			}
 		}
 		$count = $this->msg( 'activeusers-count' )->numParams( $row->recentedits )
 			->params( $userName )->numParams( $this->RCMaxAge )->escaped();
-		$blocked = $isBlocked ? ' ' . $this->msg( 'listusers-blocked', $userName )->escaped() : '';
 
 		return Html::rawElement( 'li', [], "{$item} [{$count}]{$blocked}" );
 	}

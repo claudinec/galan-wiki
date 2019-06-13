@@ -1,9 +1,5 @@
 <?php
 /**
- *
- *
- * Created on Sep 25, 2006
- *
  * Copyright © 2006 Yuri Astrakhan "<Firstname><Lastname>@gmail.com"
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,6 +19,7 @@
  *
  * @file
  */
+use MediaWiki\MediaWikiServices;
 
 /**
  * A query action to return meta information about the wiki site.
@@ -57,8 +54,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 					$fit = $this->appendMagicWords( $p );
 					break;
 				case 'interwikimap':
-					$filteriw = isset( $params['filteriw'] ) ? $params['filteriw'] : false;
-					$fit = $this->appendInterwikiMap( $p, $filteriw );
+					$fit = $this->appendInterwikiMap( $p, $params['filteriw'] );
 					break;
 				case 'dbrepllag':
 					$fit = $this->appendDbReplLagInfo( $p, $params['showalldb'] );
@@ -87,6 +83,9 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 				case 'languages':
 					$fit = $this->appendLanguages( $p );
 					break;
+				case 'languagevariants':
+					$fit = $this->appendLanguageVariants( $p );
+					break;
 				case 'skins':
 					$fit = $this->appendSkins( $p );
 					break;
@@ -112,7 +111,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 					$fit = $this->appendUploadDialog( $p );
 					break;
 				default:
-					ApiBase::dieDebug( __METHOD__, "Unknown prop=$p" );
+					ApiBase::dieDebug( __METHOD__, "Unknown prop=$p" ); // @codeCoverageIgnore
 			}
 			if ( !$fit ) {
 				// Abuse siprop as a query-continue parameter
@@ -126,8 +125,6 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendGeneralInfo( $property ) {
-		global $wgContLang;
-
 		$config = $this->getConfig();
 
 		$data = [];
@@ -145,7 +142,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		$data['phpversion'] = PHP_VERSION;
 		$data['phpsapi'] = PHP_SAPI;
 		if ( defined( 'HHVM_VERSION' ) ) {
-			$data['hhvmversion'] = HHVM_VERSION;
+			$data['hhvmversion'] = HHVM_VERSION; // @codeCoverageIgnore
 		}
 		$data['dbtype'] = $config->get( 'DBtype' );
 		$data['dbversion'] = $this->getDB()->getServerVersion();
@@ -165,8 +162,9 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		$data['langconversion'] = !$config->get( 'DisableLangConversion' );
 		$data['titleconversion'] = !$config->get( 'DisableTitleConversion' );
 
-		if ( $wgContLang->linkPrefixExtension() ) {
-			$linkPrefixCharset = $wgContLang->linkPrefixCharset();
+		$contLang = MediaWikiServices::getInstance()->getContentLanguage();
+		if ( $contLang->linkPrefixExtension() ) {
+			$linkPrefixCharset = $contLang->linkPrefixCharset();
 			$data['linkprefixcharset'] = $linkPrefixCharset;
 			// For backwards compatibility
 			$data['linkprefix'] = "/^((?>.*[^$linkPrefixCharset]|))(.+)$/sDu";
@@ -175,11 +173,15 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 			$data['linkprefix'] = '';
 		}
 
-		$linktrail = $wgContLang->linkTrail();
+		$linktrail = $contLang->linkTrail();
 		$data['linktrail'] = $linktrail ?: '';
 
 		$data['legaltitlechars'] = Title::legalChars();
 		$data['invalidusernamechars'] = $config->get( 'InvalidUsernameCharacters' );
+
+		$data['allunicodefixes'] = (bool)$config->get( 'AllUnicodeFixes' );
+		$data['fixarabicunicode'] = (bool)$config->get( 'FixArabicUnicode' );
+		$data['fixmalayalamunicode'] = (bool)$config->get( 'FixMalayalamUnicode' );
 
 		global $IP;
 		$git = SpecialVersion::getGitHeadSha1( $IP );
@@ -194,43 +196,39 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		$data['lang'] = $config->get( 'LanguageCode' );
 
 		$fallbacks = [];
-		foreach ( $wgContLang->getFallbackLanguages() as $code ) {
+		foreach ( $contLang->getFallbackLanguages() as $code ) {
 			$fallbacks[] = [ 'code' => $code ];
 		}
 		$data['fallback'] = $fallbacks;
 		ApiResult::setIndexedTagName( $data['fallback'], 'lang' );
 
-		if ( $wgContLang->hasVariants() ) {
+		if ( $contLang->hasVariants() ) {
 			$variants = [];
-			foreach ( $wgContLang->getVariants() as $code ) {
+			foreach ( $contLang->getVariants() as $code ) {
 				$variants[] = [
 					'code' => $code,
-					'name' => $wgContLang->getVariantname( $code ),
+					'name' => $contLang->getVariantname( $code ),
 				];
 			}
 			$data['variants'] = $variants;
 			ApiResult::setIndexedTagName( $data['variants'], 'lang' );
 		}
 
-		$data['rtl'] = $wgContLang->isRTL();
-		$data['fallback8bitEncoding'] = $wgContLang->fallback8bitEncoding();
+		$data['rtl'] = $contLang->isRTL();
+		$data['fallback8bitEncoding'] = $contLang->fallback8bitEncoding();
 
 		$data['readonly'] = wfReadOnly();
 		if ( $data['readonly'] ) {
 			$data['readonlyreason'] = wfReadOnlyReason();
 		}
-		$data['writeapi'] = (bool)$config->get( 'EnableWriteAPI' );
+		$data['writeapi'] = true; // Deprecated since MW 1.32
+
+		$data['maxarticlesize'] = $config->get( 'MaxArticleSize' ) * 1024;
 
 		$tz = $config->get( 'Localtimezone' );
 		$offset = $config->get( 'LocalTZoffset' );
-		if ( is_null( $tz ) ) {
-			$tz = 'UTC';
-			$offset = 0;
-		} elseif ( is_null( $offset ) ) {
-			$offset = 0;
-		}
 		$data['timezone'] = $tz;
-		$data['timeoffset'] = intval( $offset );
+		$data['timeoffset'] = (int)$offset;
 		$data['articlepath'] = $config->get( 'ArticlePath' );
 		$data['scriptpath'] = $config->get( 'ScriptPath' );
 		$data['script'] = $config->get( 'Script' );
@@ -238,14 +236,16 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		$data[ApiResult::META_BC_BOOLS][] = 'variantarticlepath';
 		$data['server'] = $config->get( 'Server' );
 		$data['servername'] = $config->get( 'ServerName' );
-		$data['wikiid'] = wfWikiID();
+		$data['wikiid'] = WikiMap::getWikiIdFromDbDomain( WikiMap::getCurrentWikiDbDomain() );
 		$data['time'] = wfTimestamp( TS_ISO_8601, time() );
 
 		$data['misermode'] = (bool)$config->get( 'MiserMode' );
 
 		$data['uploadsenabled'] = UploadBase::isEnabled();
 		$data['maxuploadsize'] = UploadBase::getMaxUploadSize();
-		$data['minuploadchunksize'] = (int)$this->getConfig()->get( 'MinUploadChunkSize' );
+		$data['minuploadchunksize'] = (int)$config->get( 'MinUploadChunkSize' );
+
+		$data['galleryoptions'] = $config->get( 'GalleryOptions' );
 
 		$data['thumblimits'] = $config->get( 'ThumbLimits' );
 		ApiResult::setArrayType( $data['thumblimits'], 'BCassoc' );
@@ -264,9 +264,14 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 			$data['favicon'] = wfExpandUrl( $favicon, PROTO_RELATIVE );
 		}
 
-		$data['centralidlookupprovider'] = $this->getConfig()->get( 'CentralIdLookupProvider' );
-		$providerIds = array_keys( $this->getConfig()->get( 'CentralIdLookupProviders' ) );
+		$data['centralidlookupprovider'] = $config->get( 'CentralIdLookupProvider' );
+		$providerIds = array_keys( $config->get( 'CentralIdLookupProviders' ) );
 		$data['allcentralidlookupproviders'] = $providerIds;
+
+		$data['interwikimagic'] = (bool)$config->get( 'InterwikiMagic' );
+		$data['magiclinks'] = $config->get( 'EnableMagicLinks' );
+
+		$data['categorycollation'] = $config->get( 'CategoryCollation' );
 
 		Hooks::run( 'APIQuerySiteInfoGeneralInfo', [ $this, &$data ] );
 
@@ -274,28 +279,31 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendNamespaces( $property ) {
-		global $wgContLang;
 		$data = [
 			ApiResult::META_TYPE => 'assoc',
 		];
-		foreach ( $wgContLang->getFormattedNamespaces() as $ns => $title ) {
+		$nsInfo = MediaWikiServices::getInstance()->getNamespaceInfo();
+		foreach (
+			MediaWikiServices::getInstance()->getContentLanguage()->getFormattedNamespaces()
+			as $ns => $title
+		) {
 			$data[$ns] = [
-				'id' => intval( $ns ),
-				'case' => MWNamespace::isCapitalized( $ns ) ? 'first-letter' : 'case-sensitive',
+				'id' => (int)$ns,
+				'case' => $nsInfo->isCapitalized( $ns ) ? 'first-letter' : 'case-sensitive',
 			];
 			ApiResult::setContentValue( $data[$ns], 'name', $title );
-			$canonical = MWNamespace::getCanonicalName( $ns );
+			$canonical = $nsInfo->getCanonicalName( $ns );
 
-			$data[$ns]['subpages'] = MWNamespace::hasSubpages( $ns );
+			$data[$ns]['subpages'] = $nsInfo->hasSubpages( $ns );
 
 			if ( $canonical ) {
 				$data[$ns]['canonical'] = strtr( $canonical, '_', ' ' );
 			}
 
-			$data[$ns]['content'] = MWNamespace::isContent( $ns );
-			$data[$ns]['nonincludable'] = MWNamespace::isNonincludable( $ns );
+			$data[$ns]['content'] = $nsInfo->isContent( $ns );
+			$data[$ns]['nonincludable'] = $nsInfo->isNonincludable( $ns );
 
-			$contentmodel = MWNamespace::getNamespaceContentModel( $ns );
+			$contentmodel = $nsInfo->getNamespaceContentModel( $ns );
 			if ( $contentmodel ) {
 				$data[$ns]['defaultcontentmodel'] = $contentmodel;
 			}
@@ -308,10 +316,10 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendNamespaceAliases( $property ) {
-		global $wgContLang;
+		$contLang = MediaWikiServices::getInstance()->getContentLanguage();
 		$aliases = array_merge( $this->getConfig()->get( 'NamespaceAliases' ),
-			$wgContLang->getNamespaceAliases() );
-		$namespaces = $wgContLang->getNamespaces();
+			$contLang->getNamespaceAliases() );
+		$namespaces = $contLang->getNamespaces();
 		$data = [];
 		foreach ( $aliases as $title => $ns ) {
 			if ( $namespaces[$ns] == $title ) {
@@ -319,7 +327,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 				continue;
 			}
 			$item = [
-				'id' => intval( $ns )
+				'id' => (int)$ns
 			];
 			ApiResult::setContentValue( $item, 'alias', strtr( $title, '_', ' ' ) );
 			$data[] = $item;
@@ -333,10 +341,10 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendSpecialPageAliases( $property ) {
-		global $wgContLang;
 		$data = [];
-		$aliases = $wgContLang->getSpecialPageAliases();
-		foreach ( SpecialPageFactory::getNames() as $specialpage ) {
+		$services = MediaWikiServices::getInstance();
+		$aliases = $services->getContentLanguage()->getSpecialPageAliases();
+		foreach ( $services->getSpecialPageFactory()->getNames() as $specialpage ) {
 			if ( isset( $aliases[$specialpage] ) ) {
 				$arr = [ 'realname' => $specialpage, 'aliases' => $aliases[$specialpage] ];
 				ApiResult::setIndexedTagName( $arr['aliases'], 'alias' );
@@ -349,9 +357,11 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendMagicWords( $property ) {
-		global $wgContLang;
 		$data = [];
-		foreach ( $wgContLang->getMagicWords() as $magicword => $aliases ) {
+		foreach (
+			MediaWikiServices::getInstance()->getContentLanguage()->getMagicWords()
+			as $magicword => $aliases
+		) {
 			$caseSensitive = array_shift( $aliases );
 			$arr = [ 'name' => $magicword, 'aliases' => $aliases ];
 			$arr['case-sensitive'] = (bool)$caseSensitive;
@@ -364,20 +374,20 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	protected function appendInterwikiMap( $property, $filter ) {
-		$local = null;
 		if ( $filter === 'local' ) {
 			$local = 1;
 		} elseif ( $filter === '!local' ) {
 			$local = 0;
-		} elseif ( $filter ) {
-			ApiBase::dieDebug( __METHOD__, "Unknown filter=$filter" );
+		} else {
+			// $filter === null
+			$local = null;
 		}
 
 		$params = $this->extractRequestParams();
-		$langCode = isset( $params['inlanguagecode'] ) ? $params['inlanguagecode'] : '';
+		$langCode = $params['inlanguagecode'] ?? '';
 		$langNames = Language::fetchLanguageNames( $langCode );
 
-		$getPrefixes = Interwiki::getAllPrefixes( $local );
+		$getPrefixes = MediaWikiServices::getInstance()->getInterwikiLookup()->getAllPrefixes( $local );
 		$extraLangPrefixes = $this->getConfig()->get( 'ExtraInterlanguageLinkPrefixes' );
 		$localInterwikis = $this->getConfig()->get( 'LocalInterwikis' );
 		$data = [];
@@ -432,14 +442,11 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 
 	protected function appendDbReplLagInfo( $property, $includeAll ) {
 		$data = [];
-		$lb = wfGetLB();
+		$lb = MediaWikiServices::getInstance()->getDBLoadBalancer();
 		$showHostnames = $this->getConfig()->get( 'ShowHostnames' );
 		if ( $includeAll ) {
 			if ( !$showHostnames ) {
-				$this->dieUsage(
-					'Cannot view all servers info unless $wgShowHostnames is true',
-					'includeAllDenied'
-				);
+				$this->dieWithError( 'apierror-siteinfo-includealldenied', 'includeAllDenied' );
 			}
 
 			$lags = $lb->getLagTimes();
@@ -455,7 +462,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 				'host' => $showHostnames
 						? $lb->getServerName( $index )
 						: '',
-				'lag' => intval( $lag )
+				'lag' => $lag
 			];
 		}
 
@@ -466,14 +473,14 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 
 	protected function appendStatistics( $property ) {
 		$data = [];
-		$data['pages'] = intval( SiteStats::pages() );
-		$data['articles'] = intval( SiteStats::articles() );
-		$data['edits'] = intval( SiteStats::edits() );
-		$data['images'] = intval( SiteStats::images() );
-		$data['users'] = intval( SiteStats::users() );
-		$data['activeusers'] = intval( SiteStats::activeUsers() );
-		$data['admins'] = intval( SiteStats::numberingroup( 'sysop' ) );
-		$data['jobs'] = intval( SiteStats::jobs() );
+		$data['pages'] = (int)SiteStats::pages();
+		$data['articles'] = (int)SiteStats::articles();
+		$data['edits'] = (int)SiteStats::edits();
+		$data['images'] = (int)SiteStats::images();
+		$data['users'] = (int)SiteStats::users();
+		$data['activeusers'] = (int)SiteStats::activeUsers();
+		$data['admins'] = (int)SiteStats::numberingroup( 'sysop' );
+		$data['jobs'] = (int)SiteStats::jobs();
 
 		Hooks::run( 'APIQuerySiteInfoStatisticsInfo', [ &$data ] );
 
@@ -567,7 +574,6 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		ApiResult::setIndexedTagName( $data, 'library' );
 
 		return $this->getResult()->addValue( 'query', $property, $data );
-
 	}
 
 	protected function appendExtensions( $property ) {
@@ -586,7 +592,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 					$ret['description'] = $ext['description'];
 				}
 				if ( isset( $ext['descriptionmsg'] ) ) {
-					// Can be a string or array( key, param1, param2, ... )
+					// Can be a string or [ key, param1, param2, ... ]
 					if ( is_array( $ext['descriptionmsg'] ) ) {
 						$ret['descriptionmsg'] = $ext['descriptionmsg'][0];
 						$ret['descriptionmsgparams'] = array_slice( $ext['descriptionmsg'], 1 );
@@ -620,7 +626,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 					}
 
 					if ( SpecialVersion::getExtLicenseFileName( $extensionPath ) ) {
-						$ret['license-name'] = isset( $ext['license-name'] ) ? $ext['license-name'] : '';
+						$ret['license-name'] = $ext['license-name'] ?? '';
 						$ret['license'] = SpecialPage::getTitleFor(
 							'Version',
 							"License/{$ext['name']}"
@@ -654,13 +660,13 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 			$url = $config->get( 'RightsUrl' );
 		}
 		$text = $config->get( 'RightsText' );
-		if ( !$text && $title ) {
+		if ( $title && !strlen( $text ) ) {
 			$text = $title->getPrefixedText();
 		}
 
 		$data = [
-			'url' => $url ?: '',
-			'text' => $text ?: ''
+			'url' => (string)$url,
+			'text' => (string)$text,
 		];
 
 		return $this->getResult()->addValue( 'query', $property, $data );
@@ -690,17 +696,63 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 
 	public function appendLanguages( $property ) {
 		$params = $this->extractRequestParams();
-		$langCode = isset( $params['inlanguagecode'] ) ? $params['inlanguagecode'] : '';
+		$langCode = $params['inlanguagecode'] ?? '';
 		$langNames = Language::fetchLanguageNames( $langCode );
 
 		$data = [];
 
 		foreach ( $langNames as $code => $name ) {
-			$lang = [ 'code' => $code ];
+			$lang = [
+				'code' => $code,
+				'bcp47' => LanguageCode::bcp47( $code ),
+			];
 			ApiResult::setContentValue( $lang, 'name', $name );
 			$data[] = $lang;
 		}
 		ApiResult::setIndexedTagName( $data, 'lang' );
+
+		return $this->getResult()->addValue( 'query', $property, $data );
+	}
+
+	// Export information about which page languages will trigger
+	// language conversion. (T153341)
+	public function appendLanguageVariants( $property ) {
+		$langNames = LanguageConverter::$languagesWithVariants;
+		if ( $this->getConfig()->get( 'DisableLangConversion' ) ) {
+			// Ensure result is empty if language conversion is disabled.
+			$langNames = [];
+		}
+		sort( $langNames );
+
+		$data = [];
+		foreach ( $langNames as $langCode ) {
+			$lang = Language::factory( $langCode );
+			if ( $lang->getConverter() instanceof FakeConverter ) {
+				// Only languages which do not return instances of
+				// FakeConverter implement language conversion.
+				continue;
+			}
+			$data[$langCode] = [];
+			ApiResult::setIndexedTagName( $data[$langCode], 'variant' );
+			ApiResult::setArrayType( $data[$langCode], 'kvp', 'code' );
+
+			$variants = $lang->getVariants();
+			sort( $variants );
+			foreach ( $variants as $v ) {
+				$fallbacks = $lang->getConverter()->getVariantFallbacks( $v );
+				if ( !is_array( $fallbacks ) ) {
+					$fallbacks = [ $fallbacks ];
+				}
+				$data[$langCode][$v] = [
+					'fallbacks' => $fallbacks,
+				];
+				ApiResult::setIndexedTagName(
+					$data[$langCode][$v]['fallbacks'], 'variant'
+				);
+			}
+		}
+		ApiResult::setIndexedTagName( $data, 'lang' );
+		ApiResult::setArrayType( $data, 'kvp', 'code' );
 
 		return $this->getResult()->addValue( 'query', $property, $data );
 	}
@@ -736,9 +788,12 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	public function appendExtensionTags( $property ) {
-		global $wgParser;
-		$wgParser->firstCallInit();
-		$tags = array_map( [ $this, 'formatParserTags' ], $wgParser->getTags() );
+		$tags = array_map(
+			function ( $item ) {
+				return "<$item>";
+			},
+			MediaWikiServices::getInstance()->getParser()->getTags()
+		);
 		ApiResult::setArrayType( $tags, 'BCarray' );
 		ApiResult::setIndexedTagName( $tags, 't' );
 
@@ -746,9 +801,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	public function appendFunctionHooks( $property ) {
-		global $wgParser;
-		$wgParser->firstCallInit();
-		$hooks = $wgParser->getFunctionHooks();
+		$hooks = MediaWikiServices::getInstance()->getParser()->getFunctionHooks();
 		ApiResult::setArrayType( $hooks, 'BCarray' );
 		ApiResult::setIndexedTagName( $hooks, 'h' );
 
@@ -756,7 +809,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	public function appendVariables( $property ) {
-		$variables = MagicWord::getVariableIDs();
+		$variables = MediaWikiServices::getInstance()->getMagicWordFactory()->getVariableIDs();
 		ApiResult::setArrayType( $variables, 'BCarray' );
 		ApiResult::setIndexedTagName( $variables, 'v' );
 
@@ -764,7 +817,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	public function appendProtocols( $property ) {
-		// Make a copy of the global so we don't try to set the _element key of it - bug 45130
+		// Make a copy of the global so we don't try to set the _element key of it - T47130
 		$protocols = array_values( $this->getConfig()->get( 'UrlProtocols' ) );
 		ApiResult::setArrayType( $protocols, 'BCarray' );
 		ApiResult::setIndexedTagName( $protocols, 'p' );
@@ -783,10 +836,6 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		return $this->getResult()->addValue( 'query', $property, $config );
 	}
 
-	private function formatParserTags( $item ) {
-		return "<{$item}>";
-	}
-
 	public function appendSubscribedHooks( $property ) {
 		$hooks = $this->getConfig()->get( 'Hooks' );
 		$myWgHooks = $hooks;
@@ -796,7 +845,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 		foreach ( $myWgHooks as $name => $subscribers ) {
 			$arr = [
 				'name' => $name,
-				'subscribers' => array_map( [ 'SpecialVersion', 'arrayToString' ], $subscribers ),
+				'subscribers' => array_map( [ SpecialVersion::class, 'arrayToString' ], $subscribers ),
 			];
 
 			ApiResult::setArrayType( $arr['subscribers'], 'array' );
@@ -843,6 +892,7 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 					'rightsinfo',
 					'restrictions',
 					'languages',
+					'languagevariants',
 					'skins',
 					'extensiontags',
 					'functionhooks',
@@ -878,6 +928,6 @@ class ApiQuerySiteinfo extends ApiQueryBase {
 	}
 
 	public function getHelpUrls() {
-		return 'https://www.mediawiki.org/wiki/API:Siteinfo';
+		return 'https://www.mediawiki.org/wiki/Special:MyLanguage/API:Siteinfo';
 	}
 }
