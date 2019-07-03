@@ -26,9 +26,11 @@ use Wikimedia\Rdbms\DatabaseDomain;
 use Wikimedia\Rdbms\Database;
 use Wikimedia\Rdbms\LoadBalancer;
 use Wikimedia\Rdbms\LoadMonitorNull;
+use Wikimedia\TestingAccessWrapper;
 
 /**
  * @group Database
+ * @group medium
  * @covers \Wikimedia\Rdbms\LoadBalancer
  */
 class LoadBalancerTest extends MediaWikiTestCase {
@@ -112,6 +114,10 @@ class LoadBalancerTest extends MediaWikiTestCase {
 		// Simulate web request with DBO_TRX
 		$lb = $this->newMultiServerLocalLoadBalancer( DBO_TRX );
 
+		$this->assertEquals( 8, $lb->getServerCount() );
+		$this->assertTrue( $lb->hasReplicaServers() );
+		$this->assertTrue( $lb->hasStreamingReplicaServers() );
+
 		$dbw = $lb->getConnection( DB_MASTER );
 		$this->assertTrue( $dbw->getLBInfo( 'master' ), 'master shows as master' );
 		$this->assertEquals(
@@ -165,7 +171,8 @@ class LoadBalancerTest extends MediaWikiTestCase {
 		global $wgDBserver, $wgDBname, $wgDBuser, $wgDBpassword, $wgDBtype, $wgSQLiteDataDir;
 
 		$servers = [
-			[ // master
+			// Master DB
+			0 => [
 				'host' => $wgDBserver,
 				'dbname' => $wgDBname,
 				'tablePrefix' => $this->dbPrefix(),
@@ -176,7 +183,8 @@ class LoadBalancerTest extends MediaWikiTestCase {
 				'load' => 0,
 				'flags' => $flags
 			],
-			[ // emulated replica
+			// Main replica DBs
+			1 => [
 				'host' => $wgDBserver,
 				'dbname' => $wgDBname,
 				'tablePrefix' => $this->dbPrefix(),
@@ -186,6 +194,93 @@ class LoadBalancerTest extends MediaWikiTestCase {
 				'dbDirectory' => $wgSQLiteDataDir,
 				'load' => 100,
 				'flags' => $flags
+			],
+			2 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 100,
+				'flags' => $flags
+			],
+			// RC replica DBs
+			3 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 0,
+				'groupLoads' => [
+					'recentchanges' => 100,
+					'watchlist' => 100
+				],
+				'flags' => $flags
+			],
+			// Logging replica DBs
+			4 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 0,
+				'groupLoads' => [
+					'logging' => 100
+				],
+				'flags' => $flags
+			],
+			5 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 0,
+				'groupLoads' => [
+					'logging' => 100
+				],
+				'flags' => $flags
+			],
+			// Maintenance query replica DBs
+			6 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 0,
+				'groupLoads' => [
+					'vslow' => 100
+				],
+				'flags' => $flags
+			],
+			// Replica DB that only has a copy of some static tables
+			7 => [
+				'host' => $wgDBserver,
+				'dbname' => $wgDBname,
+				'tablePrefix' => $this->dbPrefix(),
+				'user' => $wgDBuser,
+				'password' => $wgDBpassword,
+				'type' => $wgDBtype,
+				'dbDirectory' => $wgSQLiteDataDir,
+				'load' => 0,
+				'groupLoads' => [
+					'archive' => 100
+				],
+				'flags' => $flags,
+				'is static' => true
 			]
 		];
 
@@ -487,5 +582,48 @@ class LoadBalancerTest extends MediaWikiTestCase {
 		$rConn = $lb->getConnectionRef( DB_REPLICA );
 
 		$rConn->insert( 'test', [ 't' => 1 ], __METHOD__ );
+	}
+
+	public function testQueryGroupIndex() {
+		$lb = $this->newMultiServerLocalLoadBalancer();
+		/** @var LoadBalancer $lbWrapper */
+		$lbWrapper = TestingAccessWrapper::newFromObject( $lb );
+
+		$rGeneric = $lb->getConnectionRef( DB_REPLICA );
+		$mainIndexPicked = $rGeneric->getLBInfo( 'serverIndex' );
+
+		$this->assertEquals( $mainIndexPicked, $lbWrapper->getExistingReaderIndex( false ) );
+		$this->assertTrue( in_array( $mainIndexPicked, [ 1, 2 ] ) );
+		for ( $i = 0; $i < 300; ++$i ) {
+			$rLog = $lb->getConnectionRef( DB_REPLICA, [] );
+			$this->assertEquals(
+				$mainIndexPicked,
+				$rLog->getLBInfo( 'serverIndex' ),
+				"Main index unchanged" );
+		}
+
+		$rRC = $lb->getConnectionRef( DB_REPLICA, [ 'recentchanges' ] );
+		$rWL = $lb->getConnectionRef( DB_REPLICA, [ 'watchlist' ] );
+
+		$this->assertEquals( 3, $rRC->getLBInfo( 'serverIndex' ) );
+		$this->assertEquals( 3, $rWL->getLBInfo( 'serverIndex' ) );
+
+		$rLog = $lb->getConnectionRef( DB_REPLICA, [ 'logging', 'watchlist' ] );
+		$logIndexPicked = $rLog->getLBInfo( 'serverIndex' );
+
+		$this->assertEquals( $logIndexPicked, $lbWrapper->getExistingReaderIndex( 'logging' ) );
+		$this->assertTrue( in_array( $logIndexPicked, [ 4, 5 ] ) );
+
+		for ( $i = 0; $i < 300; ++$i ) {
+			$rLog = $lb->getConnectionRef( DB_REPLICA, [ 'logging', 'watchlist' ] );
+			$this->assertEquals(
+				$logIndexPicked, $rLog->getLBInfo( 'serverIndex' ), "Index unchanged" );
+		}
+
+		$rVslow = $lb->getConnectionRef( DB_REPLICA, [ 'vslow', 'logging' ] );
+		$vslowIndexPicked = $rVslow->getLBInfo( 'serverIndex' );
+
+		$this->assertEquals( $vslowIndexPicked, $lbWrapper->getExistingReaderIndex( 'vslow' ) );
+		$this->assertEquals( 6, $vslowIndexPicked );
 	}
 }

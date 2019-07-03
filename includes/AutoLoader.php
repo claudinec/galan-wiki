@@ -136,12 +136,14 @@ class AutoLoader {
 			'MediaWiki\\Linker\\' => __DIR__ . '/linker/',
 			'MediaWiki\\Permissions\\' => __DIR__ . '/Permissions/',
 			'MediaWiki\\Preferences\\' => __DIR__ . '/preferences/',
+			'MediaWiki\\Rest\\' => __DIR__ . '/Rest/',
 			'MediaWiki\\Revision\\' => __DIR__ . '/Revision/',
 			'MediaWiki\\Session\\' => __DIR__ . '/session/',
 			'MediaWiki\\Shell\\' => __DIR__ . '/shell/',
 			'MediaWiki\\Sparql\\' => __DIR__ . '/sparql/',
 			'MediaWiki\\Storage\\' => __DIR__ . '/Storage/',
 			'MediaWiki\\Tidy\\' => __DIR__ . '/tidy/',
+			'Wikimedia\\ParamValidator\\' => __DIR__ . '/libs/ParamValidator/',
 			'Wikimedia\\Services\\' => __DIR__ . '/libs/services/',
 		];
 	}

@@ -27,9 +27,10 @@
 
 namespace Wikimedia\Rdbms;
 
-use Wikimedia;
 use Exception;
+use RuntimeException;
 use stdClass;
+use Wikimedia\AtEase\AtEase;
 
 /**
  * @ingroup Database
@@ -78,18 +79,13 @@ class DatabaseMssql extends Database {
 	}
 
 	protected function open( $server, $user, $password, $dbName, $schema, $tablePrefix ) {
-		# Test for driver support, to avoid suppressed fatal error
+		// Test for driver support, to avoid suppressed fatal error
 		if ( !function_exists( 'sqlsrv_connect' ) ) {
 			throw new DBConnectionError(
 				$this,
 				"Microsoft SQL Server Native (sqlsrv) functions missing.
 				You can download the driver from: http://go.microsoft.com/fwlink/?LinkId=123470\n"
 			);
-		}
-
-		# e.g. the class is being loaded
-		if ( !strlen( $user ) ) {
-			return null;
 		}
 
 		$this->close();
@@ -110,15 +106,19 @@ class DatabaseMssql extends Database {
 			$connectionInfo['PWD'] = $password;
 		}
 
-		Wikimedia\suppressWarnings();
+		AtEase::suppressWarnings();
 		$this->conn = sqlsrv_connect( $server, $connectionInfo );
-		Wikimedia\restoreWarnings();
+		AtEase::restoreWarnings();
 
 		if ( $this->conn === false ) {
-			throw new DBConnectionError( $this, $this->lastError() );
+			$error = $this->lastError();
+			$this->connLogger->error(
+				"Error connecting to {db_server}: {error}",
+				$this->getLogContext( [ 'method' => __METHOD__, 'error' => $error ] )
+			);
+			throw new DBConnectionError( $this, $error );
 		}
 
-		$this->opened = true;
 		$this->currentDomain = new DatabaseDomain(
 			( $dbName != '' ) ? $dbName : null,
 			null,
@@ -373,6 +373,17 @@ class DatabaseMssql extends Database {
 		}
 
 		return $statementOnly;
+	}
+
+	public function serverIsReadOnly() {
+		$encDatabase = $this->addQuotes( $this->getDBname() );
+		$res = $this->query(
+			"SELECT IS_READ_ONLY FROM SYS.DATABASES WHERE NAME = $encDatabase",
+			__METHOD__
+		);
+		$row = $this->fetchObject( $res );
+
+		return $row ? (bool)$row->IS_READ_ONLY : false;
 	}
 
 	/**
@@ -1072,13 +1083,10 @@ class DatabaseMssql extends Database {
 		$this->query( 'ROLLBACK TRANSACTION ' . $this->addIdentifierQuotes( $identifier ), $fname );
 	}
 
-	/**
-	 * Begin a transaction, committing any previously open transaction
-	 * @param string $fname
-	 */
 	protected function doBegin( $fname = __METHOD__ ) {
-		sqlsrv_begin_transaction( $this->conn );
-		$this->trxLevel = 1;
+		if ( !sqlsrv_begin_transaction( $this->conn ) ) {
+			$this->reportQueryError( $this->lastError(), $this->lastErrno(), 'BEGIN', $fname );
+		}
 	}
 
 	/**
@@ -1086,8 +1094,9 @@ class DatabaseMssql extends Database {
 	 * @param string $fname
 	 */
 	protected function doCommit( $fname = __METHOD__ ) {
-		sqlsrv_commit( $this->conn );
-		$this->trxLevel = 0;
+		if ( !sqlsrv_commit( $this->conn ) ) {
+			$this->reportQueryError( $this->lastError(), $this->lastErrno(), 'COMMIT', $fname );
+		}
 	}
 
 	/**
@@ -1096,8 +1105,17 @@ class DatabaseMssql extends Database {
 	 * @param string $fname
 	 */
 	protected function doRollback( $fname = __METHOD__ ) {
-		sqlsrv_rollback( $this->conn );
-		$this->trxLevel = 0;
+		if ( !sqlsrv_rollback( $this->conn ) ) {
+			$this->queryLogger->error(
+				"{fname}\t{db_server}\t{errno}\t{error}\t",
+				$this->getLogContext( [
+					'errno' => $this->lastErrno(),
+					'error' => $this->lastError(),
+					'fname' => $fname,
+					'trace' => ( new RuntimeException() )->getTraceAsString()
+				] )
+			);
+		}
 	}
 
 	/**

@@ -124,29 +124,50 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 	 *
 	 * @param array $registryData
 	 * @param string $moduleName
+	 * @param string[] $handled Internal parameter for recursion. (Optional)
 	 * @return array
+	 * @throws ResourceLoaderCircularDependencyError
 	 */
-	protected static function getImplicitDependencies( array $registryData, $moduleName ) {
+	protected static function getImplicitDependencies(
+		array $registryData,
+		$moduleName,
+		array $handled = []
+	) {
 		static $dependencyCache = [];
 
-		// The list of implicit dependencies won't be altered, so we can
-		// cache them without having to worry.
+		// No modules will be added or changed server-side after this point,
+		// so we can safely cache parts of the tree for re-use.
 		if ( !isset( $dependencyCache[$moduleName] ) ) {
 			if ( !isset( $registryData[$moduleName] ) ) {
-				// Dependencies may not exist
-				$dependencyCache[$moduleName] = [];
+				// Unknown module names are allowed here, this is only an optimisation.
+				// Checks for illegal and unknown dependencies happen as PHPUnit structure tests,
+				// and also client-side at run-time.
+				$flat = [];
 			} else {
 				$data = $registryData[$moduleName];
-				$dependencyCache[$moduleName] = $data['dependencies'];
+				$flat = $data['dependencies'];
 
+				// Prevent recursion
+				$handled[] = $moduleName;
 				foreach ( $data['dependencies'] as $dependency ) {
-					// Recursively get the dependencies of the dependencies
-					$dependencyCache[$moduleName] = array_merge(
-						$dependencyCache[$moduleName],
-						self::getImplicitDependencies( $registryData, $dependency )
-					);
+					if ( in_array( $dependency, $handled, true ) ) {
+						// If we encounter a circular dependency, then stop the optimiser and leave the
+						// original dependencies array unmodified. Circular dependencies are not
+						// supported in ResourceLoader. Awareness of them exists here so that we can
+						// optimise the registry when it isn't broken, and otherwise transport the
+						// registry unchanged. The client will handle this further.
+						throw new ResourceLoaderCircularDependencyError();
+					} else {
+						// Recursively add the dependencies of the dependencies
+						$flat = array_merge(
+							$flat,
+							self::getImplicitDependencies( $registryData, $dependency, $handled )
+						);
+					}
 				}
 			}
+
+			$dependencyCache[$moduleName] = $flat;
 		}
 
 		return $dependencyCache[$moduleName];
@@ -173,10 +194,16 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 	public static function compileUnresolvedDependencies( array &$registryData ) {
 		foreach ( $registryData as $name => &$data ) {
 			$dependencies = $data['dependencies'];
-			foreach ( $data['dependencies'] as $dependency ) {
-				$implicitDependencies = self::getImplicitDependencies( $registryData, $dependency );
-				$dependencies = array_diff( $dependencies, $implicitDependencies );
+			try {
+				foreach ( $data['dependencies'] as $dependency ) {
+					$implicitDependencies = self::getImplicitDependencies( $registryData, $dependency );
+					$dependencies = array_diff( $dependencies, $implicitDependencies );
+				}
+			} catch ( ResourceLoaderCircularDependencyError $err ) {
+				// Leave unchanged
+				$dependencies = $data['dependencies'];
 			}
+
 			// Rebuild keys
 			$data['dependencies'] = array_values( $dependencies );
 		}
@@ -227,10 +254,11 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 				continue;
 			}
 
-			if ( $module->isRaw() ) {
-				// Don't register "raw" modules (like 'startup') client-side because depending on them
-				// is illegal anyway and would only lead to them being loaded a second time,
-				// causing any state to be lost.
+			if ( $module instanceof ResourceLoaderStartUpModule ) {
+				// Don't register 'startup' to the client because loading it lazily or depending
+				// on it doesn't make sense, because the startup module *is* the client.
+				// Registering would be a waste of bandwidth and memory and risks somehow causing
+				// it to load a second time.
 
 				// ATTENTION: Because of the line below, this is not going to cause infinite recursion.
 				// Think carefully before making changes to this code!
@@ -258,7 +286,7 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 			}
 
 			if ( $versionHash !== '' && strlen( $versionHash ) !== 7 ) {
-				$context->getLogger()->warning(
+				$this->getLogger()->warning(
 					"Module '{module}' produced an invalid version hash: '{version}'.",
 					[
 						'module' => $name,
@@ -315,16 +343,10 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * @return bool
-	 */
-	public function isRaw() {
-		return true;
-	}
-
-	/**
 	 * @private For internal use by SpecialJavaScriptTest
 	 * @since 1.32
 	 * @return array
+	 * @codeCoverageIgnore
 	 */
 	public function getBaseModulesInternal() {
 		return $this->getBaseModules();
@@ -373,6 +395,7 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 
 		// Perform replacements for mediawiki.js
 		$mwLoaderPairs = [
+			'$VARS.reqBase' => ResourceLoader::encodeJsonForScript( $context->getReqBase() ),
 			'$VARS.baseModules' => ResourceLoader::encodeJsonForScript( $this->getBaseModules() ),
 			'$VARS.maxQueryLength' => ResourceLoader::encodeJsonForScript(
 				$conf->get( 'ResourceLoaderMaxQueryLength' )
@@ -424,12 +447,5 @@ class ResourceLoaderStartUpModule extends ResourceLoaderModule {
 		// Enabling this means that ResourceLoader::getVersionHash will simply call getScript()
 		// and hash it to determine the version (as used by E-Tag HTTP response header).
 		return true;
-	}
-
-	/**
-	 * @return string
-	 */
-	public function getGroup() {
-		return 'startup';
 	}
 }

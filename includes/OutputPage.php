@@ -29,9 +29,9 @@ use Wikimedia\WrappedString;
 use Wikimedia\WrappedStringList;
 
 /**
- * This class should be covered by a general architecture document which does
- * not exist as of January 2011.  This is one of the Core classes and should
- * be read at least once by any new developers.
+ * This is one of the Core classes and should
+ * be read at least once by any new developers. Also documented at
+ * https://www.mediawiki.org/wiki/Manual:Architectural_modules/OutputPage
  *
  * This class is used to prepare the final rendering. A skin is then
  * applied to the output parameters (links, javascript, html, categories ...).
@@ -265,11 +265,12 @@ class OutputPage extends ContextSource {
 	private $mFollowPolicy = 'follow';
 
 	/**
-	 * @var array Headers that cause the cache to vary.  Key is header name, value is an array of
-	 * options for the Key header.
+	 * @var array Headers that cause the cache to vary.  Key is header name,
+	 * value should always be null.  (Value was an array of options for
+	 * the `Key` header, which was deprecated in 1.32 and removed in 1.34.)
 	 */
 	private $mVaryHeader = [
-		'Accept-Encoding' => [ 'match=gzip' ],
+		'Accept-Encoding' => null,
 	];
 
 	/**
@@ -458,13 +459,6 @@ class OutputPage extends ContextSource {
 	 * @param string|null $unused Previously used to change the cache-busting query parameter
 	 */
 	public function addScriptFile( $file, $unused = null ) {
-		if ( substr( $file, 0, 1 ) !== '/' && !preg_match( '#^[a-z]*://#i', $file ) ) {
-			// This is not an absolute path, protocol-relative url, or full scheme url,
-			// presumed to be an old call intended to include a file from /w/skins/common,
-			// which doesn't exist anymore as of MediaWiki 1.24 per T71277. Ignore.
-			wfDeprecated( __METHOD__, '1.24' );
-			return;
-		}
 		$this->addScript( Html::linkedScript( $file, $this->getCSPNonce() ) );
 	}
 
@@ -1723,32 +1717,11 @@ class OutputPage extends ContextSource {
 	/**
 	 * Get the files used on this page
 	 *
-	 * @return array (dbKey => array('time' => MW timestamp or null, 'sha1' => sha1 or ''))
+	 * @return array [ dbKey => [ 'time' => MW timestamp or null, 'sha1' => sha1 or '' ] ]
 	 * @since 1.18
 	 */
 	public function getFileSearchOptions() {
 		return $this->mImageTimeKeys;
-	}
-
-	/**
-	 * Convert wikitext to HTML and add it to the buffer
-	 * Default assumes that the current page title will be used.
-	 *
-	 * @param string $text
-	 * @param bool $linestart Is this the start of a line?
-	 * @param bool $interface Is this text in the user interface language?
-	 * @throws MWException
-	 * @deprecated since 1.32 due to untidy output; use
-	 *    addWikiTextAsInterface() if $interface is default value or true,
-	 *    or else addWikiTextAsContent() if $interface is false.
-	 */
-	public function addWikiText( $text, $linestart = true, $interface = true ) {
-		wfDeprecated( __METHOD__, '1.32' );
-		$title = $this->getTitle();
-		if ( !$title ) {
-			throw new MWException( 'Title is null' );
-		}
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/false, $interface );
 	}
 
 	/**
@@ -1776,7 +1749,7 @@ class OutputPage extends ContextSource {
 		if ( !$title ) {
 			throw new MWException( 'Title is null' );
 		}
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/true, /*interface*/true );
+		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*interface*/true );
 	}
 
 	/**
@@ -1797,7 +1770,7 @@ class OutputPage extends ContextSource {
 	) {
 		$this->addWikiTextTitleInternal(
 			$text, $this->getTitle(),
-			/*linestart*/true, /*tidy*/true, /*interface*/true,
+			/*linestart*/true, /*interface*/true,
 			$wrapperClass
 		);
 	}
@@ -1826,79 +1799,7 @@ class OutputPage extends ContextSource {
 		if ( !$title ) {
 			throw new MWException( 'Title is null' );
 		}
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/true, /*interface*/false );
-	}
-
-	/**
-	 * Add wikitext with a custom Title object
-	 *
-	 * @param string $text Wikitext
-	 * @param Title $title
-	 * @param bool $linestart Is this the start of a line?
-	 * @deprecated since 1.32 due to untidy output; use
-	 *   addWikiTextAsInterface()
-	 */
-	public function addWikiTextWithTitle( $text, Title $title, $linestart = true ) {
-		wfDeprecated( __METHOD__, '1.32' );
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/false, /*interface*/false );
-	}
-
-	/**
-	 * Add wikitext *in content language* with a custom Title object.
-	 * Output will be tidy.
-	 *
-	 * @param string $text Wikitext in content language
-	 * @param Title $title
-	 * @param bool $linestart Is this the start of a line?
-	 * @deprecated since 1.32 to rename methods consistently; use
-	 *   addWikiTextAsContent()
-	 */
-	function addWikiTextTitleTidy( $text, Title $title, $linestart = true ) {
-		wfDeprecated( __METHOD__, '1.32' );
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/true, /*interface*/false );
-	}
-
-	/**
-	 * Add wikitext *in content language*. Output will be tidy.
-	 *
-	 * @param string $text Wikitext in content language
-	 * @param bool $linestart Is this the start of a line?
-	 * @deprecated since 1.32 to rename methods consistently; use
-	 *   addWikiTextAsContent()
-	 */
-	public function addWikiTextTidy( $text, $linestart = true ) {
-		wfDeprecated( __METHOD__, '1.32' );
-		$title = $this->getTitle();
-		if ( !$title ) {
-			throw new MWException( 'Title is null' );
-		}
-		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*tidy*/true, /*interface*/false );
-	}
-
-	/**
-	 * Add wikitext with a custom Title object.
-	 * Output is unwrapped.
-	 *
-	 * @param string $text Wikitext
-	 * @param Title $title
-	 * @param bool $linestart Is this the start of a line?
-	 * @param bool $tidy Whether to use tidy.
-	 *             Setting this to false (or omitting it) is deprecated
-	 *             since 1.32; all wikitext should be tidied.
-	 *             For backwards-compatibility with prior MW releases,
-	 *             you may wish to invoke this method but set $tidy=true;
-	 *             this will result in equivalent output to the non-deprecated
-	 *             addWikiTextAsContent()/addWikiTextAsInterface() methods.
-	 * @param bool $interface Whether it is an interface message
-	 *   (for example disables conversion)
-	 * @deprecated since 1.32, use addWikiTextAsContent() or
-	 *   addWikiTextAsInterface() (depending on $interface)
-	 */
-	public function addWikiTextTitle( $text, Title $title, $linestart,
-		$tidy = false, $interface = false
-	) {
-		wfDeprecated( __METHOD__, '1.32' );
-		return $this->addWikiTextTitleInternal( $text, $title, $linestart, $tidy, $interface );
+		$this->addWikiTextTitleInternal( $text, $title, $linestart, /*interface*/false );
 	}
 
 	/**
@@ -1918,14 +1819,10 @@ class OutputPage extends ContextSource {
 	 * @private
 	 */
 	private function addWikiTextTitleInternal(
-		$text, Title $title, $linestart, $tidy, $interface, $wrapperClass = null
+		$text, Title $title, $linestart, $interface, $wrapperClass = null
 	) {
-		if ( !$tidy ) {
-			wfDeprecated( 'disabling tidy', '1.32' );
-		}
-
 		$parserOutput = $this->parseInternal(
-			$text, $title, $linestart, $tidy, $interface, /*language*/null
+			$text, $title, $linestart, true, $interface, /*language*/null
 		);
 
 		$this->addParserOutput( $parserOutput, [
@@ -2319,19 +2216,18 @@ class OutputPage extends ContextSource {
 	 * Add an HTTP header that will influence on the cache
 	 *
 	 * @param string $header Header name
-	 * @param string[]|null $option Options for the Key header. See
-	 * https://datatracker.ietf.org/doc/draft-fielding-http-key/
-	 * for the list of valid options.
+	 * @param string[]|null $option Deprecated; formerly options for the
+	 *  Key header, deprecated in 1.32 and removed in 1.34. See
+	 *   https://datatracker.ietf.org/doc/draft-fielding-http-key/
+	 *   for the list of formerly-valid options.
 	 */
 	public function addVaryHeader( $header, array $option = null ) {
+		if ( $option !== null && count( $option ) > 0 ) {
+			wfDeprecated( 'addVaryHeader $option is ignored', '1.34' );
+		}
 		if ( !array_key_exists( $header, $this->mVaryHeader ) ) {
-			$this->mVaryHeader[$header] = [];
+			$this->mVaryHeader[$header] = null;
 		}
-		if ( !is_array( $option ) ) {
-			$option = [];
-		}
-		$this->mVaryHeader[$header] =
-			array_unique( array_merge( $this->mVaryHeader[$header], $option ) );
 	}
 
 	/**
@@ -2375,42 +2271,7 @@ class OutputPage extends ContextSource {
 	}
 
 	/**
-	 * Get a complete Key header
-	 *
-	 * @return string
-	 * @deprecated in 1.32; the IETF spec for this header expired w/o becoming
-	 *   a standard.
-	 */
-	public function getKeyHeader() {
-		wfDeprecated( '$wgUseKeyHeader', '1.32' );
-
-		$cvCookies = $this->getCacheVaryCookies();
-
-		$cookiesOption = [];
-		foreach ( $cvCookies as $cookieName ) {
-			$cookiesOption[] = 'param=' . $cookieName;
-		}
-		$this->addVaryHeader( 'Cookie', $cookiesOption );
-
-		foreach ( SessionManager::singleton()->getVaryHeaders() as $header => $options ) {
-			$this->addVaryHeader( $header, $options );
-		}
-
-		$headers = [];
-		foreach ( $this->mVaryHeader as $header => $option ) {
-			$newheader = $header;
-			if ( is_array( $option ) && count( $option ) > 0 ) {
-				$newheader .= ';' . implode( ';', $option );
-			}
-			$headers[] = $newheader;
-		}
-		$key = 'Key: ' . implode( ',', $headers );
-
-		return $key;
-	}
-
-	/**
-	 * T23672: Add Accept-Language to Vary and Key headers if there's no 'variant' parameter in GET.
+	 * T23672: Add Accept-Language to Vary header if there's no 'variant' parameter in GET.
 	 *
 	 * For example:
 	 *   /w/index.php?title=Main_page will vary based on Accept-Language; but
@@ -2424,33 +2285,7 @@ class OutputPage extends ContextSource {
 
 		$lang = $title->getPageLanguage();
 		if ( !$this->getRequest()->getCheck( 'variant' ) && $lang->hasVariants() ) {
-			$variants = $lang->getVariants();
-			$aloption = [];
-			foreach ( $variants as $variant ) {
-				if ( $variant === $lang->getCode() ) {
-					continue;
-				}
-
-				// XXX Note that this code is not strictly correct: we
-				// do a case-insensitive match in
-				// LanguageConverter::getHeaderVariant() while the
-				// (abandoned, draft) spec for the `Key` header only
-				// allows case-sensitive matches.  To match the logic
-				// in LanguageConverter::getHeaderVariant() we should
-				// also be looking at fallback variants and deprecated
-				// mediawiki-internal codes, as well as BCP 47
-				// normalized forms.
-
-				$aloption[] = "substr=$variant";
-
-				// IE and some other browsers use BCP 47 standards in their Accept-Language header,
-				// like "zh-CN" or "zh-Hant".  We should handle these too.
-				$variantBCP47 = LanguageCode::bcp47( $variant );
-				if ( $variantBCP47 !== $variant ) {
-					$aloption[] = "substr=$variantBCP47";
-				}
-			}
-			$this->addVaryHeader( 'Accept-Language', $aloption );
+			$this->addVaryHeader( 'Accept-Language' );
 		}
 	}
 
@@ -2560,10 +2395,6 @@ class OutputPage extends ContextSource {
 		# don't serve compressed data to clients who can't handle it
 		# maintain different caches for logged-in users and non-logged in ones
 		$response->header( $this->getVaryHeader() );
-
-		if ( $config->get( 'UseKeyHeader' ) ) {
-			$response->header( $this->getKeyHeader() );
-		}
 
 		if ( $this->mEnableClientCache ) {
 			if (
@@ -2882,8 +2713,11 @@ class OutputPage extends ContextSource {
 					$query['returntoquery'] = wfArrayToCgi( $returntoquery );
 				}
 			}
+
+			$services = MediaWikiServices::getInstance();
+
 			$title = SpecialPage::getTitleFor( 'Userlogin' );
-			$linkRenderer = MediaWikiServices::getInstance()->getLinkRenderer();
+			$linkRenderer = $services->getLinkRenderer();
 			$loginUrl = $title->getLinkURL( $query, false, PROTO_RELATIVE );
 			$loginLink = $linkRenderer->makeKnownLink(
 				$title,
@@ -2895,9 +2729,13 @@ class OutputPage extends ContextSource {
 			$this->prepareErrorPage( $this->msg( 'loginreqtitle' ) );
 			$this->addHTML( $this->msg( $msg )->rawParams( $loginLink )->params( $loginUrl )->parse() );
 
+			$permissionManager = $services->getPermissionManager();
+
 			# Don't return to a page the user can't read otherwise
 			# we'll end up in a pointless loop
-			if ( $displayReturnto && $displayReturnto->userCan( 'read', $this->getUser() ) ) {
+			if ( $displayReturnto && $permissionManager->userCan(
+				'read', $this->getUser(), $displayReturnto
+			) ) {
 				$this->returnToMain( null, $displayReturnto );
 			}
 		} else {
@@ -3215,7 +3053,7 @@ class OutputPage extends ContextSource {
 				),
 				[ 'html5shiv' ],
 				ResourceLoaderModule::TYPE_SCRIPTS,
-				[ 'sync' => true ],
+				[ 'raw' => '1', 'sync' => '1' ],
 				$this->getCSPNonce()
 			) .
 			'<![endif]-->';
@@ -4147,13 +3985,6 @@ class OutputPage extends ContextSource {
 			if ( is_array( $spec ) ) {
 				$args = $spec;
 				$name = array_shift( $args );
-				if ( isset( $args['options'] ) ) {
-					unset( $args['options'] );
-					wfDeprecated(
-						'Adding "options" to ' . __METHOD__ . ' is no longer supported',
-						'1.20'
-					);
-				}
 			} else {
 				$args = [];
 				$name = $spec;
@@ -4170,16 +4001,6 @@ class OutputPage extends ContextSource {
 	 */
 	public function isTOCEnabled() {
 		return $this->mEnableTOC;
-	}
-
-	/**
-	 * Enables/disables section edit links, doesn't override __NOEDITSECTION__
-	 * @param bool $flag
-	 * @since 1.23
-	 * @deprecated since 1.31, use $poOptions to addParserOutput() instead.
-	 */
-	public function enableSectionEditLinks( $flag = true ) {
-		wfDeprecated( __METHOD__, '1.31' );
 	}
 
 	/**
@@ -4212,7 +4033,6 @@ class OutputPage extends ContextSource {
 		$this->addModuleStyles( [
 			'oojs-ui-core.styles',
 			'oojs-ui.styles.indicators',
-			'oojs-ui.styles.textures',
 			'mediawiki.widgets.styles',
 			'oojs-ui-core.icons',
 		] );

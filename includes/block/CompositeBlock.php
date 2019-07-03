@@ -43,7 +43,7 @@ class CompositeBlock extends AbstractBlock {
 	 * @param array $options Parameters of the block:
 	 *     originalBlocks Block[] Blocks that this block is composed from
 	 */
-	function __construct( $options = [] ) {
+	public function __construct( array $options = [] ) {
 		parent::__construct( $options );
 
 		$defaults = [
@@ -109,10 +109,24 @@ class CompositeBlock extends AbstractBlock {
 	/**
 	 * @inheritDoc
 	 */
+	public function getExpiry() {
+		$maxExpiry = null;
+		foreach ( $this->originalBlocks as $block ) {
+			$expiry = $block->getExpiry();
+			if ( $maxExpiry === null || $expiry === '' || $expiry > $maxExpiry ) {
+				$maxExpiry = $expiry;
+			}
+		}
+		return $maxExpiry;
+	}
+
+	/**
+	 * @inheritDoc
+	 */
 	public function getPermissionsError( IContextSource $context ) {
 		$params = $this->getBlockErrorParams( $context );
 
-		$msg = $this->isSitewide() ? 'blockedtext' : 'blockedtext-partial';
+		$msg = 'blockedtext-composite';
 
 		array_unshift( $params, $msg );
 

@@ -405,8 +405,6 @@ class UserrightsPage extends SpecialPage {
 		wfDebug( 'newGroups: ' . print_r( $newGroups, true ) . "\n" );
 		wfDebug( 'oldUGMs: ' . print_r( $oldUGMs, true ) . "\n" );
 		wfDebug( 'newUGMs: ' . print_r( $newUGMs, true ) . "\n" );
-		// Deprecated in favor of UserGroupsChanged hook
-		Hooks::run( 'UserRights', [ &$user, $add, $remove ], '1.26' );
 
 		// Only add a log entry if something actually changed
 		if ( $newGroups != $oldGroups || $newUGMs != $oldUGMs ) {
@@ -1001,12 +999,12 @@ class UserrightsPage extends SpecialPage {
 	/**
 	 * Returns $this->getUser()->changeableGroups()
 	 *
-	 * @return array Array(
-	 *   'add' => array( addablegroups ),
-	 *   'remove' => array( removablegroups ),
-	 *   'add-self' => array( addablegroups to self ),
-	 *   'remove-self' => array( removable groups from self )
-	 *  )
+	 * @return array [
+	 *   'add' => [ addablegroups ],
+	 *   'remove' => [ removablegroups ],
+	 *   'add-self' => [ addablegroups to self ],
+	 *   'remove-self' => [ removable groups from self ]
+	 *  ]
 	 */
 	function changeableGroups() {
 		return $this->getUser()->changeableGroups();

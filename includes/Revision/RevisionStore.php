@@ -63,6 +63,7 @@ use Wikimedia\Rdbms\Database;
 use Wikimedia\Rdbms\DBConnRef;
 use Wikimedia\Rdbms\IDatabase;
 use Wikimedia\Rdbms\ILoadBalancer;
+use Wikimedia\Rdbms\ResultWrapper;
 
 /**
  * Service for looking up page revisions.
@@ -86,7 +87,7 @@ class RevisionStore
 	/**
 	 * @var bool|string
 	 */
-	private $wikiId;
+	private $dbDomain;
 
 	/**
 	 * @var boolean
@@ -141,7 +142,7 @@ class RevisionStore
 	 * @param ILoadBalancer $loadBalancer
 	 * @param SqlBlobStore $blobStore
 	 * @param WANObjectCache $cache A cache for caching revision rows. This can be the local
-	 *        wiki's default instance even if $wikiId refers to a different wiki, since
+	 *        wiki's default instance even if $dbDomain refers to a different wiki, since
 	 *        makeGlobalKey() is used to constructed a key that allows cached revision rows from
 	 *        the same database to be re-used between wikis. For example, enwiki and frwiki will
 	 *        use the same cache keys for revision rows from the wikidatawiki database, regardless
@@ -152,8 +153,7 @@ class RevisionStore
 	 * @param SlotRoleRegistry $slotRoleRegistry
 	 * @param int $mcrMigrationStage An appropriate combination of SCHEMA_COMPAT_XXX flags
 	 * @param ActorMigration $actorMigration
-	 * @param bool|string $wikiId
-	 *
+	 * @param bool|string $dbDomain DB domain of the relevant wiki or false for the current one
 	 */
 	public function __construct(
 		ILoadBalancer $loadBalancer,
@@ -165,9 +165,9 @@ class RevisionStore
 		SlotRoleRegistry $slotRoleRegistry,
 		$mcrMigrationStage,
 		ActorMigration $actorMigration,
-		$wikiId = false
+		$dbDomain = false
 	) {
-		Assert::parameterType( 'string|boolean', $wikiId, '$wikiId' );
+		Assert::parameterType( 'string|boolean', $dbDomain, '$dbDomain' );
 		Assert::parameterType( 'integer', $mcrMigrationStage, '$mcrMigrationStage' );
 		Assert::parameter(
 			( $mcrMigrationStage & SCHEMA_COMPAT_READ_BOTH ) !== SCHEMA_COMPAT_READ_BOTH,
@@ -206,7 +206,7 @@ class RevisionStore
 		$this->slotRoleRegistry = $slotRoleRegistry;
 		$this->mcrMigrationStage = $mcrMigrationStage;
 		$this->actorMigration = $actorMigration;
-		$this->wikiId = $wikiId;
+		$this->dbDomain = $dbDomain;
 		$this->logger = new NullLogger();
 	}
 
@@ -226,7 +226,7 @@ class RevisionStore
 	 * @throws RevisionAccessException
 	 */
 	private function assertCrossWikiContentLoadingIsSafe() {
-		if ( $this->wikiId !== false && $this->hasMcrSchemaFlags( SCHEMA_COMPAT_READ_OLD ) ) {
+		if ( $this->dbDomain !== false && $this->hasMcrSchemaFlags( SCHEMA_COMPAT_READ_OLD ) ) {
 			throw new RevisionAccessException(
 				"Cross-wiki content loading is not supported by the pre-MCR schema"
 			);
@@ -284,7 +284,7 @@ class RevisionStore
 	 */
 	private function getDBConnection( $mode, $groups = [] ) {
 		$lb = $this->getDBLoadBalancer();
-		return $lb->getConnection( $mode, $groups, $this->wikiId );
+		return $lb->getConnection( $mode, $groups, $this->dbDomain );
 	}
 
 	/**
@@ -312,7 +312,7 @@ class RevisionStore
 	 */
 	private function getDBConnectionRef( $mode ) {
 		$lb = $this->getDBLoadBalancer();
-		return $lb->getConnectionRef( $mode, [], $this->wikiId );
+		return $lb->getConnectionRef( $mode, [], $this->dbDomain );
 	}
 
 	/**
@@ -340,7 +340,7 @@ class RevisionStore
 			$queryFlags = self::READ_NORMAL;
 		}
 
-		$canUseTitleNewFromId = ( $pageId !== null && $pageId > 0 && $this->wikiId === false );
+		$canUseTitleNewFromId = ( $pageId !== null && $pageId > 0 && $this->dbDomain === false );
 		list( $dbMode, $dbOptions ) = DBAccessObjectUtils::getDBOptions( $queryFlags );
 		$titleFlags = ( $dbMode == DB_MASTER ? Title::GAID_FOR_UPDATE : 0 );
 
@@ -630,7 +630,7 @@ class RevisionStore
 			$comment,
 			(object)$revisionRow,
 			new RevisionSlots( $newSlots ),
-			$this->wikiId
+			$this->dbDomain
 		);
 
 		return $rev;
@@ -812,9 +812,11 @@ class RevisionStore
 						throw new MWException( 'Failed to get database lock for T202032' );
 					}
 					$fname = __METHOD__;
-					$dbw->onTransactionResolution( function ( $trigger, $dbw ) use ( $fname ) {
-						$dbw->unlock( 'fix-for-T202032', $fname );
-					} );
+					$dbw->onTransactionResolution(
+						function ( $trigger, IDatabase $dbw ) use ( $fname ) {
+							$dbw->unlock( 'fix-for-T202032', $fname );
+						}
+					);
 
 					$dbw->delete( 'revision', [ 'rev_id' => $revisionRow['rev_id'] ], __METHOD__ );
 
@@ -1606,10 +1608,11 @@ class RevisionStore
 	/**
 	 * @param int $revId The revision to load slots for.
 	 * @param int $queryFlags
+	 * @param Title $title
 	 *
 	 * @return SlotRecord[]
 	 */
-	private function loadSlotRecords( $revId, $queryFlags ) {
+	private function loadSlotRecords( $revId, $queryFlags, Title $title ) {
 		$revQuery = self::getSlotsQueryInfo( [ 'content' ] );
 
 		list( $dbMode, $dbOptions ) = DBAccessObjectUtils::getDBOptions( $queryFlags );
@@ -1626,12 +1629,45 @@ class RevisionStore
 			$revQuery['joins']
 		);
 
+		$slots = $this->constructSlotRecords( $revId, $res, $queryFlags, $title );
+
+		return $slots;
+	}
+
+	/**
+	 * Factory method for SlotRecords based on known slot rows.
+	 *
+	 * @param int $revId The revision to load slots for.
+	 * @param object[]|ResultWrapper $slotRows
+	 * @param int $queryFlags
+	 * @param Title $title
+	 *
+	 * @return SlotRecord[]
+	 */
+	private function constructSlotRecords( $revId, $slotRows, $queryFlags, Title $title ) {
 		$slots = [];
 
-		foreach ( $res as $row ) {
-			// resolve role names and model names from in-memory cache, instead of joining.
-			$row->role_name = $this->slotRoleStore->getName( (int)$row->slot_role_id );
-			$row->model_name = $this->contentModelStore->getName( (int)$row->content_model );
+		foreach ( $slotRows as $row ) {
+			// Resolve role names and model names from in-memory cache, if they were not joined in.
+			if ( !isset( $row->role_name ) ) {
+				$row->role_name = $this->slotRoleStore->getName( (int)$row->slot_role_id );
+			}
+
+			if ( !isset( $row->model_name ) ) {
+				if ( isset( $row->content_model ) ) {
+					$row->model_name = $this->contentModelStore->getName( (int)$row->content_model );
+				} else {
+					// We may get here if $row->model_name is set but null, perhaps because it
+					// came from rev_content_model, which is NULL for the default model.
+					$slotRoleHandler = $this->slotRoleRegistry->getRoleHandler( $row->role_name );
+					$row->model_name = $slotRoleHandler->getDefaultModel( $title );
+				}
+			}
+
+			if ( !isset( $row->content_id ) && isset( $row->rev_text_id ) ) {
+				$row->slot_content_id
+					= $this->emulateContentId( intval( $row->rev_text_id ) );
+			}
 
 			$contentCallback = function ( SlotRecord $slot ) use ( $queryFlags ) {
 				return $this->loadSlotContent( $slot, null, null, null, $queryFlags );
@@ -1650,13 +1686,14 @@ class RevisionStore
 	}
 
 	/**
-	 * Factory method for RevisionSlots.
+	 * Factory method for RevisionSlots based on a revision ID.
 	 *
 	 * @note If other code has a need to construct RevisionSlots objects, this should be made
 	 * public, since RevisionSlots instances should not be constructed directly.
 	 *
 	 * @param int $revId
 	 * @param object $revisionRow
+	 * @param object[]|null $slotRows
 	 * @param int $queryFlags
 	 * @param Title $title
 	 *
@@ -1666,10 +1703,15 @@ class RevisionStore
 	private function newRevisionSlots(
 		$revId,
 		$revisionRow,
+		$slotRows,
 		$queryFlags,
 		Title $title
 	) {
-		if ( !$this->hasMcrSchemaFlags( SCHEMA_COMPAT_READ_NEW ) ) {
+		if ( $slotRows ) {
+			$slots = new RevisionSlots(
+				$this->constructSlotRecords( $revId, $slotRows, $queryFlags, $title )
+			);
+		} elseif ( !$this->hasMcrSchemaFlags( SCHEMA_COMPAT_READ_NEW ) ) {
 			$mainSlot = $this->emulateMainSlot_1_29( $revisionRow, $queryFlags, $title );
 			// @phan-suppress-next-line PhanTypeInvalidCallableArraySize false positive
 			$slots = new RevisionSlots( [ SlotRecord::MAIN => $mainSlot ] );
@@ -1677,8 +1719,8 @@ class RevisionStore
 			// XXX: do we need the same kind of caching here
 			// that getKnownCurrentRevision uses (if $revId == page_latest?)
 
-			$slots = new RevisionSlots( function () use( $revId, $queryFlags ) {
-				return $this->loadSlotRecords( $revId, $queryFlags );
+			$slots = new RevisionSlots( function () use( $revId, $queryFlags, $title ) {
+				return $this->loadSlotRecords( $revId, $queryFlags, $title );
 			} );
 		}
 
@@ -1741,7 +1783,7 @@ class RevisionStore
 				$row->ar_user ?? null,
 				$row->ar_user_text ?? null,
 				$row->ar_actor ?? null,
-				$this->wikiId
+				$this->dbDomain
 			);
 		} catch ( InvalidArgumentException $ex ) {
 			wfWarn( __METHOD__ . ': ' . $title->getPrefixedDBkey() . ': ' . $ex->getMessage() );
@@ -1752,9 +1794,9 @@ class RevisionStore
 		// Legacy because $row may have come from self::selectFields()
 		$comment = $this->commentStore->getCommentLegacy( $db, 'ar_comment', $row, true );
 
-		$slots = $this->newRevisionSlots( $row->ar_rev_id, $row, $queryFlags, $title );
+		$slots = $this->newRevisionSlots( $row->ar_rev_id, $row, null, $queryFlags, $title );
 
-		return new RevisionArchiveRecord( $title, $user, $comment, $row, $slots, $this->wikiId );
+		return new RevisionArchiveRecord( $title, $user, $comment, $row, $slots, $this->dbDomain );
 	}
 
 	/**
@@ -1762,7 +1804,7 @@ class RevisionStore
 	 *
 	 * MCR migration note: this replaces Revision::newFromRow
 	 *
-	 * @param object $row
+	 * @param object $row A database row generated from a query based on getQueryInfo()
 	 * @param int $queryFlags
 	 * @param Title|null $title
 	 * @param bool $fromCache if true, the returned RevisionRecord will ensure that no stale
@@ -1771,6 +1813,32 @@ class RevisionStore
 	 */
 	public function newRevisionFromRow(
 		$row,
+		$queryFlags = 0,
+		Title $title = null,
+		$fromCache = false
+	) {
+		return $this->newRevisionFromRowAndSlots( $row, null, $queryFlags, $title, $fromCache );
+	}
+
+	/**
+	 * @param object $row A database row generated from a query based on getQueryInfo()
+	 * @param null|object[] $slotRows Database rows generated from a query based on
+	 *        getSlotsQueryInfo with the 'content' flag set.
+	 * @param int $queryFlags
+	 * @param Title|null $title
+	 * @param bool $fromCache if true, the returned RevisionRecord will ensure that no stale
+	 *   data is returned from getters, by querying the database as needed
+	 *
+	 * @return RevisionRecord
+	 * @throws MWException
+	 * @see RevisionFactory::newRevisionFromRow
+	 *
+	 * MCR migration note: this replaces Revision::newFromRow
+	 *
+	 */
+	public function newRevisionFromRowAndSlots(
+		$row,
+		$slotRows,
 		$queryFlags = 0,
 		Title $title = null,
 		$fromCache = false
@@ -1796,7 +1864,7 @@ class RevisionStore
 				$row->rev_user ?? null,
 				$row->rev_user_text ?? null,
 				$row->rev_actor ?? null,
-				$this->wikiId
+				$this->dbDomain
 			);
 		} catch ( InvalidArgumentException $ex ) {
 			wfWarn( __METHOD__ . ': ' . $title->getPrefixedDBkey() . ': ' . $ex->getMessage() );
@@ -1807,7 +1875,7 @@ class RevisionStore
 		// Legacy because $row may have come from self::selectFields()
 		$comment = $this->commentStore->getCommentLegacy( $db, 'rev_comment', $row, true );
 
-		$slots = $this->newRevisionSlots( $row->rev_id, $row, $queryFlags, $title );
+		$slots = $this->newRevisionSlots( $row->rev_id, $row, $slotRows, $queryFlags, $title );
 
 		// If this is a cached row, instantiate a cache-aware revision class to avoid stale data.
 		if ( $fromCache ) {
@@ -1819,11 +1887,11 @@ class RevisionStore
 						[ 'rev_id' => intval( $revId ) ]
 					);
 				},
-				$title, $user, $comment, $row, $slots, $this->wikiId
+				$title, $user, $comment, $row, $slots, $this->dbDomain
 			);
 		} else {
 			$rev = new RevisionStoreRecord(
-				$title, $user, $comment, $row, $slots, $this->wikiId );
+				$title, $user, $comment, $row, $slots, $this->dbDomain );
 		}
 		return $rev;
 	}
@@ -1908,7 +1976,7 @@ class RevisionStore
 			}
 		}
 
-		$revision = new MutableRevisionRecord( $title, $this->wikiId );
+		$revision = new MutableRevisionRecord( $title, $this->dbDomain );
 		$this->initializeMutableRevisionFromArray( $revision, $fields );
 
 		if ( isset( $fields['content'] ) && is_array( $fields['content'] ) ) {
@@ -1939,7 +2007,7 @@ class RevisionStore
 		// remote wiki with unsuppressed ids, due to issues described in T222212.
 		if ( isset( $fields['user'] ) &&
 			( $fields['user'] instanceof UserIdentity ) &&
-			( $this->wikiId === false ||
+			( $this->dbDomain === false ||
 				( !$fields['user']->getId() && !$fields['user']->getActorId() ) )
 		) {
 			$user = $fields['user'];
@@ -1949,7 +2017,7 @@ class RevisionStore
 					$fields['user'] ?? null,
 					$fields['user_text'] ?? null,
 					$fields['actor'] ?? null,
-					$this->wikiId
+					$this->dbDomain
 				);
 			} catch ( InvalidArgumentException $ex ) {
 				$user = null;
@@ -2131,7 +2199,7 @@ class RevisionStore
 		// within web requests to certain avoid bugs like T93866 and T94407.
 		if ( !$rev
 			&& !( $flags & self::READ_LATEST )
-			&& $lb->getServerCount() > 1
+			&& $lb->hasStreamingReplicaServers()
 			&& $lb->hasOrMadeRecentMasterChanges()
 		) {
 			$flags = self::READ_LATEST;
@@ -2180,7 +2248,7 @@ class RevisionStore
 	 * @throws MWException
 	 */
 	private function checkDatabaseWikiId( IDatabase $db ) {
-		$storeWiki = $this->wikiId;
+		$storeWiki = $this->dbDomain;
 		$dbWiki = $db->getDomainID();
 
 		if ( $dbWiki === $storeWiki ) {
@@ -2405,21 +2473,24 @@ class RevisionStore
 
 		if ( $this->hasMcrSchemaFlags( SCHEMA_COMPAT_READ_OLD ) ) {
 			$db = $this->getDBConnectionRef( DB_REPLICA );
-			$ret['tables']['slots'] = 'revision';
+			$ret['tables'][] = 'revision';
 
-			$ret['fields']['slot_revision_id'] = 'slots.rev_id';
+			$ret['fields']['slot_revision_id'] = 'rev_id';
 			$ret['fields']['slot_content_id'] = 'NULL';
-			$ret['fields']['slot_origin'] = 'slots.rev_id';
+			$ret['fields']['slot_origin'] = 'rev_id';
 			$ret['fields']['role_name'] = $db->addQuotes( SlotRecord::MAIN );
 
 			if ( in_array( 'content', $options, true ) ) {
-				$ret['fields']['content_size'] = 'slots.rev_len';
-				$ret['fields']['content_sha1'] = 'slots.rev_sha1';
+				$ret['fields']['content_size'] = 'rev_len';
+				$ret['fields']['content_sha1'] = 'rev_sha1';
 				$ret['fields']['content_address']
-					= $db->buildConcat( [ $db->addQuotes( 'tt:' ), 'slots.rev_text_id' ] );
+					= $db->buildConcat( [ $db->addQuotes( 'tt:' ), 'rev_text_id' ] );
+
+				// Allow the content_id field to be emulated later
+				$ret['fields']['rev_text_id'] = 'rev_text_id';
 
 				if ( $this->contentHandlerUseDB ) {
-					$ret['fields']['model_name'] = 'slots.rev_content_model';
+					$ret['fields']['model_name'] = 'rev_content_model';
 				} else {
 					$ret['fields']['model_name'] = 'NULL';
 				}

@@ -146,10 +146,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 			if ( is_string( $deprecationInfo ) ) {
 				$warning .= "\n" . $deprecationInfo;
 			}
-			return Xml::encodeJsCall(
-				'mw.log.warn',
-				[ $warning ]
-			);
+			return 'mw.log.warn(' . ResourceLoader::encodeJsonForScript( $warning ) . ');';
 		} else {
 			return '';
 		}
@@ -339,17 +336,6 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	}
 
 	/**
-	 * Whether this module's JS expects to work without the client-side ResourceLoader module.
-	 * Returning true from this function will prevent mw.loader.state() call from being
-	 * appended to the bottom of the script.
-	 *
-	 * @return bool
-	 */
-	public function isRaw() {
-		return false;
-	}
-
-	/**
 	 * Get a list of modules this module depends on.
 	 *
 	 * Dependency information is taken into account when loading a module
@@ -412,7 +398,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @return array List of files
 	 */
 	protected function getFileDependencies( ResourceLoaderContext $context ) {
-		$vary = $context->getSkin() . '|' . $context->getLanguage();
+		$vary = self::getVary( $context );
 
 		// Try in-object cache first
 		if ( !isset( $this->fileDeps[$vary] ) ) {
@@ -447,7 +433,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 * @param string[] $files Array of file names
 	 */
 	public function setFileDependencies( ResourceLoaderContext $context, $files ) {
-		$vary = $context->getSkin() . '|' . $context->getLanguage();
+		$vary = self::getVary( $context );
 		$this->fileDeps[$vary] = $files;
 	}
 
@@ -484,7 +470,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 			}
 
 			// The file deps list has changed, we want to update it.
-			$vary = $context->getSkin() . '|' . $context->getLanguage();
+			$vary = self::getVary( $context );
 			$cache = ObjectCache::getLocalClusterInstance();
 			$key = $cache->makeKey( __METHOD__, $this->getName(), $vary );
 			$scopeLock = $cache->getScopedLock( $key, 0 );
@@ -954,8 +940,7 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 		$cache = MediaWikiServices::getInstance()->getMainWANObjectCache();
 		return $cache->getWithSetCallback(
 			$cache->makeGlobalKey(
-				'resourceloader',
-				'jsparse',
+				'resourceloader-jsparse',
 				self::$parseCacheVersion,
 				md5( $contents ),
 				$fileName
@@ -1020,5 +1005,19 @@ abstract class ResourceLoaderModule implements LoggerAwareInterface {
 	 */
 	protected static function safeFileHash( $filePath ) {
 		return FileContentsHasher::getFileContentsHash( $filePath );
+	}
+
+	/**
+	 * Get vary string.
+	 *
+	 * @internal For internal use only.
+	 * @param ResourceLoaderContext $context
+	 * @return string Vary string
+	 */
+	public static function getVary( ResourceLoaderContext $context ) {
+		return implode( '|', [
+			$context->getSkin(),
+			$context->getLanguage(),
+		] );
 	}
 }

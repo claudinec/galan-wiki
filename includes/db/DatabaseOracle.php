@@ -21,6 +21,7 @@
  * @ingroup Database
  */
 
+use Wikimedia\AtEase\AtEase;
 use Wikimedia\Timestamp\ConvertibleTimestamp;
 use Wikimedia\Rdbms\Database;
 use Wikimedia\Rdbms\DatabaseDomain;
@@ -68,10 +69,10 @@ class DatabaseOracle extends Database {
 	}
 
 	function __destruct() {
-		if ( $this->opened ) {
-			Wikimedia\suppressWarnings();
+		if ( $this->conn ) {
+			AtEase::suppressWarnings();
 			$this->close();
-			Wikimedia\restoreWarnings();
+			AtEase::restoreWarnings();
 		}
 	}
 
@@ -159,8 +160,6 @@ class DatabaseOracle extends Database {
 			throw new DBConnectionError( $this, $this->lastError() );
 		}
 
-		$this->opened = true;
-
 		# removed putenv calls because they interfere with the system globaly
 		$this->doQuery( 'ALTER SESSION SET NLS_TIMESTAMP_FORMAT=\'DD-MM-YYYY HH24:MI:SS.FF6\'' );
 		$this->doQuery( 'ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT=\'DD-MM-YYYY HH24:MI:SS.FF6\'' );
@@ -179,7 +178,7 @@ class DatabaseOracle extends Database {
 	}
 
 	function execFlags() {
-		return $this->trxLevel ? OCI_NO_AUTO_COMMIT : OCI_COMMIT_ON_SUCCESS;
+		return $this->trxLevel() ? OCI_NO_AUTO_COMMIT : OCI_COMMIT_ON_SUCCESS;
 	}
 
 	/**
@@ -549,7 +548,7 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		if ( !$this->trxLevel ) {
+		if ( !$this->trxLevel() ) {
 			oci_commit( $this->conn );
 		}
 
@@ -943,26 +942,24 @@ class DatabaseOracle extends Database {
 	}
 
 	protected function doBegin( $fname = __METHOD__ ) {
-		$this->trxLevel = 1;
-		$this->doQuery( 'SET CONSTRAINTS ALL DEFERRED' );
+		$this->query( 'SET CONSTRAINTS ALL DEFERRED' );
 	}
 
 	protected function doCommit( $fname = __METHOD__ ) {
-		if ( $this->trxLevel ) {
+		if ( $this->trxLevel() ) {
 			$ret = oci_commit( $this->conn );
 			if ( !$ret ) {
 				throw new DBUnexpectedError( $this, $this->lastError() );
 			}
-			$this->trxLevel = 0;
-			$this->doQuery( 'SET CONSTRAINTS ALL IMMEDIATE' );
+			$this->query( 'SET CONSTRAINTS ALL IMMEDIATE' );
 		}
 	}
 
 	protected function doRollback( $fname = __METHOD__ ) {
-		if ( $this->trxLevel ) {
+		if ( $this->trxLevel() ) {
 			oci_rollback( $this->conn );
-			$this->trxLevel = 0;
-			$this->doQuery( 'SET CONSTRAINTS ALL IMMEDIATE' );
+			$ignoreErrors = true;
+			$this->query( 'SET CONSTRAINTS ALL IMMEDIATE', $fname, $ignoreErrors );
 		}
 	}
 
@@ -1339,7 +1336,7 @@ class DatabaseOracle extends Database {
 			}
 		}
 
-		if ( !$this->trxLevel ) {
+		if ( !$this->trxLevel() ) {
 			oci_commit( $this->conn );
 		}
 

@@ -154,12 +154,12 @@ class LoadMonitor implements ILoadMonitor {
 
 			# Handles with open transactions are avoided since they might be subject
 			# to REPEATABLE-READ snapshots, which could affect the lag estimate query.
-			$flags = ILoadBalancer::CONN_TRX_AUTOCOMMIT;
+			$flags = ILoadBalancer::CONN_TRX_AUTOCOMMIT | ILoadBalancer::CONN_SILENCE_ERRORS;
 			$conn = $this->parent->getAnyOpenConnection( $i, $flags );
 			if ( $conn ) {
 				$close = false; // already open
 			} else {
-				$conn = $this->parent->openConnection( $i, ILoadBalancer::DOMAIN_ANY, $flags );
+				$conn = $this->parent->getConnection( $i, [], ILoadBalancer::DOMAIN_ANY, $flags );
 				$close = true; // new connection
 			}
 
@@ -181,25 +181,21 @@ class LoadMonitor implements ILoadMonitor {
 				continue;
 			}
 
-			if ( $conn->getLBInfo( 'is static' ) ) {
-				$lagTimes[$i] = 0;
-			} else {
-				$lagTimes[$i] = $conn->getLag();
-				if ( $lagTimes[$i] === false ) {
-					$this->replLogger->error(
-						__METHOD__ . ": host {db_server} is not replicating?",
-						[ 'db_server' => $host ]
-					);
-				} elseif ( $lagTimes[$i] > $this->lagWarnThreshold ) {
-					$this->replLogger->warning(
-						"Server {host} has {lag} seconds of lag (>= {maxlag})",
-						[
-							'host' => $host,
-							'lag' => $lagTimes[$i],
-							'maxlag' => $this->lagWarnThreshold
-						]
-					);
-				}
+			$lagTimes[$i] = $conn->getLag();
+			if ( $lagTimes[$i] === false ) {
+				$this->replLogger->error(
+					__METHOD__ . ": host {db_server} is not replicating?",
+					[ 'db_server' => $host ]
+				);
+			} elseif ( $lagTimes[$i] > $this->lagWarnThreshold ) {
+				$this->replLogger->warning(
+					"Server {host} has {lag} seconds of lag (>= {maxlag})",
+					[
+						'host' => $host,
+						'lag' => $lagTimes[$i],
+						'maxlag' => $this->lagWarnThreshold
+					]
+				);
 			}
 
 			if ( $close ) {

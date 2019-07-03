@@ -168,15 +168,13 @@ class DatabaseSqlite extends Database {
 
 	protected function open( $server, $user, $pass, $dbName, $schema, $tablePrefix ) {
 		$this->close();
-		$fileName = self::generateFileName( $this->dbDir, $dbName );
-		if ( !is_readable( $fileName ) ) {
-			$this->conn = false;
-			throw new DBConnectionError( $this, "SQLite database not accessible" );
-		}
-		// Only $dbName is used, the other parameters are irrelevant for SQLite databases
-		$this->openFile( $fileName, $dbName, $tablePrefix );
 
-		return (bool)$this->conn;
+		if ( $schema !== null ) {
+			throw new DBExpectedError( $this, __CLASS__ . ": domain schemas are not supported." );
+		}
+
+		// Only $dbName is used, the other parameters are irrelevant for SQLite databases
+		$this->openFile( self::generateFileName( $this->dbDir, $dbName ), $dbName, $tablePrefix );
 	}
 
 	/**
@@ -186,45 +184,57 @@ class DatabaseSqlite extends Database {
 	 * @param string $dbName
 	 * @param string $tablePrefix
 	 * @throws DBConnectionError
-	 * @return PDO|bool SQL connection or false if failed
 	 */
 	protected function openFile( $fileName, $dbName, $tablePrefix ) {
-		$err = false;
+		if ( !$this->hasMemoryPath() && !is_readable( $fileName ) ) {
+			$error = "SQLite database file not readable";
+			$this->connLogger->error(
+				"Error connecting to {db_server}: {error}",
+				$this->getLogContext( [ 'method' => __METHOD__, 'error' => $error ] )
+			);
+			throw new DBConnectionError( $this, $error );
+		}
 
 		$this->dbPath = $fileName;
 		try {
-			if ( $this->flags & self::DBO_PERSISTENT ) {
-				$this->conn = new PDO( "sqlite:$fileName", '', '',
-					[ PDO::ATTR_PERSISTENT => true ] );
-			} else {
-				$this->conn = new PDO( "sqlite:$fileName", '', '' );
-			}
+			$this->conn = new PDO(
+				"sqlite:$fileName",
+				'',
+				'',
+				[ PDO::ATTR_PERSISTENT => (bool)( $this->flags & self::DBO_PERSISTENT ) ]
+			);
+			$error = 'unknown error';
 		} catch ( PDOException $e ) {
-			$err = $e->getMessage();
+			$error = $e->getMessage();
 		}
 
 		if ( !$this->conn ) {
-			$this->queryLogger->debug( "DB connection error: $err\n" );
-			throw new DBConnectionError( $this, $err );
+			$this->connLogger->error(
+				"Error connecting to {db_server}: {error}",
+				$this->getLogContext( [ 'method' => __METHOD__, 'error' => $error ] )
+			);
+			throw new DBConnectionError( $this, $error );
 		}
 
-		$this->opened = is_object( $this->conn );
-		if ( $this->opened ) {
-			$this->currentDomain = new DatabaseDomain( $dbName, null, $tablePrefix );
-			# Set error codes only, don't raise exceptions
+		try {
+			// Set error codes only, don't raise exceptions
 			$this->conn->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
-			# Enforce LIKE to be case sensitive, just like MySQL
-			$this->query( 'PRAGMA case_sensitive_like = 1' );
 
-			$sync = $this->sessionVars['synchronous'] ?? null;
-			if ( in_array( $sync, [ 'EXTRA', 'FULL', 'NORMAL' ], true ) ) {
-				$this->query( "PRAGMA synchronous = $sync" );
+			$this->currentDomain = new DatabaseDomain( $dbName, null, $tablePrefix );
+
+			$flags = self::QUERY_IGNORE_DBO_TRX | self::QUERY_NO_RETRY;
+			// Enforce LIKE to be case sensitive, just like MySQL
+			$this->query( 'PRAGMA case_sensitive_like = 1', __METHOD__, $flags );
+			// Apply an optimizations or requirements regarding fsync() usage
+			$sync = $this->connectionVariables['synchronous'] ?? null;
+			if ( in_array( $sync, [ 'EXTRA', 'FULL', 'NORMAL', 'OFF' ], true ) ) {
+				$this->query( "PRAGMA synchronous = $sync", __METHOD__ );
 			}
-
-			return $this->conn;
+		} catch ( Exception $e ) {
+			// Connection was not fully initialized and is not safe for use
+			$this->conn = false;
+			throw $e;
 		}
-
-		return false;
 	}
 
 	/**
@@ -761,6 +771,17 @@ class DatabaseSqlite extends Database {
 		return false;
 	}
 
+	public function serverIsReadOnly() {
+		return ( !$this->hasMemoryPath() && !is_writable( $this->dbPath ) );
+	}
+
+	/**
+	 * @return bool
+	 */
+	private function hasMemoryPath() {
+		return ( strpos( $this->dbPath, ':memory:' ) === 0 );
+	}
+
 	/**
 	 * @return string Wikitext of a link to the server software's web site
 	 */
@@ -804,7 +825,6 @@ class DatabaseSqlite extends Database {
 		} else {
 			$this->query( 'BEGIN', $fname );
 		}
-		$this->trxLevel = 1;
 	}
 
 	/**
@@ -1117,15 +1137,6 @@ class DatabaseSqlite extends Database {
 
 	public function databasesAreIndependent() {
 		return true;
-	}
-
-	/**
-	 * @return string
-	 */
-	public function __toString() {
-		return is_object( $this->conn )
-			? 'SQLite ' . (string)$this->conn->getAttribute( PDO::ATTR_SERVER_VERSION )
-			: '(not connected)';
 	}
 
 	/**

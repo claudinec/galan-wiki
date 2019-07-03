@@ -46,7 +46,10 @@ abstract class SearchEngine {
 	/** @var int */
 	protected $offset = 0;
 
-	/** @var array|string */
+	/**
+	 * @var string[]
+	 * @deprecated since 1.34
+	 */
 	protected $searchTerms = [];
 
 	/** @var bool */
@@ -106,7 +109,7 @@ abstract class SearchEngine {
 	 * be converted to final in 1.34. Override self::doSearchArchiveTitle().
 	 *
 	 * @param string $term Raw search term
-	 * @return Status<Title[]>
+	 * @return Status
 	 * @since 1.29
 	 */
 	public function searchArchiveTitle( $term ) {
@@ -117,7 +120,7 @@ abstract class SearchEngine {
 	 * Perform a title search in the article archive.
 	 *
 	 * @param string $term Raw search term
-	 * @return Status<Title[]>
+	 * @return Status
 	 * @since 1.32
 	 */
 	protected function doSearchArchiveTitle( $term ) {

@@ -108,10 +108,14 @@ mw.loader.register( [
 ] );',
 			] ],
 			[ [
-				'msg' => 'Omit raw modules from registry',
+				// Regression test for T223402.
+				'msg' => 'Optimise the dependency tree (indirect circular dependency)',
 				'modules' => [
-					'test.raw' => new ResourceLoaderTestModule( [ 'isRaw' => true ] ),
-					'test.blank' => new ResourceLoaderTestModule(),
+					'top' => new ResourceLoaderTestModule( [ 'dependencies' => [ 'middle1', 'util' ] ] ),
+					'middle1' => new ResourceLoaderTestModule( [ 'dependencies' => [ 'middle2', 'util' ] ] ),
+					'middle2' => new ResourceLoaderTestModule( [ 'dependencies' => [ 'bottom' ] ] ),
+					'bottom' => new ResourceLoaderTestModule( [ 'dependencies' => [ 'top' ] ] ),
+					'util' => new ResourceLoaderTestModule( [ 'dependencies' => [] ] ),
 				],
 				'out' => '
 mw.loader.addSource( {
@@ -119,7 +123,63 @@ mw.loader.addSource( {
 } );
 mw.loader.register( [
     [
-        "test.blank",
+        "top",
+        "{blankVer}",
+        [
+            1,
+            4
+        ]
+    ],
+    [
+        "middle1",
+        "{blankVer}",
+        [
+            2,
+            4
+        ]
+    ],
+    [
+        "middle2",
+        "{blankVer}",
+        [
+            3
+        ]
+    ],
+    [
+        "bottom",
+        "{blankVer}",
+        [
+            0
+        ]
+    ],
+    [
+        "util",
+        "{blankVer}"
+    ]
+] );',
+			] ],
+			[ [
+				// Regression test for T223402.
+				'msg' => 'Optimise the dependency tree (direct circular dependency)',
+				'modules' => [
+					'top' => new ResourceLoaderTestModule( [ 'dependencies' => [ 'util', 'top' ] ] ),
+					'util' => new ResourceLoaderTestModule( [ 'dependencies' => [] ] ),
+				],
+				'out' => '
+mw.loader.addSource( {
+    "local": "/w/load.php"
+} );
+mw.loader.register( [
+    [
+        "top",
+        "{blankVer}",
+        [
+            1,
+            0
+        ]
+    ],
+    [
+        "util",
         "{blankVer}"
     ]
 ] );',

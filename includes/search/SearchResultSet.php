@@ -95,7 +95,8 @@ class SearchResultSet implements Countable, IteratorAggregate {
 	 * the search terms as parsed by this engine in a text extract.
 	 * STUB
 	 *
-	 * @return array
+	 * @return string[]
+	 * @deprecated since 1.34 (use SqlSearchResult)
 	 */
 	function termMatches() {
 		return [];
