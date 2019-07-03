@@ -1819,7 +1819,10 @@ return [
 			'ui/RclTargetPageWidget.js',
 			'ui/RclToOrFromWidget.js',
 			'ui/WatchlistTopSectionWidget.js',
-			[ 'name' => 'config.json', 'callback' => 'ChangesListSpecialPage::getRcFiltersConfigVars' ],
+			[ 'name' => 'config.json',
+				'versionCallback' => 'ChangesListSpecialPage::getRcFiltersConfigSummary',
+				'callback' => 'ChangesListSpecialPage::getRcFiltersConfigVars',
+			],
 		],
 		'styles' => [
 			'styles/mw.rcfilters.mixins.less',
@@ -2089,11 +2092,27 @@ return [
 		],
 		'targets' => [ 'desktop', 'mobile' ],
 	],
-	'mediawiki.special.changecredentials.js' => [
-		'scripts' => 'resources/src/mediawiki.special.changecredentials.js',
+	// This bundles various small (under 5 KB?) JavaScript files that:
+	// - .. are not loaded on when viewing or editing wiki pages.
+	// - .. are used by logged-in users only.
+	// - .. depend on oojs-ui-core.
+	// - .. contain UI intialisation code (e.g. no public module exports, because
+	//      requiring or depending on this bundle is awkard)
+	'mediawiki.misc-authed-ooui' => [
+		'localBasePath' => "$IP/resources/src/mediawiki.misc-authed-ooui",
+		'remoteBasePath' => "$wgResourceBasePath/resources/src/mediawiki.misc-authed-ooui",
+		'scripts' => [
+			'special.changecredentials.js',
+			'special.movePage.js',
+			'special.mute.js',
+			'special.pageLanguage.js',
+		],
 		'dependencies' => [
-			'mediawiki.api',
-			'mediawiki.htmlform.ooui'
+			'mediawiki.api', // Used by special.changecredentials.js
+			'mediawiki.htmlform.ooui', // Used by special.changecredentials.js
+			'mediawiki.widgets.visibleLengthLimit', // Used by special.movePage.js
+			'mediawiki.widgets', // Used by special.movePage.js
+			'oojs-ui-core', // Used by special.pageLanguage.js
 		],
 		'targets' => [ 'desktop', 'mobile' ],
 	],
@@ -2141,19 +2160,6 @@ return [
 	],
 	'mediawiki.special.import' => [
 		'scripts' => 'resources/src/mediawiki.special.import.js',
-	],
-	'mediawiki.special.movePage' => [
-		'scripts' => 'resources/src/mediawiki.special.movePage.js',
-		'dependencies' => [
-			'mediawiki.widgets.visibleLengthLimit',
-			'mediawiki.widgets',
-		],
-	],
-	'mediawiki.special.pageLanguage' => [
-		'scripts' => 'resources/src/mediawiki.special.pageLanguage.js',
-		'dependencies' => [
-			'oojs-ui-core',
-		],
 	],
 	'mediawiki.special.preferences.ooui' => [
 		'targets' => [ 'desktop', 'mobile' ],
@@ -2822,7 +2828,6 @@ return [
 		'scripts' => [
 			'resources/lib/html5shiv/html5shiv.js'
 		],
-		'raw' => true,
 	],
 
 	/* EasyDeflate */
@@ -2899,7 +2904,6 @@ return [
 			'oojs-ui-core.styles',
 			'oojs-ui-core.icons',
 			'oojs-ui.styles.indicators',
-			'oojs-ui.styles.textures',
 			'mediawiki.language',
 		],
 		'messages' => [
@@ -3008,10 +3012,6 @@ return [
 	'oojs-ui.styles.indicators' => [
 		'class' => ResourceLoaderOOUIImageModule::class,
 		'themeImages' => 'indicators',
-	],
-	'oojs-ui.styles.textures' => [
-		'class' => ResourceLoaderOOUIImageModule::class,
-		'themeImages' => 'textures',
 	],
 	'oojs-ui.styles.icons-accessibility' => [
 		'class' => ResourceLoaderOOUIImageModule::class,

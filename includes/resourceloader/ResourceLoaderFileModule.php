@@ -24,6 +24,12 @@
 
 /**
  * ResourceLoader module based on local JavaScript/CSS files.
+ *
+ * The following public methods can query the database:
+ *
+ * - getDefinitionSummary / … / ResourceLoaderModule::getFileDependencies.
+ * - getVersionHash / getDefinitionSummary / … / ResourceLoaderModule::getFileDependencies.
+ * - getStyles / ResourceLoaderModule::saveFileDependencies.
  */
 class ResourceLoaderFileModule extends ResourceLoaderModule {
 
@@ -133,9 +139,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 
 	/** @var bool Link to raw files in debug mode */
 	protected $debugRaw = true;
-
-	/** @var bool Whether mw.loader.state() call should be omitted */
-	protected $raw = false;
 
 	protected $targets = [ 'desktop' ];
 
@@ -299,7 +302,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 					break;
 				// Single booleans
 				case 'debugRaw':
-				case 'raw':
 				case 'noflip':
 					$this->{$member} = (bool)$option;
 					break;
@@ -334,7 +336,7 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	 *     to $IP
 	 * @param string|null $remoteBasePath Path to use if not provided in module definition. Defaults
 	 *     to $wgResourceBasePath
-	 * @return array Array( localBasePath, remoteBasePath )
+	 * @return array [ localBasePath, remoteBasePath ]
 	 */
 	public static function extractBasePaths(
 		$options = [],
@@ -508,13 +510,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * @return bool
-	 */
-	public function isRaw() {
-		return $this->raw;
-	}
-
-	/**
 	 * Disable module content versioning.
 	 *
 	 * This class uses getDefinitionSummary() instead, to avoid filesystem overhead
@@ -614,14 +609,28 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 			'templates',
 			'skipFunction',
 			'debugRaw',
-			'raw',
 		] as $member ) {
 			$options[$member] = $this->{$member};
 		}
 
+		$packageFiles = $this->expandPackageFiles( $context );
+		if ( $packageFiles ) {
+			// Extract the minimum needed:
+			// - The 'main' pointer (included as-is).
+			// - The 'files' array, simplied to only which files exist (the keys of
+			//   this array), and something that represents their non-file content.
+			//   For packaged files that reflect files directly from disk, the
+			//   'getFileHashes' method tracks this already.
+			//   It is important that the keys of the 'files' array are preserved,
+			//   as they affect the module output.
+			$packageFiles['files'] = array_map( function ( $fileInfo ) {
+				return $fileInfo['definitionSummary'] ?? ( $fileInfo['content'] ?? null );
+			}, $packageFiles['files'] );
+		}
+
 		$summary[] = [
 			'options' => $options,
-			'packageFiles' => $this->expandPackageFiles( $context ),
+			'packageFiles' => $packageFiles,
 			'fileHashes' => $this->getFileHashes( $context ),
 			'messageBlob' => $this->getMessageBlob( $context ),
 		];
@@ -983,7 +992,6 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 			|| $this->dependencies
 			|| $this->messages
 			|| $this->skipFunction
-			|| $this->raw
 		);
 		return $canBeStylesOnly ? self::LOAD_STYLES : self::LOAD_GENERAL;
 	}
@@ -1068,16 +1076,22 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 	}
 
 	/**
-	 * Expand the packageFiles definition into something that's (almost) the right format for
-	 * getPackageFiles() to return. This expands shorthands, resolves config vars and callbacks,
-	 * but does not expand file paths or read the actual contents of files. Those things are done
-	 * by getPackageFiles().
+	 * Internal helper for use by getPackageFiles(), getFileHashes() and getDefinitionSummary().
 	 *
-	 * This is split up in this way so that getFileHashes() can get a list of file names, and
-	 * getDefinitionSummary() can get config vars and callback results in their expanded form.
+	 * This expands the 'packageFiles' definition into something that's (almost) the right format
+	 * for getPackageFiles() to return. It expands shorthands, resolves config vars, and handles
+	 * summarising any non-file data for getVersionHash(). For file-based data, getFileHashes()
+	 * handles it instead, which also ends up in getDefinitionSummary().
+	 *
+	 * What it does not do is reading the actual contents of any specified files, nor invoking
+	 * the computation callbacks. Those things are done by getPackageFiles() instead to improve
+	 * backend performance by only doing this work when the module response is needed, and not
+	 * when merely computing the version hash for StartupModule, or when checking
+	 * If-None-Match headers for a HTTP 304 response.
 	 *
 	 * @param ResourceLoaderContext $context
 	 * @return array|null
+	 * @throws MWException If the 'packageFiles' definition is invalid.
 	 */
 	private function expandPackageFiles( ResourceLoaderContext $context ) {
 		$hash = $context->getHash();
@@ -1113,18 +1127,31 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 				}
 			}
 
+			// Perform expansions (except 'file' and 'callback'), creating one of these keys:
+			// - 'content': literal value.
+			// - 'filePath': content to be read from a file.
+			// - 'callback': content computed by a callable.
 			if ( isset( $fileInfo['content'] ) ) {
 				$expanded['content'] = $fileInfo['content'];
 			} elseif ( isset( $fileInfo['file'] ) ) {
 				$expanded['filePath'] = $fileInfo['file'];
 			} elseif ( isset( $fileInfo['callback'] ) ) {
-				if ( is_callable( $fileInfo['callback'] ) ) {
-					$expanded['content'] = $fileInfo['callback']( $context );
-				} else {
+				if ( !is_callable( $fileInfo['callback'] ) ) {
 					$msg = __METHOD__ . ": invalid callback for package file \"{$fileInfo['name']}\"" .
 						" in module \"{$this->getName()}\"";
 					wfDebugLog( 'resourceloader', $msg );
 					throw new MWException( $msg );
+				}
+				if ( isset( $fileInfo['versionCallback'] ) ) {
+					if ( !is_callable( $fileInfo['versionCallback'] ) ) {
+						throw new MWException( __METHOD__ . ": invalid versionCallback for file" .
+							" \"{$fileInfo['name']}\" in module \"{$this->getName()}\"" );
+					}
+					$expanded['definitionSummary'] = ( $fileInfo['versionCallback'] )( $context );
+					// Don't invoke 'callback' here as it may be expensive (T223260).
+					$expanded['callback'] = $fileInfo['callback'];
+				} else {
+					$expanded['content'] = ( $fileInfo['callback'] )( $context );
 				}
 			} elseif ( isset( $fileInfo['config'] ) ) {
 				if ( $type !== 'data' ) {
@@ -1184,6 +1211,8 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 
 		// Expand file contents
 		foreach ( $expandedPackageFiles['files'] as &$fileInfo ) {
+			// Turn any 'filePath' or 'callback' key into actual 'content',
+			// and remove the key after that.
 			if ( isset( $fileInfo['filePath'] ) ) {
 				$localPath = $this->getLocalPath( $fileInfo['filePath'] );
 				if ( !file_exists( $localPath ) ) {
@@ -1198,7 +1227,13 @@ class ResourceLoaderFileModule extends ResourceLoaderModule {
 				}
 				$fileInfo['content'] = $content;
 				unset( $fileInfo['filePath'] );
+			} elseif ( isset( $fileInfo['callback'] ) ) {
+				$fileInfo['content'] = ( $fileInfo['callback'] )( $context );
+				unset( $fileInfo['callback'] );
 			}
+
+			// Not needed for client response, exists for getDefinitionSummary().
+			unset( $fileInfo['definitionSummary'] );
 		}
 
 		return $expandedPackageFiles;

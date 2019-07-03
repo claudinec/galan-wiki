@@ -39,6 +39,7 @@ class ApiEditPageTest extends ApiTestCase {
 			$this->tablesUsed,
 			[ 'change_tag', 'change_tag_def', 'logging' ]
 		);
+		$this->resetServices();
 	}
 
 	public function testEdit() {
@@ -1367,6 +1368,9 @@ class ApiEditPageTest extends ApiTestCase {
 		ChangeTags::defineTag( 'custom tag' );
 		$this->setMwGlobals( 'wgRevokePermissions',
 			[ 'user' => [ 'applychangetags' => true ] ] );
+		// Supply services with updated globals
+		$this->resetServices();
+
 		try {
 			$this->doApiRequestWithToken( [
 				'action' => 'edit',
@@ -1377,57 +1381,6 @@ class ApiEditPageTest extends ApiTestCase {
 		} finally {
 			$this->assertFalse( Title::newFromText( $name )->exists() );
 		}
-	}
-
-	public function testEditAbortedByHook() {
-		$name = 'Help:' . ucfirst( __FUNCTION__ );
-
-		$this->setExpectedException( ApiUsageException::class,
-			'The modification you tried to make was aborted by an extension.' );
-
-		$this->hideDeprecated( 'APIEditBeforeSave hook (used in ' .
-			'hook-APIEditBeforeSave-closure)' );
-
-		$this->setTemporaryHook( 'APIEditBeforeSave',
-			function () {
-				return false;
-			}
-		);
-
-		try {
-			$this->doApiRequestWithToken( [
-				'action' => 'edit',
-				'title' => $name,
-				'text' => 'Some text',
-			] );
-		} finally {
-			$this->assertFalse( Title::newFromText( $name )->exists() );
-		}
-	}
-
-	public function testEditAbortedByHookWithCustomOutput() {
-		$name = 'Help:' . ucfirst( __FUNCTION__ );
-
-		$this->hideDeprecated( 'APIEditBeforeSave hook (used in ' .
-			'hook-APIEditBeforeSave-closure)' );
-
-		$this->setTemporaryHook( 'APIEditBeforeSave',
-			function ( $unused1, $unused2, &$r ) {
-				$r['msg'] = 'Some message';
-				return false;
-			} );
-
-		$result = $this->doApiRequestWithToken( [
-			'action' => 'edit',
-			'title' => $name,
-			'text' => 'Some text',
-		] );
-		Wikimedia\restoreWarnings();
-
-		$this->assertSame( [ 'msg' => 'Some message', 'result' => 'Failure' ],
-			$result[0]['edit'] );
-
-		$this->assertFalse( Title::newFromText( $name )->exists() );
 	}
 
 	public function testEditAbortedByEditPageHookWithResult() {
@@ -1545,6 +1498,8 @@ class ApiEditPageTest extends ApiTestCase {
 
 		$this->setMwGlobals( 'wgRevokePermissions',
 			[ 'user' => [ 'upload' => true ] ] );
+		// Supply services with updated globals
+		$this->resetServices();
 
 		$this->doApiRequestWithToken( [
 			'action' => 'edit',
@@ -1560,6 +1515,8 @@ class ApiEditPageTest extends ApiTestCase {
 			'The content you supplied exceeds the article size limit of 1 kilobyte.' );
 
 		$this->setMwGlobals( 'wgMaxArticleSize', 1 );
+		// Supply services with updated globals
+		$this->resetServices();
 
 		$text = str_repeat( '!', 1025 );
 
@@ -1577,6 +1534,8 @@ class ApiEditPageTest extends ApiTestCase {
 			'The action you have requested is limited to users in the group: ' );
 
 		$this->setMwGlobals( 'wgRevokePermissions', [ '*' => [ 'edit' => true ] ] );
+		// Supply services with updated globals
+		$this->resetServices();
 
 		$this->doApiRequestWithToken( [
 			'action' => 'edit',
@@ -1593,6 +1552,8 @@ class ApiEditPageTest extends ApiTestCase {
 
 		$this->setMwGlobals( 'wgRevokePermissions',
 			[ 'user' => [ 'editcontentmodel' => true ] ] );
+		// Supply services with updated globals
+		$this->resetServices();
 
 		$this->doApiRequestWithToken( [
 			'action' => 'edit',

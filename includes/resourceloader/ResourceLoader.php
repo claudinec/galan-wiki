@@ -118,11 +118,10 @@ class ResourceLoader implements LoggerAwareInterface {
 			return;
 		}
 		$dbr = wfGetDB( DB_REPLICA );
-		$skin = $context->getSkin();
 		$lang = $context->getLanguage();
 
 		// Batched version of ResourceLoaderModule::getFileDependencies
-		$vary = "$skin|$lang";
+		$vary = ResourceLoaderModule::getVary( $context );
 		$res = $dbr->select( 'module_deps', [ 'md_module', 'md_deps' ], [
 				'md_module' => $moduleNames,
 				'md_skin' => $vary,
@@ -196,8 +195,7 @@ class ResourceLoader implements LoggerAwareInterface {
 		$cache = ObjectCache::getLocalServerInstance( CACHE_ANYTHING );
 
 		$key = $cache->makeGlobalKey(
-			'resourceloader',
-			'filter',
+			'resourceloader-filter',
 			$filter,
 			self::CACHE_VERSION,
 			md5( $data )
@@ -1049,9 +1047,6 @@ MESSAGE;
 			$states[$name] = 'missing';
 		}
 
-		// Generate output
-		$isRaw = false;
-
 		$filter = $context->getOnly() === 'styles' ? 'minify-css' : 'minify-js';
 
 		foreach ( $modules as $name => $module ) {
@@ -1130,12 +1125,11 @@ MESSAGE;
 				$states[$name] = 'error';
 				unset( $modules[$name] );
 			}
-			$isRaw |= $module->isRaw();
 		}
 
 		// Update module states
-		if ( $context->shouldIncludeScripts() && !$context->getRaw() && !$isRaw ) {
-			if ( count( $modules ) && $context->getOnly() === 'scripts' ) {
+		if ( $context->shouldIncludeScripts() && !$context->getRaw() ) {
+			if ( $modules && $context->getOnly() === 'scripts' ) {
 				// Set the state of modules loaded as only scripts to ready as
 				// they don't have an mw.loader.implement wrapper that sets the state
 				foreach ( $modules as $name => $module ) {
@@ -1144,7 +1138,7 @@ MESSAGE;
 			}
 
 			// Set the state of modules we didn't respond to with mw.loader.implement
-			if ( count( $states ) ) {
+			if ( $states ) {
 				$stateScript = self::makeLoaderStateScript( $states );
 				if ( !$context->getDebug() ) {
 					$stateScript = self::filter( 'minify-js', $stateScript );
@@ -1709,7 +1703,6 @@ MESSAGE;
 	 * @param bool $printable
 	 * @param bool $handheld
 	 * @param array $extraQuery
-	 *
 	 * @return array
 	 */
 	public static function makeLoaderQuery( $modules, $lang, $skin, $user = null,
@@ -1718,9 +1711,17 @@ MESSAGE;
 	) {
 		$query = [
 			'modules' => self::makePackedModulesString( $modules ),
-			'lang' => $lang,
-			'skin' => $skin,
 		];
+		// Keep urls short by omitting query parameters that
+		// match the defaults assumed by ResourceLoaderContext.
+		// Note: This relies on the defaults either being insignificant or forever constant,
+		// as otherwise cached urls could change in meaning when the defaults change.
+		if ( $lang !== ResourceLoaderContext::DEFAULT_LANG ) {
+			$query['lang'] = $lang;
+		}
+		if ( $skin !== ResourceLoaderContext::DEFAULT_SKIN ) {
+			$query['skin'] = $skin;
+		}
 		if ( $debug === true ) {
 			$query['debug'] = 'true';
 		}

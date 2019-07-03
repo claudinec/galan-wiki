@@ -30,6 +30,9 @@ use MediaWiki\MediaWikiServices;
  * of a specific loader request.
  */
 class ResourceLoaderContext implements MessageLocalizer {
+	const DEFAULT_LANG = 'qqx';
+	const DEFAULT_SKIN = 'fallback';
+
 	protected $resourceLoader;
 	protected $request;
 	protected $logger;
@@ -88,7 +91,7 @@ class ResourceLoaderContext implements MessageLocalizer {
 			// The 'skin' parameter is required. (Not yet enforced.)
 			// For requests without a known skin specified,
 			// use MediaWiki's 'fallback' skin for skin-specific decisions.
-			$this->skin = 'fallback';
+			$this->skin = self::DEFAULT_SKIN;
 		}
 	}
 
@@ -134,6 +137,8 @@ class ResourceLoaderContext implements MessageLocalizer {
 	}
 
 	/**
+	 * @deprecated since 1.34 Use ResourceLoaderModule::getConfig instead
+	 * inside module methods. Use ResourceLoader::getConfig elsewhere.
 	 * @return Config
 	 */
 	public function getConfig() {
@@ -148,6 +153,8 @@ class ResourceLoaderContext implements MessageLocalizer {
 	}
 
 	/**
+	 * @deprecated since 1.34 Use ResourceLoaderModule::getLogger instead
+	 * inside module methods. Use ResourceLoader::getLogger elsewhere.
 	 * @since 1.27
 	 * @return \Psr\Log\LoggerInterface
 	 */
@@ -174,7 +181,7 @@ class ResourceLoaderContext implements MessageLocalizer {
 			if ( !Language::isValidBuiltInCode( $lang ) ) {
 				// The 'lang' parameter is required. (Not yet enforced.)
 				// If omitted, localise with the dummy language code.
-				$lang = 'qqx';
+				$lang = self::DEFAULT_LANG;
 			}
 			$this->language = $lang;
 		}
@@ -186,8 +193,10 @@ class ResourceLoaderContext implements MessageLocalizer {
 	 */
 	public function getDirection() {
 		if ( $this->direction === null ) {
-			$this->direction = $this->getRequest()->getRawVal( 'dir' );
-			if ( !$this->direction ) {
+			$direction = $this->getRequest()->getRawVal( 'dir' );
+			if ( $direction === 'ltr' || $direction === 'rtl' ) {
+				$this->direction = $direction;
+			} else {
 				// Determine directionality based on user language (T8100)
 				$this->direction = Language::factory( $this->getLanguage() )->getDir();
 			}
@@ -400,5 +409,25 @@ class ResourceLoaderContext implements MessageLocalizer {
 			] );
 		}
 		return $this->hash;
+	}
+
+	/**
+	 * Get the request base parameters, omitting any defaults.
+	 *
+	 * @internal For internal use by ResourceLoaderStartUpModule only
+	 * @return array
+	 */
+	public function getReqBase() {
+		$reqBase = [];
+		if ( $this->getLanguage() !== self::DEFAULT_LANG ) {
+			$reqBase['lang'] = $this->getLanguage();
+		}
+		if ( $this->getSkin() !== self::DEFAULT_SKIN ) {
+			$reqBase['skin'] = $this->getSkin();
+		}
+		if ( $this->getDebug() ) {
+			$reqBase['debug'] = 'true';
+		}
+		return $reqBase;
 	}
 }

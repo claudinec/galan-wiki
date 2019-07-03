@@ -23,7 +23,8 @@ namespace MediaWiki\Storage;
 use Language;
 use MediaWiki\Config\ServiceOptions;
 use WANObjectCache;
-use Wikimedia\Rdbms\LBFactory;
+use Wikimedia\Rdbms\ILBFactory;
+use ExternalStoreAccess;
 
 /**
  * Service for instantiating BlobStores
@@ -35,9 +36,14 @@ use Wikimedia\Rdbms\LBFactory;
 class BlobStoreFactory {
 
 	/**
-	 * @var LBFactory
+	 * @var ILBFactory
 	 */
 	private $lbFactory;
+
+	/**
+	 * @var ExternalStoreAccess
+	 */
+	private $extStoreAccess;
 
 	/**
 	 * @var WANObjectCache
@@ -68,7 +74,8 @@ class BlobStoreFactory {
 	];
 
 	public function __construct(
-		LBFactory $lbFactory,
+		ILBFactory $lbFactory,
+		ExternalStoreAccess $extStoreAccess,
 		WANObjectCache $cache,
 		ServiceOptions $options,
 		Language $contLang
@@ -76,6 +83,7 @@ class BlobStoreFactory {
 		$options->assertRequiredOptions( self::$constructorOptions );
 
 		$this->lbFactory = $lbFactory;
+		$this->extStoreAccess = $extStoreAccess;
 		$this->cache = $cache;
 		$this->options = $options;
 		$this->contLang = $contLang;
@@ -84,27 +92,28 @@ class BlobStoreFactory {
 	/**
 	 * @since 1.31
 	 *
-	 * @param bool|string $wikiId The ID of the target wiki database. Use false for the local wiki.
+	 * @param bool|string $dbDomain The ID of the target wiki database. Use false for the local wiki.
 	 *
 	 * @return BlobStore
 	 */
-	public function newBlobStore( $wikiId = false ) {
-		return $this->newSqlBlobStore( $wikiId );
+	public function newBlobStore( $dbDomain = false ) {
+		return $this->newSqlBlobStore( $dbDomain );
 	}
 
 	/**
 	 * @internal Please call newBlobStore and use the BlobStore interface.
 	 *
-	 * @param bool|string $wikiId The ID of the target wiki database. Use false for the local wiki.
+	 * @param bool|string $dbDomain The ID of the target wiki database. Use false for the local wiki.
 	 *
 	 * @return SqlBlobStore
 	 */
-	public function newSqlBlobStore( $wikiId = false ) {
-		$lb = $this->lbFactory->getMainLB( $wikiId );
+	public function newSqlBlobStore( $dbDomain = false ) {
+		$lb = $this->lbFactory->getMainLB( $dbDomain );
 		$store = new SqlBlobStore(
 			$lb,
+			$this->extStoreAccess,
 			$this->cache,
-			$wikiId
+			$dbDomain
 		);
 
 		$store->setCompressBlobs( $this->options->get( 'CompressRevisions' ) );

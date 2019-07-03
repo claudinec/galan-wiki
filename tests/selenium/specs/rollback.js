@@ -31,7 +31,7 @@ describe( 'Rollback with confirmation', function () {
 		HistoryPage.open( name );
 	} );
 
-	it( 'should offer rollback options for admin users', function () {
+	it.skip( 'should offer rollback options for admin users', function () {
 		assert.strictEqual( HistoryPage.rollback.getText(), 'rollback 1 edit' );
 
 		HistoryPage.rollback.click();
@@ -66,7 +66,7 @@ describe( 'Rollback with confirmation', function () {
 		}, 5000, 'Expected rollback page to appear.' );
 	} );
 
-	it( 'should verify rollbacks via GET requests are confirmed on a follow-up page', function () {
+	it.skip( 'should verify rollbacks via GET requests are confirmed on a follow-up page', function () {
 		var rollbackActionUrl = HistoryPage.rollbackLink.getAttribute( 'href' );
 		browser.url( rollbackActionUrl );
 
@@ -120,7 +120,7 @@ describe( 'Rollback without confirmation', function () {
 		}, 5000, 'Expected rollback page to appear.' );
 	} );
 
-	it( 'should perform rollback via GET request without asking the user to confirm', function () {
+	it.skip( 'should perform rollback via GET request without asking the user to confirm', function () {
 		var rollbackActionUrl = HistoryPage.rollbackLink.getAttribute( 'href' );
 		browser.url( rollbackActionUrl );
 

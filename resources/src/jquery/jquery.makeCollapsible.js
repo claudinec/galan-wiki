@@ -5,7 +5,7 @@
  * familiarise yourself with that CSS before making any changes to this code.
  *
  * Dual licensed:
- * - CC BY 3.0 <http://creativecommons.org/licenses/by/3.0>
+ * - CC BY 3.0 <https://creativecommons.org/licenses/by/3.0>
  * - GPL2 <http://www.gnu.org/licenses/old-licenses/gpl-2.0.html>
  *
  * @class jQuery.plugin.makeCollapsible
@@ -270,7 +270,7 @@
 						}
 					} else {
 						// The toggle-link will be in one of the cells (td or th) of the first row
-						$firstItem = $collapsible.find( 'tr:first th, tr:first td' );
+						$firstItem = $collapsible.find( 'tr' ).first().find( 'th, td' );
 						$toggle = $firstItem.find( '> .mw-collapsible-toggle' );
 
 						// If theres no toggle link, add it to the last cell
@@ -288,7 +288,7 @@
 					$collapsible.before( $toggle );
 				} else if ( $collapsible.is( 'ul' ) || $collapsible.is( 'ol' ) ) {
 					// The toggle-link will be in the first list-item
-					$firstItem = $collapsible.find( 'li:first' );
+					$firstItem = $collapsible.find( 'li' ).first();
 					$toggle = $firstItem.find( '> .mw-collapsible-toggle' );
 
 					// If theres no toggle link, add it

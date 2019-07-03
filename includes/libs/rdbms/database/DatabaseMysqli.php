@@ -125,21 +125,6 @@ class DatabaseMysqli extends DatabaseMysqlBase {
 		return false;
 	}
 
-	protected function connectInitCharset() {
-		// already done in mysqlConnect()
-		return true;
-	}
-
-	/**
-	 * @param string $charset
-	 * @return bool
-	 */
-	protected function mysqlSetCharset( $charset ) {
-		$conn = $this->getBindingHandle();
-
-		return $conn->set_charset( $charset );
-	}
-
 	/**
 	 * @return bool
 	 */
@@ -203,7 +188,7 @@ class DatabaseMysqli extends DatabaseMysqlBase {
 
 	/**
 	 * @param mysqli_result $res
-	 * @return bool
+	 * @return array|false
 	 */
 	protected function mysqlFetchArray( $res ) {
 		$array = $res->fetch_array();
@@ -305,21 +290,6 @@ class DatabaseMysqli extends DatabaseMysqlBase {
 		$conn = $this->getBindingHandle();
 
 		return $conn->real_escape_string( (string)$s );
-	}
-
-	/**
-	 * Give an id for the connection
-	 *
-	 * mysql driver used resource id, but mysqli objects cannot be cast to string.
-	 * @return string
-	 */
-	public function __toString() {
-		if ( $this->conn instanceof mysqli ) {
-			return (string)$this->conn->thread_id;
-		} else {
-			// mConn might be false or something.
-			return (string)$this->conn;
-		}
 	}
 
 	/**

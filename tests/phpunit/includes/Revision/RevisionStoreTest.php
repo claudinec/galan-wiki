@@ -16,7 +16,7 @@ use MediaWikiTestCase;
 use MWException;
 use Title;
 use WANObjectCache;
-use Wikimedia\Rdbms\Database;
+use Wikimedia\Rdbms\IDatabase;
 use Wikimedia\Rdbms\LoadBalancer;
 use Wikimedia\TestingAccessWrapper;
 use WikitextContent;
@@ -70,10 +70,10 @@ class RevisionStoreTest extends MediaWikiTestCase {
 	}
 
 	/**
-	 * @return \PHPUnit_Framework_MockObject_MockObject|Database
+	 * @return \PHPUnit_Framework_MockObject_MockObject|IDatabase
 	 */
 	private function getMockDatabase() {
-		return $this->getMockBuilder( Database::class )
+		return $this->getMockBuilder( IDatabase::class )
 			->disableOriginalConstructor()->getMock();
 	}
 
@@ -450,9 +450,12 @@ class RevisionStoreTest extends MediaWikiTestCase {
 		}
 
 		$cache = new WANObjectCache( [ 'cache' => new HashBagOStuff() ] );
-		$lb = MediaWikiServices::getInstance()->getDBLoadBalancer();
+		$services = MediaWikiServices::getInstance();
+		$lb = $services->getDBLoadBalancer();
+		$access = $services->getExternalStoreAccess();
 
-		$blobStore = new SqlBlobStore( $lb, $cache );
+		$blobStore = new SqlBlobStore( $lb, $access, $cache );
+
 		$blobStore->setLegacyEncoding( $encoding, Language::factory( $locale ) );
 
 		$store = $this->getRevisionStore( $lb, $blobStore, $cache );
@@ -480,9 +483,11 @@ class RevisionStoreTest extends MediaWikiTestCase {
 		];
 
 		$cache = new WANObjectCache( [ 'cache' => new HashBagOStuff() ] );
-		$lb = MediaWikiServices::getInstance()->getDBLoadBalancer();
+		$services = MediaWikiServices::getInstance();
+		$lb = $services->getDBLoadBalancer();
+		$access = $services->getExternalStoreAccess();
 
-		$blobStore = new SqlBlobStore( $lb, $cache );
+		$blobStore = new SqlBlobStore( $lb, $access, $cache );
 		$blobStore->setLegacyEncoding( 'windows-1252', Language::factory( 'en' ) );
 
 		$store = $this->getRevisionStore( $lb, $blobStore, $cache );

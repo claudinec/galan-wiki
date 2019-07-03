@@ -35,7 +35,7 @@ class DBConnRef implements IDatabase {
 	public function __construct( ILoadBalancer $lb, $conn, $role ) {
 		$this->lb = $lb;
 		$this->role = $role;
-		if ( $conn instanceof Database ) {
+		if ( $conn instanceof IDatabase && !( $conn instanceof DBConnRef ) ) {
 			$this->conn = $conn; // live handle
 		} elseif ( is_array( $conn ) && count( $conn ) >= 4 && $conn[self::FLD_DOMAIN] !== false ) {
 			$this->params = $conn;
@@ -461,7 +461,7 @@ class DBConnRef implements IDatabase {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
-	public function buildLike() {
+	public function buildLike( $param ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
@@ -595,6 +595,10 @@ class DBConnRef implements IDatabase {
 
 	public function onTransactionPreCommitOrIdle( callable $callback, $fname = __METHOD__ ) {
 		// DB_REPLICA role: caller might want to refresh cache after a cache mutex is released
+		return $this->__call( __FUNCTION__, func_get_args() );
+	}
+
+	public function onAtomicSectionCancel( callable $callback, $fname = __METHOD__ ) {
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
@@ -737,6 +741,19 @@ class DBConnRef implements IDatabase {
 	}
 
 	public function setIndexAliases( array $aliases ) {
+		return $this->__call( __FUNCTION__, func_get_args() );
+	}
+
+	public function __toString() {
+		if ( $this->conn === null ) {
+			// spl_object_id is PHP >= 7.2
+			$id = function_exists( 'spl_object_id' )
+				? spl_object_id( $this )
+				: spl_object_hash( $this );
+
+			return $this->getType() . ' object #' . $id;
+		}
+
 		return $this->__call( __FUNCTION__, func_get_args() );
 	}
 
