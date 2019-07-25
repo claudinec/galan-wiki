@@ -150,6 +150,8 @@ class ApiBlockTest extends ApiTestCase {
 		$this->setMwGlobals( 'wgRevokePermissions',
 			[ 'user' => [ 'applychangetags' => true ] ] );
 
+		$this->resetServices();
+
 		$this->doBlock( [ 'tags' => 'custom tag' ] );
 	}
 
@@ -160,6 +162,7 @@ class ApiBlockTest extends ApiTestCase {
 		$this->mergeMwGlobalArrayValue( 'wgGroupPermissions',
 			[ 'sysop' => $newPermissions ] );
 
+		$this->resetServices();
 		$res = $this->doBlock( [ 'hidename' => '' ] );
 
 		$dbw = wfGetDB( DB_MASTER );
@@ -208,6 +211,8 @@ class ApiBlockTest extends ApiTestCase {
 
 		$this->setMwGlobals( 'wgRevokePermissions',
 			[ 'sysop' => [ 'blockemail' => true ] ] );
+
+		$this->resetServices();
 
 		$this->doBlock( [ 'noemail' => '' ] );
 	}
@@ -289,30 +294,14 @@ class ApiBlockTest extends ApiTestCase {
 		);
 	}
 
-	/**
-	 * @expectedException ApiUsageException
-	 * @expectedExceptionMessage Invalid value "127.0.0.1/64" for user parameter "user".
-	 */
-	public function testBlockWithLargeRange() {
-		$tokens = $this->getTokens();
-
-		$this->doApiRequest(
-			[
-				'action' => 'block',
-				'user' => '127.0.0.1/64',
-				'reason' => 'Some reason',
-				'token' => $tokens['blocktoken'],
-			],
-			null,
-			false,
-			self::$users['sysop']->getUser()
-		);
+	public function testRangeBlock() {
+		$this->mUser = User::newFromName( '128.0.0.0/16', false );
+		$this->doBlock();
 	}
 
 	/**
 	 * @expectedException ApiUsageException
-	 * @expectedExceptionMessage Too many values supplied for parameter "pagerestrictions". The
-	 * limit is 10.
+	 * @expectedExceptionMessage Range blocks larger than /16 are not allowed.
 	 */
 	public function testBlockingTooManyPageRestrictions() {
 		$this->setMwGlobals( [

@@ -895,7 +895,7 @@ class ParserOptions {
 
 	/**
 	 * Timestamp used for {{CURRENTDAY}} etc.
-	 * @return string
+	 * @return string TS_MW timestamp
 	 */
 	public function getTimestamp() {
 		if ( !isset( $this->mTimestamp ) ) {
@@ -911,27 +911,6 @@ class ParserOptions {
 	 */
 	public function setTimestamp( $x ) {
 		return wfSetVar( $this->mTimestamp, $x );
-	}
-
-	/**
-	 * Create "edit section" links?
-	 * @deprecated since 1.31, use ParserOutput::getText() options instead.
-	 * @return bool
-	 */
-	public function getEditSection() {
-		wfDeprecated( __METHOD__, '1.31' );
-		return true;
-	}
-
-	/**
-	 * Create "edit section" links?
-	 * @deprecated since 1.31, use ParserOutput::getText() options instead.
-	 * @param bool|null $x New value (null is no change)
-	 * @return bool Old value
-	 */
-	public function setEditSection( $x ) {
-		wfDeprecated( __METHOD__, '1.31' );
-		return true;
 	}
 
 	/**

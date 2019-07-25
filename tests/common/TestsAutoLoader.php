@@ -54,16 +54,19 @@ $wgAutoloadClasses += [
 	'HamcrestPHPUnitIntegration' => "$testDir/phpunit/HamcrestPHPUnitIntegration.php",
 	'LessFileCompilationTest' => "$testDir/phpunit/LessFileCompilationTest.php",
 	'MediaWikiCoversValidator' => "$testDir/phpunit/MediaWikiCoversValidator.php",
+	'MediaWikiGroupValidator' => "$testDir/phpunit/MediaWikiGroupValidator.php",
 	'MediaWikiLangTestCase' => "$testDir/phpunit/MediaWikiLangTestCase.php",
 	'MediaWikiLoggerPHPUnitTestListener' => "$testDir/phpunit/MediaWikiLoggerPHPUnitTestListener.php",
 	'MediaWikiPHPUnitCommand' => "$testDir/phpunit/MediaWikiPHPUnitCommand.php",
 	'MediaWikiPHPUnitResultPrinter' => "$testDir/phpunit/MediaWikiPHPUnitResultPrinter.php",
 	'MediaWikiPHPUnitTestListener' => "$testDir/phpunit/MediaWikiPHPUnitTestListener.php",
-	'MediaWikiTestCase' => "$testDir/phpunit/MediaWikiTestCase.php",
+	'MediaWikiTestCase' => "$testDir/phpunit/MediaWikiIntegrationTestCase.php",
+	'MediaWikiUnitTestCase' => "$testDir/phpunit/MediaWikiUnitTestCase.php",
+	'MediaWikiIntegrationTestCase' => "$testDir/phpunit/MediaWikiIntegrationTestCase.php",
 	'MediaWikiTestResult' => "$testDir/phpunit/MediaWikiTestResult.php",
 	'MediaWikiTestRunner' => "$testDir/phpunit/MediaWikiTestRunner.php",
 	'PHPUnit4And6Compat' => "$testDir/phpunit/PHPUnit4And6Compat.php",
-	'ResourceLoaderFileModuleTestModule' => "$testDir/phpunit/ResourceLoaderTestCase.php",
+	'ResourceLoaderFileModuleTestingSubclass' => "$testDir/phpunit/ResourceLoaderTestCase.php",
 	'ResourceLoaderFileTestModule' => "$testDir/phpunit/ResourceLoaderTestCase.php",
 	'ResourceLoaderTestCase' => "$testDir/phpunit/ResourceLoaderTestCase.php",
 	'ResourceLoaderTestModule' => "$testDir/phpunit/ResourceLoaderTestCase.php",
@@ -178,6 +181,7 @@ $wgAutoloadClasses += [
 
 	# tests/phpunit/includes/libs
 	'GenericArrayObjectTest' => "$testDir/phpunit/includes/libs/GenericArrayObjectTest.php",
+	'Wikimedia\ParamValidator\TypeDef\TypeDefTestCase' => "$testDir/phpunit/includes/libs/ParamValidator/TypeDef/TypeDefTestCase.php",
 
 	# tests/phpunit/maintenance
 	'MediaWiki\Tests\Maintenance\DumpAsserter' => "$testDir/phpunit/maintenance/DumpAsserter.php",

@@ -54,22 +54,21 @@ class RevisionRenderer {
 	private $roleRegistery;
 
 	/** @var string|bool */
-	private $wikiId;
+	private $dbDomain;
 
 	/**
 	 * @param ILoadBalancer $loadBalancer
 	 * @param SlotRoleRegistry $roleRegistry
-	 * @param bool|string $wikiId
+	 * @param bool|string $dbDomain DB domain of the relevant wiki or false for the current one
 	 */
 	public function __construct(
 		ILoadBalancer $loadBalancer,
 		SlotRoleRegistry $roleRegistry,
-		$wikiId = false
+		$dbDomain = false
 	) {
 		$this->loadBalancer = $loadBalancer;
 		$this->roleRegistery = $roleRegistry;
-		$this->wikiId = $wikiId;
-
+		$this->dbDomain = $dbDomain;
 		$this->saveParseLogger = new NullLogger();
 	}
 
@@ -105,7 +104,7 @@ class RevisionRenderer {
 		User $forUser = null,
 		array $hints = []
 	) {
-		if ( $rev->getWikiId() !== $this->wikiId ) {
+		if ( $rev->getWikiId() !== $this->dbDomain ) {
 			throw new InvalidArgumentException( 'Mismatching wiki ID ' . $rev->getWikiId() );
 		}
 
@@ -131,6 +130,13 @@ class RevisionRenderer {
 		$options->setSpeculativeRevIdCallback( function () use ( $dbIndex ) {
 			return $this->getSpeculativeRevId( $dbIndex );
 		} );
+
+		if ( !$rev->getId() && $rev->getTimestamp() ) {
+			// This is an unsaved revision with an already determined timestamp.
+			// Make the "current" time used during parsing match that of the revision.
+			// Any REVISION* parser variables will match up if the revision is saved.
+			$options->setTimestamp( $rev->getTimestamp() );
+		}
 
 		$title = Title::newFromLinkTarget( $rev->getPageAsLinkTarget() );
 
@@ -162,7 +168,7 @@ class RevisionRenderer {
 		$flags = defined( 'MW_PHPUNIT_TEST' ) || $dbIndex === DB_REPLICA
 			? 0 : ILoadBalancer::CONN_TRX_AUTOCOMMIT;
 
-		$db = $this->loadBalancer->getConnectionRef( $dbIndex, [], $this->wikiId, $flags );
+		$db = $this->loadBalancer->getConnectionRef( $dbIndex, [], $this->dbDomain, $flags );
 
 		return 1 + (int)$db->selectField(
 			'revision',
@@ -209,7 +215,7 @@ class RevisionRenderer {
 			$slotOutput[$role] = $out;
 
 			// XXX: should the SlotRoleHandler be able to intervene here?
-			$combinedOutput->mergeInternalMetaDataFrom( $out, $role );
+			$combinedOutput->mergeInternalMetaDataFrom( $out );
 			$combinedOutput->mergeTrackingMetaDataFrom( $out );
 		}
 

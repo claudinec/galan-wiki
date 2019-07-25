@@ -143,6 +143,9 @@ if ( $wgScript === false ) {
 if ( $wgLoadScript === false ) {
 	$wgLoadScript = "$wgScriptPath/load.php";
 }
+if ( $wgRestPath === false ) {
+	$wgRestPath = "$wgScriptPath/rest.php";
+}
 
 if ( $wgArticlePath === false ) {
 	if ( $wgUsePathInfo ) {
@@ -804,7 +807,9 @@ if ( $wgRequest->getCookie( 'UseDC', '' ) === 'master' ) {
 
 // Useful debug output
 if ( $wgCommandLineMode ) {
-	wfDebug( "\n\nStart command line script $self\n" );
+	if ( isset( $self ) ) {
+		wfDebug( "\n\nStart command line script $self\n" );
+	}
 } else {
 	$debug = "\n\nStart request {$wgRequest->getMethod()} {$wgRequest->getRequestURL()}\n";
 

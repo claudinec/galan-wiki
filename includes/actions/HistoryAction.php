@@ -142,6 +142,7 @@ class HistoryAction extends FormlessAction {
 
 	/**
 	 * Print the history page for an article.
+	 * @return string|null
 	 */
 	function onView() {
 		$out = $this->getOutput();
@@ -151,7 +152,7 @@ class HistoryAction extends FormlessAction {
 		 * Allow client caching.
 		 */
 		if ( $out->checkLastModified( $this->page->getTouched() ) ) {
-			return; // Client cache fresh and headers sent, nothing more to do.
+			return null; // Client cache fresh and headers sent, nothing more to do.
 		}
 
 		$this->preCacheMessages();
@@ -185,7 +186,7 @@ class HistoryAction extends FormlessAction {
 		$feedType = $request->getRawVal( 'feed' );
 		if ( $feedType !== null ) {
 			$this->feed( $feedType );
-			return;
+			return null;
 		}
 
 		$this->addHelpLink(
@@ -216,11 +217,16 @@ class HistoryAction extends FormlessAction {
 				]
 			);
 
-			return;
+			return null;
 		}
 
-		$ts = $this->getTimestampFromRequest( $request );
+		/**
+		 * Add date selector to quickly get to a certain time
+		 */
+		$year = $request->getInt( 'year' );
+		$month = $request->getInt( 'month' );
 		$tagFilter = $request->getVal( 'tagfilter' );
+		$tagSelector = ChangeTags::buildTagFilterSelector( $tagFilter, false, $this->getContext() );
 
 		/**
 		 * Option to show only revisions that have been (partially) hidden via RevisionDelete
@@ -230,40 +236,11 @@ class HistoryAction extends FormlessAction {
 		} else {
 			$conds = [];
 		}
-
-		// Add the general form.
-		$fields = [
-			[
-				'name' => 'title',
-				'type' => 'hidden',
-				'default' => $this->getTitle()->getPrefixedDBkey(),
-			],
-			[
-				'name' => 'action',
-				'type' => 'hidden',
-				'default' => 'history',
-			],
-			[
-				'type' => 'date',
-				'default' => $ts,
-				'label' => $this->msg( 'date-range-to' )->text(),
-				'name' => 'date-range-to',
-			],
-			[
-				'label-raw' => $this->msg( 'tag-filter' )->parse(),
-				'type' => 'tagfilter',
-				'id' => 'tagfilter',
-				'name' => 'tagfilter',
-				'value' => $tagFilter,
-			]
-		];
 		if ( $this->getUser()->isAllowed( 'deletedhistory' ) ) {
-			$fields[] = [
-				'type' => 'check',
-				'label' => $this->msg( 'history-show-deleted' )->text(),
-				'default' => $request->getBool( 'deleted' ),
-				'name' => 'deleted',
-			];
+			$checkDeleted = Xml::checkLabel( $this->msg( 'history-show-deleted' )->text(),
+				'deleted', 'mw-show-deleted-only', $request->getBool( 'deleted' ) ) . "\n";
+		} else {
+			$checkDeleted = '';
 		}
 
 		$out->enableOOUI();
@@ -283,23 +260,15 @@ class HistoryAction extends FormlessAction {
 		Hooks::run( 'PageHistoryBeforeList', [ &$this->page, $this->getContext() ] );
 
 		// Create and output the list.
-		$dateComponents = explode( '-', $ts );
-		if ( count( $dateComponents ) > 1 ) {
-			$y = $dateComponents[0];
-			$m = $dateComponents[1];
-			$d = $dateComponents[2];
-		} else {
-			$y = '';
-			$m = '';
-			$d = '';
-		}
-		$pager = new HistoryPager( $this, $y, $m, $tagFilter, $conds, $d );
+		$pager = new HistoryPager( $this, $year, $month, $tagFilter, $conds );
 		$out->addHTML(
 			$pager->getNavigationBar() .
 			$pager->getBody() .
 			$pager->getNavigationBar()
 		);
 		$out->preventClickjacking( $pager->getPreventClickjacking() );
+
+		return null;
 	}
 
 	/**

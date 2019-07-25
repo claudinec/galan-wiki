@@ -347,19 +347,6 @@ from ApiBase::addDeprecation().
 &$msgs: Message[] Messages to include in the help. Multiple messages will be
   joined with spaces.
 
-'APIEditBeforeSave': DEPRECATED since 1.28! Use EditFilterMergedContent instead.
-Before saving a page with api.php?action=edit, after
-processing request parameters. Return false to let the request fail, returning
-an error message or an <edit result="Failure"> tag if $resultArr was filled.
-Unlike for example 'EditFilterMergedContent' this also being run on undo.
-Since MediaWiki 1.25, 'EditFilterMergedContent' can also return error details
-for the API and it's recommended to use it instead of this hook.
-$editPage: the EditPage object
-$text: the text passed to the API. Note that this includes only the single
-  section for section edit, and is not necessarily the final text in case of
-  automatically resolved edit conflicts.
-&$resultArr: data in this array will be added to the API result
-
 'ApiFeedContributions::feedItem': Called to convert the result of ContribsPager
 into a FeedItem instance that ApiFeedContributions can consume. Implementors of
 this hook may cancel the hook to signal that the item is not viewable in the
@@ -2986,7 +2973,7 @@ $article: The article object corresponding to the page
 'ShowSearchHit': Customize display of search hit.
 $searchPage: The SpecialSearch instance.
 $result: The SearchResult to show
-$terms: Search terms, for highlighting
+$terms: Search terms, for highlighting (unreliable as search engine dependent).
 &$link: HTML of link to the matching page. May be modified.
 &$redirect: HTML of redirect info. May be modified.
 &$section: HTML of matching section. May be modified.
@@ -3004,7 +2991,8 @@ $terms: Search terms, for highlighting
 &$titleSnippet: Label for the link representing the search result. Typically the
   article title.
 $result: The SearchResult object
-$terms: String of the search terms entered
+$terms: array of search terms extracted by SearchDatabase search engines
+  (may not be populated by other search engines).
 $specialSearch: The SpecialSearch object
 &$query: Array of query string parameters for the link representing the search
   result.
@@ -3743,14 +3731,6 @@ $name: user name
 $user: user object
 &$s: database query object
 
-'UserLoadFromSession': DEPRECATED since 1.27! Create a
-MediaWiki\Session\SessionProvider instead.
-Called to authenticate users on external/environmental means; occurs before
-session is loaded.
-$user: user object being loaded
-&$result: set this to a boolean value to abort the normal authentication
-  process
-
 'UserLoadOptions': When user options/preferences are being loaded from the
 database.
 $user: User object
@@ -3830,12 +3810,6 @@ $resetKinds: array containing the kinds of preferences to reset
 message(s).
 &$user: user retrieving new talks messages
 &$talks: array of new talks page(s)
-
-'UserRights': DEPRECATED since 1.26! Use UserGroupsChanged instead.
-After a user's group memberships are changed.
-&$user: User object that was changed
-$add: Array of strings corresponding to groups added
-$remove: Array of strings corresponding to groups removed
 
 'UserSaveOptions': Called just before saving user preferences. Hook handlers can
 either add or manipulate options, or reset one back to it's default to block
@@ -3998,8 +3972,9 @@ $title: The title of the page.
 add extra metadata.
 &$obj: The XmlDumpWriter object.
 &$out: The text being output.
-$row: The database row for the revision.
-$text: The revision text.
+$row: The database row for the revision being dumped. DEPRECATED, use $rev instead.
+$text: The revision text to be dumped. DEPRECATED, use $rev instead.
+$rev: The RevisionRecord that is being dumped to XML
 
 More hooks might be available but undocumented, you can execute
 "php maintenance/findHooks.php" to find hidden ones.

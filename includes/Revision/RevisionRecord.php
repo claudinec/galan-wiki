@@ -27,6 +27,7 @@ use Content;
 use InvalidArgumentException;
 use LogicException;
 use MediaWiki\Linker\LinkTarget;
+use MediaWiki\MediaWikiServices;
 use MediaWiki\User\UserIdentity;
 use MWException;
 use Title;
@@ -93,17 +94,16 @@ abstract class RevisionRecord {
 	 *
 	 * @param Title $title The title of the page this Revision is associated with.
 	 * @param RevisionSlots $slots The slots of this revision.
-	 * @param bool|string $wikiId the wiki ID of the site this Revision belongs to,
-	 *        or false for the local site.
+	 * @param bool|string $dbDomain DB domain of the relevant wiki or false for the current one.
 	 *
 	 * @throws MWException
 	 */
-	function __construct( Title $title, RevisionSlots $slots, $wikiId = false ) {
-		Assert::parameterType( 'string|boolean', $wikiId, '$wikiId' );
+	function __construct( Title $title, RevisionSlots $slots, $dbDomain = false ) {
+		Assert::parameterType( 'string|boolean', $dbDomain, '$dbDomain' );
 
 		$this->mTitle = $title;
 		$this->mSlots = $slots;
-		$this->mWiki = $wikiId;
+		$this->mWiki = $dbDomain;
 
 		// XXX: this is a sensible default, but we may not have a Title object here in the future.
 		$this->mPageId = $title->getArticleID();
@@ -514,15 +514,27 @@ abstract class RevisionRecord {
 			} else {
 				$permissions = [ 'deletedhistory' ];
 			}
+
+			// XXX: How can we avoid global scope here?
+			//      Perhaps the audience check should be done in a callback.
+			$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
 			$permissionlist = implode( ', ', $permissions );
 			if ( $title === null ) {
 				wfDebug( "Checking for $permissionlist due to $field match on $bitfield\n" );
-				return $user->isAllowedAny( ...$permissions );
+				foreach ( $permissions as $perm ) {
+					if ( $permissionManager->userHasRight( $user, $perm ) ) {
+						return true;
+					}
+				}
+				return false;
 			} else {
 				$text = $title->getPrefixedText();
 				wfDebug( "Checking for $permissionlist on $text due to $field match on $bitfield\n" );
+
+				$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
+
 				foreach ( $permissions as $perm ) {
-					if ( $title->userCan( $perm, $user ) ) {
+					if ( $permissionManager->userCan( $perm, $user, $title ) ) {
 						return true;
 					}
 				}
@@ -550,7 +562,7 @@ abstract class RevisionRecord {
 		// null if mSlots is not empty.
 
 		// NOTE: getId() and getPageId() may return null before a revision is saved, so don't
-		//check them.
+		// check them.
 
 		return $this->getTimestamp() !== null
 			&& $this->getComment( self::RAW ) !== null

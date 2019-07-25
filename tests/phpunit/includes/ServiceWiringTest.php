@@ -8,7 +8,7 @@ class ServiceWiringTest extends MediaWikiTestCase {
 		global $IP;
 		$services = array_keys( require "$IP/includes/ServiceWiring.php" );
 		$sortedServices = $services;
-		natcasesort( $sortedServices );
+		sort( $sortedServices );
 
 		$this->assertSame( $sortedServices, $services,
 			'Please keep services sorted alphabetically' );

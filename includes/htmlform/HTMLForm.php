@@ -180,9 +180,8 @@ class HTMLForm extends ContextSource {
 	protected $mMessagePrefix;
 
 	/** @var HTMLFormField[] */
-	protected $mFlatFields;
-
-	protected $mFieldTree;
+	protected $mFlatFields = [];
+	protected $mFieldTree = [];
 	protected $mShowReset = false;
 	protected $mShowSubmit = true;
 	protected $mSubmitFlags = [ 'primary', 'progressive' ];
@@ -245,7 +244,6 @@ class HTMLForm extends ContextSource {
 	protected $mButtons = [];
 
 	protected $mWrapperLegend = false;
-	protected $mWrapperAttributes = [];
 
 	/**
 	 * Salt for the edit token.
@@ -315,7 +313,8 @@ class HTMLForm extends ContextSource {
 	/**
 	 * Build a new HTMLForm from an array of field attributes
 	 *
-	 * @param array $descriptor Array of Field constructs, as described above
+	 * @param array $descriptor Array of Field constructs, as described
+	 * 	in the class documentation
 	 * @param IContextSource|null $context Available since 1.18, will become compulsory in 1.18.
 	 *     Obviates the need to call $form->setTitle()
 	 * @param string $messagePrefix A prefix to go in front of default messages
@@ -343,11 +342,23 @@ class HTMLForm extends ContextSource {
 			$this->displayFormat = 'div';
 		}
 
-		// Expand out into a tree.
+		$this->addFields( $descriptor );
+	}
+
+	/**
+	 * Add fields to the form
+	 *
+	 * @since 1.34
+	 *
+	 * @param array $descriptor Array of Field constructs, as described
+	 * 	in the class documentation
+	 * @return HTMLForm
+	 */
+	public function addFields( $descriptor ) {
 		$loadedDescriptor = [];
-		$this->mFlatFields = [];
 
 		foreach ( $descriptor as $fieldname => $info ) {
+
 			$section = $info['section'] ?? '';
 
 			if ( isset( $info['type'] ) && $info['type'] === 'file' ) {
@@ -371,7 +382,9 @@ class HTMLForm extends ContextSource {
 			$this->mFlatFields[$fieldname] = $field;
 		}
 
-		$this->mFieldTree = $loadedDescriptor;
+		$this->mFieldTree = array_merge( $this->mFieldTree, $loadedDescriptor );
+
+		return $this;
 	}
 
 	/**
@@ -454,7 +467,8 @@ class HTMLForm extends ContextSource {
 	 * @since 1.23
 	 *
 	 * @param string $fieldname Name of the field
-	 * @param array &$descriptor Input Descriptor, as described above
+	 * @param array &$descriptor Input Descriptor, as described
+	 * 	in the class documentation
 	 *
 	 * @throws MWException
 	 * @return string Name of a HTMLFormField subclass
@@ -481,7 +495,8 @@ class HTMLForm extends ContextSource {
 	 * Initialise a new Object for the field
 	 *
 	 * @param string $fieldname Name of the field
-	 * @param array $descriptor Input Descriptor, as described above
+	 * @param array $descriptor Input Descriptor, as described
+	 * 	in the class documentation
 	 * @param HTMLForm|null $parent Parent instance of HTMLForm
 	 *
 	 * @throws MWException
@@ -1113,7 +1128,7 @@ class HTMLForm extends ContextSource {
 		# Include a <fieldset> wrapper for style, if requested.
 		if ( $this->mWrapperLegend !== false ) {
 			$legend = is_string( $this->mWrapperLegend ) ? $this->mWrapperLegend : false;
-			$html = Xml::fieldset( $legend, $html, $this->mWrapperAttributes );
+			$html = Xml::fieldset( $legend, $html );
 		}
 
 		return Html::rawElement(
@@ -1525,19 +1540,6 @@ class HTMLForm extends ContextSource {
 	 */
 	public function setWrapperLegend( $legend ) {
 		$this->mWrapperLegend = $legend;
-
-		return $this;
-	}
-
-	/**
-	 * For internal use only. Use is discouraged, and should only be used where
-	 * support for gadgets/user scripts is warranted.
-	 * @param array $attributes
-	 * @internal
-	 * @return HTMLForm $this for chaining calls
-	 */
-	public function setWrapperAttributes( $attributes ) {
-		$this->mWrapperAttributes = $attributes;
 
 		return $this;
 	}

@@ -2967,8 +2967,8 @@ class Language {
 	}
 
 	/**
-	 * @param array $termsArray
-	 * @return array
+	 * @param string[] $termsArray
+	 * @return string[]
 	 */
 	function convertForSearchResult( $termsArray ) {
 		# some languages, e.g. Chinese, need to do a conversion
@@ -4537,7 +4537,7 @@ class Language {
 	 *
 	 * @since 1.22
 	 * @param string $code Language code
-	 * @return array Array( fallbacks, site fallbacks )
+	 * @return array [ fallbacks, site fallbacks ]
 	 */
 	public static function getFallbacksIncludingSiteLanguage( $code ) {
 		global $wgLanguageCode;
@@ -4863,6 +4863,7 @@ class Language {
 	public function viewPrevNext( Title $title, $offset, $limit,
 		array $query = [], $atend = false
 	) {
+		wfDeprecated( __METHOD__, '1.34' );
 		// @todo FIXME: Why on earth this needs one message for the text and another one for tooltip?
 
 		# Make 'previous' link

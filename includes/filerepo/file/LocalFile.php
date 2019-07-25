@@ -150,10 +150,10 @@ class LocalFile extends File {
 	 * @param FileRepo $repo
 	 * @param null $unused
 	 *
-	 * @return self
+	 * @return static
 	 */
 	static function newFromTitle( $title, $repo, $unused = null ) {
-		return new self( $title, $repo );
+		return new static( $title, $repo );
 	}
 
 	/**
@@ -163,11 +163,11 @@ class LocalFile extends File {
 	 * @param stdClass $row
 	 * @param FileRepo $repo
 	 *
-	 * @return self
+	 * @return static
 	 */
 	static function newFromRow( $row, $repo ) {
 		$title = Title::makeTitle( NS_FILE, $row->img_name );
-		$file = new self( $title, $repo );
+		$file = new static( $title, $repo );
 		$file->loadFromRow( $row );
 
 		return $file;
@@ -190,12 +190,12 @@ class LocalFile extends File {
 			$conds['img_timestamp'] = $dbr->timestamp( $timestamp );
 		}
 
-		$fileQuery = self::getQueryInfo();
+		$fileQuery = static::getQueryInfo();
 		$row = $dbr->selectRow(
 			$fileQuery['tables'], $fileQuery['fields'], $conds, __METHOD__, [], $fileQuery['joins']
 		);
 		if ( $row ) {
-			return self::newFromRow( $row, $repo );
+			return static::newFromRow( $row, $repo );
 		} else {
 			return false;
 		}
@@ -1906,7 +1906,7 @@ class LocalFile extends File {
 	 * @return Status
 	 */
 	function move( $target ) {
-		$localRepo = MediaWikiServices::getInstance()->getRepoGroup();
+		$localRepo = MediaWikiServices::getInstance()->getRepoGroup()->getLocalRepo();
 		if ( $this->getRepo()->getReadOnlyReason() !== false ) {
 			return $this->readOnlyFatalStatus();
 		}
@@ -1923,8 +1923,8 @@ class LocalFile extends File {
 		wfDebugLog( 'imagemove', "Finished moving {$this->name}" );
 
 		// Purge the source and target files...
-		$oldTitleFile = $localRepo->findFile( $this->title );
-		$newTitleFile = $localRepo->findFile( $target );
+		$oldTitleFile = $localRepo->newFile( $this->title );
+		$newTitleFile = $localRepo->newFile( $target );
 		// To avoid slow purges in the transaction, move them outside...
 		DeferredUpdates::addUpdate(
 			new AutoCommitUpdate(

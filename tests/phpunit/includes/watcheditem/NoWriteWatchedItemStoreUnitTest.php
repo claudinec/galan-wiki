@@ -1,7 +1,5 @@
 <?php
 
-use MediaWiki\User\UserIdentityValue;
-
 /**
  * @author Addshore
  *
@@ -16,8 +14,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$this->setExpectedException( DBReadOnlyError::class );
-		$noWriteService->addWatch(
-			new UserIdentityValue( 1, 'MockUser', 0 ), new TitleValue( 0, 'Foo' ) );
+		$noWriteService->addWatch( $this->getTestSysop()->getUser(), new TitleValue( 0, 'Foo' ) );
 	}
 
 	public function testAddWatchBatchForUser() {
@@ -27,7 +24,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$this->setExpectedException( DBReadOnlyError::class );
-		$noWriteService->addWatchBatchForUser( new UserIdentityValue( 1, 'MockUser', 0 ), [] );
+		$noWriteService->addWatchBatchForUser( $this->getTestSysop()->getUser(), [] );
 	}
 
 	public function testRemoveWatch() {
@@ -37,8 +34,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$this->setExpectedException( DBReadOnlyError::class );
-		$noWriteService->removeWatch(
-			new UserIdentityValue( 1, 'MockUser', 0 ), new TitleValue( 0, 'Foo' ) );
+		$noWriteService->removeWatch( $this->getTestSysop()->getUser(), new TitleValue( 0, 'Foo' ) );
 	}
 
 	public function testSetNotificationTimestampsForUser() {
@@ -49,7 +45,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 
 		$this->setExpectedException( DBReadOnlyError::class );
 		$noWriteService->setNotificationTimestampsForUser(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			'timestamp',
 			[]
 		);
@@ -63,7 +59,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 
 		$this->setExpectedException( DBReadOnlyError::class );
 		$noWriteService->updateNotificationTimestamp(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			new TitleValue( 0, 'Foo' ),
 			'timestamp'
 		);
@@ -77,8 +73,8 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 
 		$this->setExpectedException( DBReadOnlyError::class );
 		$noWriteService->resetNotificationTimestamp(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
-			new TitleValue( 0, 'Foo' )
+			$this->getTestSysop()->getUser(),
+			Title::newFromText( 'Foo' )
 		);
 	}
 
@@ -89,7 +85,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->countWatchedItems(
-			new UserIdentityValue( 1, 'MockUser', 0 )
+			$this->getTestSysop()->getUser()
 		);
 		$this->assertEquals( __METHOD__, $return );
 	}
@@ -158,7 +154,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->getWatchedItem(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			new TitleValue( 0, 'Foo' )
 		);
 		$this->assertEquals( __METHOD__, $return );
@@ -171,7 +167,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->loadWatchedItem(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			new TitleValue( 0, 'Foo' )
 		);
 		$this->assertEquals( __METHOD__, $return );
@@ -186,7 +182,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->getWatchedItemsForUser(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			[]
 		);
 		$this->assertEquals( __METHOD__, $return );
@@ -199,7 +195,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->isWatched(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			new TitleValue( 0, 'Foo' )
 		);
 		$this->assertEquals( __METHOD__, $return );
@@ -214,7 +210,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->getNotificationTimestampsBatch(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			[ new TitleValue( 0, 'Foo' ) ]
 		);
 		$this->assertEquals( __METHOD__, $return );
@@ -229,7 +225,7 @@ class NoWriteWatchedItemStoreUnitTest extends MediaWikiTestCase {
 		$noWriteService = new NoWriteWatchedItemStore( $innerService );
 
 		$return = $noWriteService->countUnreadNotifications(
-			new UserIdentityValue( 1, 'MockUser', 0 ),
+			$this->getTestSysop()->getUser(),
 			88
 		);
 		$this->assertEquals( __METHOD__, $return );

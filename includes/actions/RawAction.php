@@ -50,6 +50,7 @@ class RawAction extends FormlessAction {
 
 	/**
 	 * @suppress SecurityCheck-XSS Non html mime type
+	 * @return string|null
 	 */
 	function onView() {
 		$this->getOutput()->disable();
@@ -58,11 +59,11 @@ class RawAction extends FormlessAction {
 		$config = $this->context->getConfig();
 
 		if ( !$request->checkUrlExtension() ) {
-			return;
+			return null;
 		}
 
 		if ( $this->getOutput()->checkLastModified( $this->page->getTouched() ) ) {
-			return; // Client cache fresh and headers sent, nothing more to do.
+			return null; // Client cache fresh and headers sent, nothing more to do.
 		}
 
 		$contentType = $this->getContentType();
@@ -87,9 +88,6 @@ class RawAction extends FormlessAction {
 
 		// Set standard Vary headers so cache varies on cookies and such (T125283)
 		$response->header( $this->getOutput()->getVaryHeader() );
-		if ( $config->get( 'UseKeyHeader' ) ) {
-			$response->header( $this->getOutput()->getKeyHeader() );
-		}
 
 		// Output may contain user-specific data;
 		// vary generated content for open sessions on private wikis
@@ -173,6 +171,8 @@ class RawAction extends FormlessAction {
 		}
 
 		echo $text;
+
+		return null;
 	}
 
 	/**

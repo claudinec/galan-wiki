@@ -30,7 +30,6 @@ use MediaWiki\MediaWikiServices;
 use MediaWiki\ProcOpenError;
 use MediaWiki\Session\SessionManager;
 use MediaWiki\Shell\Shell;
-use Wikimedia\ScopedCallback;
 use Wikimedia\WrappedString;
 use Wikimedia\AtEase\AtEase;
 
@@ -1038,9 +1037,18 @@ function wfLogDBError( $text, array $context = [] ) {
  * @param int $callerOffset How far up the call stack is the original
  *    caller. 2 = function that called the function that called
  *    wfDeprecated (Added in 1.20).
+ *
+ * @throws Exception If the MediaWiki version number is not a string or boolean.
  */
 function wfDeprecated( $function, $version = false, $component = false, $callerOffset = 2 ) {
-	MWDebug::deprecated( $function, $version, $component, $callerOffset + 1 );
+	if ( is_string( $version ) || is_bool( $version ) ) {
+		MWDebug::deprecated( $function, $version, $component, $callerOffset + 1 );
+	} else {
+		throw new Exception(
+			"MediaWiki version must either be a string or a boolean. " .
+			"Example valid version: '1.33'"
+		);
+	}
 }
 
 /**
@@ -1882,10 +1890,9 @@ function wfTimestampOrNull( $outputtype = TS_UNIX, $ts = null ) {
 /**
  * Convenience function; returns MediaWiki timestamp for the present time.
  *
- * @return string
+ * @return string TS_MW timestamp
  */
 function wfTimestampNow() {
-	# return NOW
 	return MWTimestamp::now( TS_MW );
 }
 
@@ -2432,28 +2439,6 @@ function wfRelativePath( $path, $from ) {
 }
 
 /**
- * Reset the session id
- *
- * @deprecated since 1.27, use MediaWiki\Session\SessionManager instead
- * @since 1.22
- */
-function wfResetSessionID() {
-	wfDeprecated( __FUNCTION__, '1.27' );
-	$session = SessionManager::getGlobalSession();
-	$delay = $session->delaySave();
-
-	$session->resetId();
-
-	// Make sure a session is started, since that's what the old
-	// wfResetSessionID() did.
-	if ( session_id() !== $session->getId() ) {
-		wfSetupSession( $session->getId() );
-	}
-
-	ScopedCallback::consume( $delay );
-}
-
-/**
  * Initialise php session
  *
  * @deprecated since 1.27, use MediaWiki\Session\SessionManager instead.
@@ -2599,19 +2584,6 @@ function wfGetLB( $wiki = false ) {
 		$factory = MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
 		return $factory->getMainLB( $wiki );
 	}
-}
-
-/**
- * Get the load balancer factory object
- *
- * @deprecated since 1.27, use MediaWikiServices::getInstance()->getDBLoadBalancerFactory() instead.
- * TODO: Remove in MediaWiki 1.35
- *
- * @return \Wikimedia\Rdbms\LBFactory
- */
-function wfGetLBFactory() {
-	wfDeprecated( __METHOD__, '1.27' );
-	return MediaWikiServices::getInstance()->getDBLoadBalancerFactory();
 }
 
 /**
@@ -2763,30 +2735,6 @@ function wfWaitForSlaves(
 }
 
 /**
- * Count down from $seconds to zero on the terminal, with a one-second pause
- * between showing each number. For use in command-line scripts.
- *
- * @deprecated since 1.31, use Maintenance::countDown()
- *
- * @codeCoverageIgnore
- * @param int $seconds
- */
-function wfCountDown( $seconds ) {
-	wfDeprecated( __FUNCTION__, '1.31' );
-	for ( $i = $seconds; $i >= 0; $i-- ) {
-		if ( $i != $seconds ) {
-			echo str_repeat( "\x08", strlen( $i + 1 ) );
-		}
-		echo $i;
-		flush();
-		if ( $i ) {
-			sleep( 1 );
-		}
-	}
-	echo "\n";
-}
-
-/**
  * Replace all invalid characters with '-'.
  * Additional characters can be defined in $wgIllegalFileChars (see T22489).
  * By default, $wgIllegalFileChars includes ':', '/', '\'.
@@ -2883,21 +2831,6 @@ function wfShorthandToInteger( $string = '', $default = -1 ) {
 	}
 
 	return $val;
-}
-
-/**
- * Get the normalised IETF language tag
- * See unit test for examples.
- * See mediawiki.language.bcp47 for the JavaScript implementation.
- *
- * @deprecated since 1.31, use LanguageCode::bcp47() directly.
- *
- * @param string $code The language code.
- * @return string The language code which complying with BCP 47 standards.
- */
-function wfBCP47( $code ) {
-	wfDeprecated( __METHOD__, '1.31' );
-	return LanguageCode::bcp47( $code );
 }
 
 /**

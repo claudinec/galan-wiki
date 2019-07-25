@@ -1697,6 +1697,7 @@ class WikiPage implements Page, IDBAccessObject {
 			MediaWikiServices::getInstance()->getDBLoadBalancerFactory()
 		);
 
+		$derivedDataUpdater->setLogger( LoggerFactory::getInstance( 'SaveParse' ) );
 		$derivedDataUpdater->setRcWatchCategoryMembership( $wgRCWatchCategoryMembership );
 		$derivedDataUpdater->setArticleCountMethod( $wgArticleCountMethod );
 
@@ -1904,7 +1905,11 @@ class WikiPage implements Page, IDBAccessObject {
 		// TODO: this logic should not be in the storage layer, it's here for compatibility
 		// with 1.31 behavior. Applying the 'autopatrol' right should be done in the same
 		// place the 'bot' right is handled, which is currently in EditPage::attemptSave.
-		if ( $needsPatrol && $this->getTitle()->userCan( 'autopatrol', $user ) ) {
+		$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
+
+		if ( $needsPatrol && $permissionManager->userCan(
+			'autopatrol', $user, $this->getTitle()
+		) ) {
 			$updater->setRcPatrolStatus( RecentChange::PRC_AUTOPATROLLED );
 		}
 
@@ -3073,7 +3078,7 @@ class WikiPage implements Page, IDBAccessObject {
 	 * (with ChangeTags::canAddTagsAccompanyingChange)
 	 *
 	 * @return array Array of errors, each error formatted as
-	 *   array(messagekey, param1, param2, ...).
+	 *   [ messagekey, param1, param2, ... ].
 	 * On success, the array is empty.  This array can also be passed to
 	 * OutputPage::showPermissionsErrorPage().
 	 */
@@ -3267,7 +3272,11 @@ class WikiPage implements Page, IDBAccessObject {
 		// TODO: this logic should not be in the storage layer, it's here for compatibility
 		// with 1.31 behavior. Applying the 'autopatrol' right should be done in the same
 		// place the 'bot' right is handled, which is currently in EditPage::attemptSave.
-		if ( $wgUseRCPatrol && $this->getTitle()->userCan( 'autopatrol', $guser ) ) {
+		$permissionManager = MediaWikiServices::getInstance()->getPermissionManager();
+
+		if ( $wgUseRCPatrol && $permissionManager->userCan(
+			'autopatrol', $guser, $this->getTitle()
+		) ) {
 			$updater->setRcPatrolStatus( RecentChange::PRC_AUTOPATROLLED );
 		}
 

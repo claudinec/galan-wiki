@@ -47,8 +47,10 @@ class ResourceLoaderContextTest extends PHPUnit\Framework\TestCase {
 
 	public function testAccessors() {
 		$ctx = new ResourceLoaderContext( $this->getResourceLoader(), new FauxRequest( [] ) );
+		$this->assertInstanceOf( ResourceLoader::class, $ctx->getResourceLoader() );
+		$this->assertInstanceOf( Config::class, $ctx->getConfig() );
 		$this->assertInstanceOf( WebRequest::class, $ctx->getRequest() );
-		$this->assertInstanceOf( \Psr\Log\LoggerInterface::class, $ctx->getLogger() );
+		$this->assertInstanceOf( Psr\Log\LoggerInterface::class, $ctx->getLogger() );
 	}
 
 	public function testTypicalRequest() {
@@ -74,6 +76,38 @@ class ResourceLoaderContextTest extends PHPUnit\Framework\TestCase {
 		// Misc
 		$this->assertEquals( 'ltr', $ctx->getDirection() );
 		$this->assertEquals( 'zh|fallback|||styles|||||', $ctx->getHash() );
+	}
+
+	public static function provideDirection() {
+		yield 'LTR language' => [
+			[ 'lang' => 'en' ],
+			'ltr',
+		];
+		yield 'RTL language' => [
+			[ 'lang' => 'he' ],
+			'rtl',
+		];
+		yield 'explicit LTR' => [
+			[ 'lang' => 'he', 'dir' => 'ltr' ],
+			'ltr',
+		];
+		yield 'explicit RTL' => [
+			[ 'lang' => 'en', 'dir' => 'rtl' ],
+			'rtl',
+		];
+		// Not supported, but tested to cover the case and detect change
+		yield 'invalid dir' => [
+			[ 'lang' => 'he', 'dir' => 'xyz' ],
+			'rtl',
+		];
+	}
+
+	/**
+	 * @dataProvider provideDirection
+	 */
+	public function testDirection( array $params, $expected ) {
+		$ctx = new ResourceLoaderContext( $this->getResourceLoader(), new FauxRequest( $params ) );
+		$this->assertEquals( $expected, $ctx->getDirection() );
 	}
 
 	public function testShouldInclude() {

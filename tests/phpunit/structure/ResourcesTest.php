@@ -9,11 +9,9 @@ use Wikimedia\TestingAccessWrapper;
  * @author Antoine Musso
  * @author Niklas Laxström
  * @author Santhosh Thottingal
- * @author Timo Tijhof
  * @copyright © 2012, Antoine Musso
  * @copyright © 2012, Niklas Laxström
  * @copyright © 2012, Santhosh Thottingal
- * @copyright © 2012, Timo Tijhof
  */
 class ResourcesTest extends MediaWikiTestCase {
 
@@ -47,9 +45,9 @@ class ResourcesTest extends MediaWikiTestCase {
 	}
 
 	/**
-	 * Verify that nothing explicitly depends on raw modules (such as "query").
+	 * Verify that nothing depends on "startup".
 	 *
-	 * Depending on them is unsupported as they are not registered client-side by the startup module.
+	 * Depending on it is unsupported as it cannot be loaded by the client.
 	 *
 	 * @todo Modules can dynamically choose dependencies based on context. This method does not
 	 * test such dependencies. The same goes for testMissingDependencies() and
@@ -60,7 +58,7 @@ class ResourcesTest extends MediaWikiTestCase {
 
 		$illegalDeps = [];
 		foreach ( $data['modules'] as $moduleName => $module ) {
-			if ( $module->isRaw() ) {
+			if ( $module instanceof ResourceLoaderStartUpModule ) {
 				$illegalDeps[] = $moduleName;
 			}
 		}

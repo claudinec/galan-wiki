@@ -42,6 +42,8 @@ interface IDatabase {
 	const TRIGGER_COMMIT = 2;
 	/** @var int Callback triggered by ROLLBACK */
 	const TRIGGER_ROLLBACK = 3;
+	/** @var int Callback triggered by atomic section cancel (ROLLBACK TO SAVEPOINT) */
+	const TRIGGER_CANCEL = 4;
 
 	/** @var string Transaction is requested by regular caller outside of the DB layer */
 	const TRANSACTION_EXPLICIT = '';
@@ -106,6 +108,8 @@ interface IDatabase {
 	/** @var int Enable compression in connection protocol */
 	const DBO_COMPRESS = 512;
 
+	/** @var int Idiom for "no special flags" */
+	const QUERY_NORMAL = 0;
 	/** @var int Ignore query errors and return false when they happen */
 	const QUERY_SILENCE_ERRORS = 1; // b/c for 1.32 query() argument; note that (int)true = 1
 	/**
@@ -117,6 +121,8 @@ interface IDatabase {
 	const QUERY_REPLICA_ROLE = 4;
 	/** @var int Ignore the current presence of any DBO_TRX flag */
 	const QUERY_IGNORE_DBO_TRX = 8;
+	/** @var int Do not try to retry the query if the connection was lost */
+	const QUERY_NO_RETRY = 16;
 
 	/** @var bool Parameter to unionQueries() for UNION ALL */
 	const UNION_ALL = true;
@@ -167,8 +173,10 @@ interface IDatabase {
 	/**
 	 * Get the UNIX timestamp of the time that the transaction was established
 	 *
-	 * This can be used to reason about the staleness of SELECT data
-	 * in REPEATABLE-READ transaction isolation level.
+	 * This can be used to reason about the staleness of SELECT data in REPEATABLE-READ
+	 * transaction isolation level. Callers can assume that if a view-snapshot isolation
+	 * is used, then the data read by SQL queries is *at least* up to date to that point
+	 * (possibly more up-to-date since the first SELECT defines the snapshot).
 	 *
 	 * @return float|null Returns null if there is not active transaction
 	 * @since 1.25
@@ -1218,9 +1226,12 @@ interface IDatabase {
 	 *   $query .= $dbr->buildLike( $pattern );
 	 *
 	 * @since 1.16
+	 * @param array[]|string|LikeMatch $param
 	 * @return string Fully built LIKE statement
+	 * @phan-suppress-next-line PhanMismatchVariadicComment
+	 * @phan-param array|string|LikeMatch ...$param T226223
 	 */
-	public function buildLike();
+	public function buildLike( $param );
 
 	/**
 	 * Returns a token for buildLike() that denotes a '_' to be used in a LIKE query
@@ -1571,6 +1582,9 @@ interface IDatabase {
 	 *
 	 * This is useful for combining cooperative locks and DB transactions.
 	 *
+	 * Note this is called when the whole transaction is resolved. To take action immediately
+	 * when an atomic section is cancelled, use onAtomicSectionCancel().
+	 *
 	 * @note do not assume that *other* IDatabase instances will be AUTOCOMMIT mode
 	 *
 	 * The callback takes the following arguments:
@@ -1651,6 +1665,31 @@ interface IDatabase {
 	 * @since 1.22
 	 */
 	public function onTransactionPreCommitOrIdle( callable $callback, $fname = __METHOD__ );
+
+	/**
+	 * Run a callback when the atomic section is cancelled.
+	 *
+	 * The callback is run just after the current atomic section, any outer
+	 * atomic section, or the whole transaction is rolled back.
+	 *
+	 * An error is thrown if no atomic section is pending. The atomic section
+	 * need not have been created with the ATOMIC_CANCELABLE flag.
+	 *
+	 * Queries in the function may be running in the context of an outer
+	 * transaction or may be running in AUTOCOMMIT mode. The callback should
+	 * use atomic sections if necessary.
+	 *
+	 * @note do not assume that *other* IDatabase instances will be AUTOCOMMIT mode
+	 *
+	 * The callback takes the following arguments:
+	 *   - IDatabase::TRIGGER_CANCEL or IDatabase::TRIGGER_ROLLBACK
+	 *   - This IDatabase instance
+	 *
+	 * @param callable $callback
+	 * @param string $fname Caller name
+	 * @since 1.34
+	 */
+	public function onAtomicSectionCancel( callable $callback, $fname = __METHOD__ );
 
 	/**
 	 * Run a callback after each time any transaction commits or rolls back
@@ -2197,6 +2236,15 @@ interface IDatabase {
 	 * @since 1.31
 	 */
 	public function setIndexAliases( array $aliases );
+
+	/**
+	 * Get a debugging string that mentions the database type, the ID of this instance,
+	 * and the ID of any underlying connection resource or driver object if one is present
+	 *
+	 * @return string "<db type> object #<X>" or "<db type> object #<X> (resource/handle id #<Y>)"
+	 * @since 1.34
+	 */
+	public function __toString();
 }
 
 /**

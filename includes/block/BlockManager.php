@@ -21,6 +21,7 @@
 namespace MediaWiki\Block;
 
 use DateTime;
+use DeferredUpdates;
 use IP;
 use MediaWiki\User\UserIdentity;
 use MWCryptHash;
@@ -76,23 +77,23 @@ class BlockManager {
 	 * @param bool $applyIpBlocksToXff
 	 * @param bool $cookieSetOnAutoblock
 	 * @param bool $cookieSetOnIpBlock
-	 * @param array $dnsBlacklistUrls
+	 * @param string[] $dnsBlacklistUrls
 	 * @param bool $enableDnsBlacklist
-	 * @param array $proxyList
-	 * @param array $proxyWhitelist
+	 * @param string[] $proxyList
+	 * @param string[] $proxyWhitelist
 	 * @param string $secretKey
 	 * @param array $softBlockRanges
 	 */
 	public function __construct(
-		$currentUser,
-		$currentRequest,
+		User $currentUser,
+		WebRequest $currentRequest,
 		$applyIpBlocksToXff,
 		$cookieSetOnAutoblock,
 		$cookieSetOnIpBlock,
-		$dnsBlacklistUrls,
+		array $dnsBlacklistUrls,
 		$enableDnsBlacklist,
-		$proxyList,
-		$proxyWhitelist,
+		array $proxyList,
+		array $proxyWhitelist,
 		$secretKey,
 		$softBlockRanges
 	) {
@@ -202,12 +203,17 @@ class BlockManager {
 			] );
 		}
 
+		// Filter out any duplicated blocks, e.g. from the cookie
+		$blocks = $this->getUniqueBlocks( $blocks );
+
 		if ( count( $blocks ) > 0 ) {
 			if ( count( $blocks ) === 1 ) {
 				$block = $blocks[ 0 ];
 			} else {
 				$block = new CompositeBlock( [
 					'address' => $ip,
+					'byText' => 'MediaWiki default',
+					'reason' => wfMessage( 'blockedtext-composite-reason' )->plain(),
 					'originalBlocks' => $blocks,
 				] );
 			}
@@ -215,6 +221,35 @@ class BlockManager {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Given a list of blocks, return a list of unique blocks.
+	 *
+	 * This usually means that each block has a unique ID. For a block with ID null,
+	 * if it's an autoblock, it will be filtered out if the parent block is present;
+	 * if not, it is assumed to be a unique system block, and kept.
+	 *
+	 * @param AbstractBlock[] $blocks
+	 * @return AbstractBlock[]
+	 */
+	private function getUniqueBlocks( array $blocks ) {
+		$systemBlocks = [];
+		$databaseBlocks = [];
+
+		foreach ( $blocks as $block ) {
+			if ( $block instanceof SystemBlock ) {
+				$systemBlocks[] = $block;
+			} elseif ( $block->getType() === DatabaseBlock::TYPE_AUTO ) {
+				if ( !isset( $databaseBlocks[$block->getParentBlockId()] ) ) {
+					$databaseBlocks[$block->getParentBlockId()] = $block;
+				}
+			} else {
+				$databaseBlocks[$block->getId()] = $block;
+			}
+		}
+
+		return array_merge( $systemBlocks, $databaseBlocks );
 	}
 
 	/**
@@ -397,26 +432,38 @@ class BlockManager {
 	 * @param User $user
 	 */
 	public function trackBlockWithCookie( User $user ) {
-		$block = $user->getBlock();
 		$request = $user->getRequest();
-		$response = $request->response();
-		$isAnon = $user->isAnon();
+		if ( $request->getCookie( 'BlockID' ) !== null ) {
+			// User already has a block cookie
+			return;
+		}
 
-		if ( $block && $request->getCookie( 'BlockID' ) === null ) {
-			if ( $block instanceof CompositeBlock ) {
-				// TODO: Improve on simply tracking the first trackable block (T225654)
-				foreach ( $block->getOriginalBlocks() as $originalBlock ) {
-					if ( $this->shouldTrackBlockWithCookie( $originalBlock, $isAnon ) ) {
-						$this->setBlockCookie( $originalBlock, $response );
-						return;
+		// Defer checks until the user has been fully loaded to avoid circular dependency
+		// of User on itself (T180050 and T226777)
+		DeferredUpdates::addCallableUpdate(
+			function () use ( $user, $request ) {
+				$block = $user->getBlock();
+				$response = $request->response();
+				$isAnon = $user->isAnon();
+
+				if ( $block ) {
+					if ( $block instanceof CompositeBlock ) {
+						// TODO: Improve on simply tracking the first trackable block (T225654)
+						foreach ( $block->getOriginalBlocks() as $originalBlock ) {
+							if ( $this->shouldTrackBlockWithCookie( $originalBlock, $isAnon ) ) {
+								$this->setBlockCookie( $originalBlock, $response );
+								return;
+							}
+						}
+					} else {
+						if ( $this->shouldTrackBlockWithCookie( $block, $isAnon ) ) {
+							$this->setBlockCookie( $block, $response );
+						}
 					}
 				}
-			} else {
-				if ( $this->shouldTrackBlockWithCookie( $block, $isAnon ) ) {
-					$this->setBlockCookie( $block, $response );
-				}
-			}
-		}
+			},
+			DeferredUpdates::PRESEND
+		);
 	}
 
 	/**

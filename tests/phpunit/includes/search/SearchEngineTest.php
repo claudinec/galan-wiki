@@ -1,5 +1,7 @@
 <?php
 
+use Wikimedia\Rdbms\LoadBalancerSingle;
+
 /**
  * @group Search
  * @group Database
@@ -39,7 +41,8 @@ class SearchEngineTest extends MediaWikiLangTestCase {
 			]
 		] );
 
-		$this->search = new $searchType( $this->db );
+		$lb = LoadBalancerSingle::newFromConnection( $this->db );
+		$this->search = new $searchType( $lb );
 	}
 
 	protected function tearDown() {
@@ -187,7 +190,7 @@ class SearchEngineTest extends MediaWikiLangTestCase {
 		$match = $res->getIterator()->current();
 		$snippet = "A <span class='searchmatch'>" . $phrase . "</span>";
 		$this->assertStringStartsWith( $snippet,
-			$match->getTextSnippet( $res->termMatches() ),
+			$match->getTextSnippet(),
 			"Highlight a phrase search" );
 	}
 

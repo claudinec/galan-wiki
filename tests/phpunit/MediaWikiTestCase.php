@@ -472,17 +472,7 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 	 * @return string Absolute name of the temporary file
 	 */
 	protected function getNewTempFile() {
-		$fileName = tempnam(
-			wfTempDir(),
-			// Avoid backslashes here as they result in inconsistent results
-			// between Windows and other OS, as well as between functions
-			// that try to normalise these in one or both directions.
-			// For example, tempnam rejects directory separators in the prefix which
-			// means it rejects any namespaced class on Windows.
-			// And then there is, wfMkdirParents which normalises paths always
-			// whereas most other PHP and MW functions do not.
-			'MW_PHPUnit_' . strtr( static::class, [ '\\' => '_' ] ) . '_'
-		);
+		$fileName = tempnam( wfTempDir(), 'MW_PHPUnit_' . static::class . '_' );
 		$this->tmpFiles[] = $fileName;
 
 		return $fileName;
@@ -499,15 +489,14 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 	 * @return string Absolute name of the temporary directory
 	 */
 	protected function getNewTempDirectory() {
-		// Starting of with a temporary *file*.
+		// Starting of with a temporary /file/.
 		$fileName = $this->getNewTempFile();
 
-		// Converting the temporary file to a *directory*.
+		// Converting the temporary /file/ to a /directory/
 		// The following is not atomic, but at least we now have a single place,
-		// where temporary directory creation is bundled and can be improved.
+		// where temporary directory creation is bundled and can be improved
 		unlink( $fileName );
-		// If this fails for some reason, PHP will warn and fail the test.
-		mkdir( $fileName, 0777, /* recursive = */ true );
+		$this->assertTrue( wfMkdirParents( $fileName ) );
 
 		return $fileName;
 	}
@@ -555,24 +544,6 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		$this->tmpFiles = array_merge( $this->tmpFiles, (array)$files );
 	}
 
-	// @todo Make const when we no longer support HHVM (T192166)
-	private static $namespaceAffectingSettings = [
-		'wgAllowImageMoving',
-		'wgCanonicalNamespaceNames',
-		'wgCapitalLinkOverrides',
-		'wgCapitalLinks',
-		'wgContentNamespaces',
-		'wgExtensionMessagesFiles',
-		'wgExtensionNamespaces',
-		'wgExtraNamespaces',
-		'wgExtraSignatureNamespaces',
-		'wgNamespaceContentModels',
-		'wgNamespaceProtection',
-		'wgNamespacesWithSubpages',
-		'wgNonincludableNamespaces',
-		'wgRestrictionLevels',
-	];
-
 	protected function tearDown() {
 		global $wgRequest, $wgSQLMode;
 
@@ -617,8 +588,8 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 			ini_set( $name, $value );
 		}
 		if (
-			array_intersect( self::$namespaceAffectingSettings, array_keys( $this->mwGlobals ) ) ||
-			array_intersect( self::$namespaceAffectingSettings, $this->mwGlobalsToUnset )
+			array_key_exists( 'wgExtraNamespaces', $this->mwGlobals ) ||
+			in_array( 'wgExtraNamespaces', $this->mwGlobalsToUnset )
 		) {
 			$this->resetNamespaces();
 		}
@@ -760,7 +731,7 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 			$GLOBALS[$key] = $value;
 		}
 
-		if ( array_intersect( self::$namespaceAffectingSettings, array_keys( $pairs ) ) ) {
+		if ( array_key_exists( 'wgExtraNamespaces', $pairs ) ) {
 			$this->resetNamespaces();
 		}
 	}
@@ -791,7 +762,14 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 				. 'instance has been replaced by test code.' );
 		}
 
+		MWNamespace::clearCaches();
 		Language::clearCaches();
+
+		// We can't have the TitleFormatter holding on to an old Language object either
+		// @todo We shouldn't need to reset all the aliases here.
+		$this->localServices->resetServiceForTesting( 'TitleFormatter' );
+		$this->localServices->resetServiceForTesting( 'TitleParser' );
+		$this->localServices->resetServiceForTesting( '_MediaWikiTitleCodec' );
 	}
 
 	/**
@@ -815,6 +793,29 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Stashes the global, will be restored in tearDown()
+	 *
+	 * Individual test functions may override globals through the setMwGlobals() function
+	 * or directly. When directly overriding globals their keys should first be passed to this
+	 * method in setUp to avoid breaking global state for other tests
+	 *
+	 * That way all other tests are executed with the same settings (instead of using the
+	 * unreliable local settings for most tests and fix it only for some tests).
+	 *
+	 * @param array|string $globalKeys Key to the global variable, or an array of keys.
+	 *
+	 * @note To allow changes to global variables to take effect on global service instances,
+	 *       call overrideMwServices().
+	 *
+	 * @since 1.23
+	 * @deprecated since 1.32, use setMwGlobals() and don't alter globals directly
+	 */
+	protected function stashMwGlobals( $globalKeys ) {
+		wfDeprecated( __METHOD__, '1.32' );
+		$this->doStashMwGlobals( $globalKeys );
 	}
 
 	private function doStashMwGlobals( $globalKeys ) {
@@ -954,8 +955,6 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 			$newInstance->redefineService( $name, $callback );
 		}
 
-		self::resetGlobalParser();
-
 		return $newInstance;
 	}
 
@@ -1020,9 +1019,6 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		);
 
 		MediaWikiServices::forceGlobalInstance( $newServices );
-
-		self::resetGlobalParser();
-
 		return $newServices;
 	}
 
@@ -1051,24 +1047,7 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		MediaWikiServices::forceGlobalInstance( self::$originalServices );
 		$currentServices->destroy();
 
-		self::resetGlobalParser();
-
 		return true;
-	}
-
-	/**
-	 * If $wgParser has been unstubbed, replace it with a fresh one so it picks up any config
-	 * changes. $wgParser is deprecated, but we still support it for now.
-	 */
-	private static function resetGlobalParser() {
-		// phpcs:ignore MediaWiki.Usage.DeprecatedGlobalVariables.Deprecated$wgParser
-		global $wgParser;
-		if ( $wgParser instanceof StubObject ) {
-			return;
-		}
-		$wgParser = new StubObject( 'wgParser', function () {
-			return MediaWikiServices::getInstance()->getParser();
-		} );
 	}
 
 	/**
@@ -2243,19 +2222,18 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		}
 
 		// NOTE: prefer content namespaces
-		$nsInfo = MediaWikiServices::getInstance()->getNamespaceInfo();
 		$namespaces = array_unique( array_merge(
-			$nsInfo->getContentNamespaces(),
+			MWNamespace::getContentNamespaces(),
 			[ NS_MAIN, NS_HELP, NS_PROJECT ], // prefer these
-			$nsInfo->getValidNamespaces()
+			MWNamespace::getValidNamespaces()
 		) );
 
 		$namespaces = array_diff( $namespaces, [
 			NS_FILE, NS_CATEGORY, NS_MEDIAWIKI, NS_USER // don't mess with magic namespaces
 		] );
 
-		$talk = array_filter( $namespaces, function ( $ns ) use ( $nsInfo ) {
-			return $nsInfo->isTalk( $ns );
+		$talk = array_filter( $namespaces, function ( $ns ) {
+			return MWNamespace::isTalk( $ns );
 		} );
 
 		// prefer non-talk pages
@@ -2366,7 +2344,7 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		if ( $createIfMissing ) {
 			if ( !file_exists( $fileName ) ) {
 				file_put_contents( $fileName, $actualData );
-				$this->markTestSkipped( "Data file $fileName does not exist" );
+				$this->markTestSkipped( 'Data file $fileName does not exist' );
 			}
 		} else {
 			self::assertFileExists( $fileName );
@@ -2380,20 +2358,13 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 	 * @param string $text Content of the page
 	 * @param string $summary Optional summary string for the revision
 	 * @param int $defaultNs Optional namespace id
-	 * @param User|null $user If null, static::getTestSysop()->getUser() is used.
-	 * @return Status Object as returned by WikiPage::doEditContent()
+	 * @return array Array as returned by WikiPage::doEditContent()
 	 * @throws MWException If this test cases's needsDB() method doesn't return true.
 	 *         Test cases can use "@group Database" to enable database test support,
 	 *         or list the tables under testing in $this->tablesUsed, or override the
 	 *         needsDB() method.
 	 */
-	protected function editPage(
-		$pageName,
-		$text,
-		$summary = '',
-		$defaultNs = NS_MAIN,
-		User $user = null
-	) {
+	protected function editPage( $pageName, $text, $summary = '', $defaultNs = NS_MAIN ) {
 		if ( !$this->needsDB() ) {
 			throw new MWException( 'When testing which pages, the test cases\'s needsDB()' .
 				' method should return true. Use @group Database or $this->tablesUsed.' );
@@ -2402,13 +2373,7 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 		$title = Title::newFromText( $pageName, $defaultNs );
 		$page = WikiPage::factory( $title );
 
-		return $page->doEditContent(
-			ContentHandler::makeContent( $text, $title ),
-			$summary,
-			0,
-			false,
-			$user
-		);
+		return $page->doEditContent( ContentHandler::makeContent( $text, $title ), $summary );
 	}
 
 	/**
@@ -2431,19 +2396,5 @@ abstract class MediaWikiTestCase extends PHPUnit\Framework\TestCase {
 			'value' => $value,
 			'comment' => $comment,
 		] );
-	}
-
-	/**
-	 * Returns a PHPUnit constraint that matches anything other than a fixed set of values. This can
-	 * be used to whitelist values, e.g.
-	 *   $mock->expects( $this->never() )->method( $this->anythingBut( 'foo', 'bar' ) );
-	 * which will throw if any unexpected method is called.
-	 *
-	 * @param mixed ...$values Values that are not matched
-	 */
-	protected function anythingBut( ...$values ) {
-		return $this->logicalNot( $this->logicalOr(
-			...array_map( [ $this, 'matches' ], $values )
-		) );
 	}
 }

@@ -89,12 +89,6 @@ class Linker {
 			return "<!-- ERROR -->$html";
 		}
 
-		if ( is_string( $query ) ) {
-			// some functions withing core using this still hand over query strings
-			wfDeprecated( __METHOD__ . ' with parameter $query as string (should be array)', '1.20' );
-			$query = wfCgiToArray( $query );
-		}
-
 		$services = MediaWikiServices::getInstance();
 		$options = (array)$options;
 		if ( $options ) {
@@ -694,8 +688,8 @@ class Linker {
 			$label = $title->getPrefixedText();
 		}
 		$encLabel = htmlspecialchars( $label );
-		$file = MediaWikiServices::getInstance()->getRepoGroup()->findFile( $title );
-		$currentExists = $time ? ( $file != false ) : false;
+		$currentExists = $time
+			&& MediaWikiServices::getInstance()->getRepoGroup()->findFile( $title ) !== false;
 
 		if ( ( $wgUploadMissingFileUrl || $wgUploadNavigationUrl || $wgEnableUploads )
 			&& !$currentExists
@@ -1122,17 +1116,22 @@ class Linker {
 	 * @return string HTML
 	 */
 	public static function revUserTools( $rev, $isPublic = false, $useParentheses = true ) {
-		if ( $rev->isDeleted( Revision::DELETED_USER ) && $isPublic ) {
-			$link = wfMessage( 'rev-deleted-user' )->escaped();
-		} elseif ( $rev->userCan( Revision::DELETED_USER ) ) {
+		if ( $rev->userCan( Revision::DELETED_USER ) &&
+			( !$rev->isDeleted( Revision::DELETED_USER ) || !$isPublic )
+		) {
 			$userId = $rev->getUser( Revision::FOR_THIS_USER );
 			$userText = $rev->getUserText( Revision::FOR_THIS_USER );
-			$link = self::userLink( $userId, $userText )
-				. self::userToolLinks( $userId, $userText, false, 0, null,
-					$useParentheses );
-		} else {
+			if ( $userId && $userText ) {
+				$link = self::userLink( $userId, $userText )
+					. self::userToolLinks( $userId, $userText, false, 0, null,
+						$useParentheses );
+			}
+		}
+
+		if ( !isset( $link ) ) {
 			$link = wfMessage( 'rev-deleted-user' )->escaped();
 		}
+
 		if ( $rev->isDeleted( Revision::DELETED_USER ) ) {
 			return ' <span class="history-deleted mw-userlink">' . $link . '</span>';
 		}
